@@ -6,4 +6,24 @@ CPython 3.13.15와 FastAPI 0.141.1을 기반으로 인증, 방 관리, 게임 �
 
 하나의 배포 단위를 유지하는 Modular Monolith로 구현하고, Domain이 Framework나 Provider Client를 직접 참조하지 않도록 Ports/Adapters 경계를 사용합니다. Project와 Dependency Lock은 `uv`, 품질 Gate는 pytest 계열·Ruff·mypy strict를 사용합니다.
 
-세부 모듈 구조와 Lock은 별도 Scaffold 작업에서 이 디렉터리 아래에 구성합니다. HTTP·WebSocket, 상태, Redis·MariaDB 기준은 [Application MVP 구현 기준](../docs/mvp-implementation-baseline.md)을 따릅니다.
+현재 Scaffold는 Application Factory, Settings와 Health Endpoint만 포함합니다. 기능 Domain과 Provider Adapter는 관련 Issue에서 필요한 만큼 추가합니다. HTTP·WebSocket, 상태, Redis·MariaDB 기준은 [Application MVP 구현 기준](../docs/mvp-implementation-baseline.md)을 따릅니다.
+
+## Development
+
+uv 0.12.5를 사용하며 `pyproject.toml`의 `required-version`으로 다른 버전의 실행을 거부합니다. Windows 전역 uv를 프로젝트 기준으로 사용하지 않으며, 실제 Linux Container·CI에서도 uv 0.12.5를 명시적으로 설치해 같은 Lock을 사용합니다.
+
+```powershell
+uv sync --locked
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run pytest
+```
+
+개발 서버는 다음 명령으로 실행합니다.
+
+```powershell
+uv run uvicorn seokpan.app:app --app-dir src --host 127.0.0.1 --port 8000
+```
+
+Windows 검증은 Linux Container·MariaDB·Redis·Kubernetes 통합 완료를 의미하지 않습니다.

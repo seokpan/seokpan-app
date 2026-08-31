@@ -1,0 +1,12 @@
+:root {
+  color-scheme: light;
+  --color-background: #f4f1e8;
+  --color-surface: #fffdf8;
+  --color-text: #25231f;
+  --color-muted: #6a665e;
+  --color-accent: #37523b;
+  --space-2: 0.5rem;
+  --space-4: 1rem;
+  --space-8: 2rem;
+  --radius-panel: 1rem;
+}

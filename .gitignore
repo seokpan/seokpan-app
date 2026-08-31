@@ -62,6 +62,8 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # ============================================================
 # Frontend / Node.js Generated Files
@@ -71,6 +73,7 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
 # ============================================================
 # Logs / Dumps / Generated Data
@@ -98,6 +101,10 @@ coverage/
 
 .vscode/
 .idea/
+
+# Local tool caches
+.uv-cache/
+.npm-cache/
 
 # ============================================================
 # OS Metadata
