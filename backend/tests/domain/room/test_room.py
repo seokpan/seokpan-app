@@ -6,6 +6,7 @@ from seokpan.room.domain import (
     ActorType,
     DisconnectReason,
     GameTermination,
+    Participant,
     ParticipantRole,
     Room,
     RoomConfig,
@@ -86,6 +87,62 @@ def test_room_creation_requires_member_and_normalizes_name() -> None:
     assert room.config.name == "MVP Room"
     assert room.owner_id == "member-owner"
     assert room.state_version == 1
+
+
+@pytest.mark.parametrize(
+    ("owner", "code"),
+    [
+        (
+            Participant(
+                participant_id="guest-owner",
+                actor_type=ActorType.GUEST,
+                joined_order=1,
+            ),
+            "MEMBER_REQUIRED_TO_CREATE_ROOM",
+        ),
+        (
+            Participant(
+                participant_id="member-owner",
+                actor_type=ActorType.MEMBER,
+                joined_order=2,
+            ),
+            "INVALID_INITIAL_OWNER",
+        ),
+        (
+            Participant(
+                participant_id="member-owner",
+                actor_type=ActorType.MEMBER,
+                joined_order=1,
+                connected=False,
+            ),
+            "INVALID_INITIAL_OWNER",
+        ),
+        (
+            Participant(
+                participant_id="member-owner",
+                actor_type=ActorType.MEMBER,
+                joined_order=1,
+                team=Team.BLACK,
+            ),
+            "INVALID_INITIAL_OWNER",
+        ),
+        (
+            Participant(
+                participant_id="member-owner",
+                actor_type=ActorType.MEMBER,
+                joined_order=1,
+                ready=True,
+            ),
+            "INVALID_INITIAL_OWNER",
+        ),
+    ],
+)
+def test_direct_room_construction_cannot_bypass_initial_owner_invariants(
+    owner: Participant,
+    code: str,
+) -> None:
+    with pytest.raises(RoomRuleViolation, match=code):
+        Room(config=RoomConfig(name="room", minimum_ready=2), owner=owner)
 
 
 def test_join_assigns_stable_order_and_enforces_capacity_and_identity() -> None:

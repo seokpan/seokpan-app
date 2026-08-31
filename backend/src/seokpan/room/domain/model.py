@@ -115,6 +115,15 @@ class Room:
         config: RoomConfig,
         owner: Participant,
     ) -> None:
+        if owner.actor_type is not ActorType.MEMBER:
+            raise RoomRuleViolation("MEMBER_REQUIRED_TO_CREATE_ROOM")
+        if (
+            owner.joined_order != 1
+            or not owner.connected
+            or owner.team is not Team.NONE
+            or owner.ready
+        ):
+            raise RoomRuleViolation("INVALID_INITIAL_OWNER")
         self.config = config
         self.status = RoomStatus.WAITING
         self.owner_id: str | None = owner.participant_id
