@@ -1,0 +1,38 @@
+@import "./tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--color-text);
+  background: var(--color-background);
+  font-family: system-ui, sans-serif;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+.app-shell {
+  width: min(42rem, calc(100% - 2rem));
+  margin: 10vh auto;
+  padding: var(--space-8);
+  background: var(--color-surface);
+  border-radius: var(--radius-panel);
+}
+
+.eyebrow {
+  margin: 0 0 var(--space-2);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.scope-note {
+  color: var(--color-muted);
+}

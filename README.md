@@ -6,10 +6,12 @@
 
 ```text
 seokpan-app/
+├── .editorconfig
+├── .gitattributes
 ├── docs/
 │   └── mvp-implementation-baseline.md
-├── frontend/
-├── backend/
+├── frontend/                  # React·TypeScript·Vite
+├── backend/                   # FastAPI Modular Monolith
 ├── .gitignore
 └── README.md
 ```
@@ -49,3 +51,12 @@ Kubernetes Desired State는 `seokpan-gitops`에서 관리하며, Host·VM·Netwo
 Password, Token, Private Key, 실제 `.env` 값 등 민감정보는 Repository에 저장하지 않습니다.
 
 Windows Host에서 개발하지만 Source와 실행 자산은 UTF-8·LF 및 Linux Container 실행을 기준으로 관리합니다.
+
+## Local P0
+
+Backend와 Frontend는 각각의 README에 기록된 Locked 설치·검증 명령을 사용합니다. 두 환경을 한 전역 Python 또는 Node 설치로 합치지 않습니다.
+
+```text
+backend:  uv sync --locked → Ruff → mypy → pytest
+frontend: npm ci → TypeScript → Vitest → Vite build → npm audit
+```
