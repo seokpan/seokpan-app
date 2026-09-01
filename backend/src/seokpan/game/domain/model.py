@@ -20,13 +20,16 @@ class Stone(StrEnum):
 class GameStatus(StrEnum):
     ACTIVE = "ACTIVE"
     FINISHED = "FINISHED"
+    SYSTEM_INVALID = "SYSTEM_INVALID"
 
 
 class EndReason(StrEnum):
     BLACK_WIN = "BLACK_WIN"
     WHITE_WIN = "WHITE_WIN"
     DRAW = "DRAW"
+    FORFEIT = "FORFEIT"
     JOINT_LOSS = "JOINT_LOSS"
+    SYSTEM_INVALID = "SYSTEM_INVALID"
 
 
 class ForbiddenReason(StrEnum):
@@ -87,6 +90,14 @@ class MoveOutcome:
     winning_line: tuple[Coordinate, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class GameConclusion:
+    status: GameStatus
+    end_reason: EndReason
+    winner: Stone
+    winning_line: tuple[Coordinate, ...]
+
+
 class Game:
     """Server-authoritative Board, Move sequence and Renju adjudication."""
 
@@ -96,6 +107,7 @@ class Game:
         self._status = GameStatus.ACTIVE
         self._current_team = Stone.BLACK
         self._end_reason: EndReason | None = None
+        self._winner = Stone.EMPTY
         self._winning_line: tuple[Coordinate, ...] = ()
 
     @property
@@ -113,6 +125,21 @@ class Game:
     @property
     def end_reason(self) -> EndReason | None:
         return self._end_reason
+
+    @property
+    def winner(self) -> Stone:
+        return self._winner
+
+    @property
+    def conclusion(self) -> GameConclusion | None:
+        if self._end_reason is None:
+            return None
+        return GameConclusion(
+            status=self._status,
+            end_reason=self._end_reason,
+            winner=self._winner,
+            winning_line=self._winning_line,
+        )
 
     @property
     def winning_line(self) -> tuple[Coordinate, ...]:
@@ -174,6 +201,7 @@ class Game:
         if winning_line:
             self._finish(
                 reason=(EndReason.BLACK_WIN if team is Stone.BLACK else EndReason.WHITE_WIN),
+                winner=team,
                 winning_line=winning_line,
             )
         elif len(self._board) == BOARD_SIZE * BOARD_SIZE:
@@ -189,11 +217,32 @@ class Game:
             winning_line=self._winning_line,
         )
 
-    def finish_joint_loss(self) -> None:
+    def finish_forfeit(self, *, losing_team: Stone) -> GameConclusion:
+        """Finish after a provider confirms every player on one team departed."""
+        if losing_team is Stone.EMPTY:
+            raise GameRuleViolation("INVALID_FORFEIT_TEAM")
+        winner = Stone.WHITE if losing_team is Stone.BLACK else Stone.BLACK
+        return self._finish_idempotently(
+            status=GameStatus.FINISHED,
+            reason=EndReason.FORFEIT,
+            winner=winner,
+        )
+
+    def finish_system_invalid(self) -> GameConclusion:
+        """Finish without player statistics after an unrecoverable platform failure."""
+        return self._finish_idempotently(
+            status=GameStatus.SYSTEM_INVALID,
+            reason=EndReason.SYSTEM_INVALID,
+            winner=Stone.EMPTY,
+        )
+
+    def finish_joint_loss(self) -> GameConclusion:
         """Finish an active game after consecutive zero-vote turns."""
-        if self._status is not GameStatus.ACTIVE:
-            raise GameRuleViolation("GAME_NOT_ACTIVE")
-        self._finish(reason=EndReason.JOINT_LOSS, winning_line=())
+        return self._finish_idempotently(
+            status=GameStatus.FINISHED,
+            reason=EndReason.JOINT_LOSS,
+            winner=Stone.EMPTY,
+        )
 
     def pass_turn(self) -> None:
         """Advance to the other team without creating a Move."""
@@ -211,12 +260,43 @@ class Game:
         self,
         *,
         reason: EndReason,
+        winner: Stone = Stone.EMPTY,
         winning_line: tuple[Coordinate, ...],
+        status: GameStatus = GameStatus.FINISHED,
     ) -> None:
-        self._status = GameStatus.FINISHED
+        self._status = status
         self._end_reason = reason
+        self._winner = winner
         self._winning_line = winning_line
         self._current_team = Stone.EMPTY
+
+    def _finish_idempotently(
+        self,
+        *,
+        status: GameStatus,
+        reason: EndReason,
+        winner: Stone,
+    ) -> GameConclusion:
+        existing = self.conclusion
+        if existing is not None:
+            expected = GameConclusion(
+                status=status,
+                end_reason=reason,
+                winner=winner,
+                winning_line=(),
+            )
+            if existing == expected:
+                return existing
+            raise GameRuleViolation("GAME_RESULT_ALREADY_FINALIZED")
+        self._finish(
+            status=status,
+            reason=reason,
+            winner=winner,
+            winning_line=(),
+        )
+        conclusion = self.conclusion
+        assert conclusion is not None
+        return conclusion
 
     @classmethod
     def _black_forbidden_reason(

@@ -19,6 +19,8 @@ def snapshot(game: Game) -> tuple[object, ...]:
         game.current_team,
         game.move_no,
         game.end_reason,
+        game.winner,
+        game.conclusion,
         game.winning_line,
         game.moves,
         game.occupied_cells,
@@ -89,6 +91,8 @@ def test_game_starts_with_empty_board_black_turn_and_zero_moves() -> None:
     assert game.current_team is Stone.BLACK
     assert game.move_no == 0
     assert game.end_reason is None
+    assert game.winner is Stone.EMPTY
+    assert game.conclusion is None
     assert game.winning_line == ()
     assert game.moves == ()
     assert game.occupied_cells == ()
@@ -166,6 +170,8 @@ def test_black_wins_with_exactly_five_in_every_direction(black: list[str]) -> No
 
     assert game.status is GameStatus.FINISHED
     assert game.end_reason is EndReason.BLACK_WIN
+    assert game.winner is Stone.BLACK
+    assert game.conclusion is not None
     assert game.current_team is Stone.EMPTY
     assert len(game.winning_line) == 5
     assert_rejected_without_mutation(
@@ -174,7 +180,11 @@ def test_black_wins_with_exactly_five_in_every_direction(black: list[str]) -> No
         lambda: game.apply_move(team=Stone.WHITE, coordinate="O15"),
     )
     assert_rejected_without_mutation(game, "GAME_NOT_ACTIVE", game.pass_turn)
-    assert_rejected_without_mutation(game, "GAME_NOT_ACTIVE", game.finish_joint_loss)
+    assert_rejected_without_mutation(
+        game,
+        "GAME_RESULT_ALREADY_FINALIZED",
+        game.finish_joint_loss,
+    )
 
 
 @pytest.mark.parametrize(
@@ -197,6 +207,7 @@ def test_white_wins_with_five_or_more_in_every_direction(white: list[str]) -> No
 
     assert game.status is GameStatus.FINISHED
     assert game.end_reason is EndReason.WHITE_WIN
+    assert game.winner is Stone.WHITE
     assert len(game.winning_line) == len(white)
 
 
@@ -295,4 +306,5 @@ def test_full_board_without_five_is_a_draw() -> None:
     assert game.move_no == 225
     assert game.status is GameStatus.FINISHED
     assert game.end_reason is EndReason.DRAW
+    assert game.winner is Stone.EMPTY
     assert game.winning_line == ()
