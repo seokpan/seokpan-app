@@ -6,7 +6,7 @@ CPython 3.13.15와 FastAPI 0.141.1을 기반으로 인증, 방 관리, 게임 �
 
 하나의 배포 단위를 유지하는 Modular Monolith로 구현하고, Domain이 Framework나 Provider Client를 직접 참조하지 않도록 Ports/Adapters 경계를 사용합니다. Project와 Dependency Lock은 `uv`, 품질 Gate는 pytest 계열·Ruff·mypy strict를 사용합니다.
 
-현재 Scaffold는 Application Factory, Settings와 Health Endpoint만 포함합니다. 기능 Domain과 Provider Adapter는 관련 Issue에서 필요한 만큼 추가합니다. HTTP·WebSocket, 상태, Redis·MariaDB 기준은 [Application MVP 구현 기준](../docs/mvp-implementation-baseline.md)을 따릅니다.
+현재 Application Factory, Settings와 Health Endpoint Scaffold에 Room Pure Domain을 추가하고 있습니다. Room Domain은 외부 Provider 없이 방·참가자·팀·Ready·방장 승계·시작 조건을 판단합니다. 다른 기능 Domain과 Provider Adapter는 관련 Issue에서 필요한 만큼 추가합니다. HTTP·WebSocket, 상태, Redis·MariaDB 기준은 [Application MVP 구현 기준](../docs/mvp-implementation-baseline.md)을 따릅니다.
 
 ## Development
 
@@ -18,6 +18,12 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy
 uv run pytest
+```
+
+Room Pure Domain의 첫 Branch Coverage Ratchet은 다음 명령으로 검증합니다.
+
+```powershell
+uv run pytest --cov=seokpan.room.domain --cov-branch --cov-report=term-missing --cov-fail-under=100
 ```
 
 개발 서버는 다음 명령으로 실행합니다.
