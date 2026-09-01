@@ -110,6 +110,17 @@ def test_valid_moves_change_board_turn_and_move_number_once() -> None:
     assert [cell.coordinate.canonical for cell in game.occupied_cells] == ["H8", "H9"]
 
 
+def test_pass_turn_changes_only_the_current_team() -> None:
+    game = Game()
+    before = (game.status, game.move_no, game.moves, game.occupied_cells)
+
+    game.pass_turn()
+    assert game.current_team is Stone.WHITE
+    game.pass_turn()
+    assert game.current_team is Stone.BLACK
+    assert (game.status, game.move_no, game.moves, game.occupied_cells) == before
+
+
 def test_invalid_team_turn_and_occupied_position_do_not_mutate_game() -> None:
     game = Game()
     assert_rejected_without_mutation(
@@ -162,6 +173,8 @@ def test_black_wins_with_exactly_five_in_every_direction(black: list[str]) -> No
         "GAME_NOT_ACTIVE",
         lambda: game.apply_move(team=Stone.WHITE, coordinate="O15"),
     )
+    assert_rejected_without_mutation(game, "GAME_NOT_ACTIVE", game.pass_turn)
+    assert_rejected_without_mutation(game, "GAME_NOT_ACTIVE", game.finish_joint_loss)
 
 
 @pytest.mark.parametrize(

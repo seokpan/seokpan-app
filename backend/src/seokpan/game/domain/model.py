@@ -26,6 +26,7 @@ class EndReason(StrEnum):
     BLACK_WIN = "BLACK_WIN"
     WHITE_WIN = "WHITE_WIN"
     DRAW = "DRAW"
+    JOINT_LOSS = "JOINT_LOSS"
 
 
 class ForbiddenReason(StrEnum):
@@ -187,6 +188,18 @@ class Game:
             current_team=self._current_team,
             winning_line=self._winning_line,
         )
+
+    def finish_joint_loss(self) -> None:
+        """Finish an active game after consecutive zero-vote turns."""
+        if self._status is not GameStatus.ACTIVE:
+            raise GameRuleViolation("GAME_NOT_ACTIVE")
+        self._finish(reason=EndReason.JOINT_LOSS, winning_line=())
+
+    def pass_turn(self) -> None:
+        """Advance to the other team without creating a Move."""
+        if self._status is not GameStatus.ACTIVE:
+            raise GameRuleViolation("GAME_NOT_ACTIVE")
+        self._current_team = Stone.WHITE if self._current_team is Stone.BLACK else Stone.BLACK
 
     @staticmethod
     def _coordinate(coordinate: Coordinate | str) -> Coordinate:
