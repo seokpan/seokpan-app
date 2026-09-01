@@ -144,7 +144,7 @@ class VoteTurnGame:
 
     @property
     def deadline_ms(self) -> int | None:
-        if self.game.status is GameStatus.FINISHED:
+        if self.game.status is not GameStatus.ACTIVE:
             return None
         return self._deadline_ms
 
