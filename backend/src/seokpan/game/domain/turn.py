@@ -166,8 +166,8 @@ class VotingMatch:
         game_id: str,
         turn_no: int,
         now: float,
+        next_deadline_at: float,
         tie_selection: Coordinate | str | None = None,
-        next_deadline_at: float | None = None,
     ) -> TurnCloseResult:
         if game_id != self.game_id:
             raise TurnRuleViolation("STALE_GAME")
@@ -180,14 +180,17 @@ class VotingMatch:
             raise TurnRuleViolation("TURN_NOT_VOTING")
         if now < self.deadline_at:
             raise TurnRuleViolation("TURN_DEADLINE_NOT_REACHED")
+        if next_deadline_at <= self.deadline_at:
+            raise TurnRuleViolation("INVALID_NEXT_DEADLINE")
 
         team = self.current_team
         tallies = self.tally()
         candidates = self._highest_candidates(tallies)
 
         if not candidates:
-            self._consecutive_passes += 1
-            self.game.apply_pass(team=team, consecutive_passes=self._consecutive_passes)
+            next_consecutive_passes = self._consecutive_passes + 1
+            self.game.apply_pass(team=team, consecutive_passes=next_consecutive_passes)
+            self._consecutive_passes = next_consecutive_passes
             result = TurnCloseResult(
                 turn_no=turn_no,
                 team=team,
@@ -227,19 +230,12 @@ class VotingMatch:
         self._finish_turn(result=result, next_deadline_at=next_deadline_at)
         return result
 
-    def _finish_turn(
-        self,
-        *,
-        result: TurnCloseResult,
-        next_deadline_at: float | None,
-    ) -> None:
+    def _finish_turn(self, *, result: TurnCloseResult, next_deadline_at: float) -> None:
         self._closed_results[result.turn_no] = result
         self._votes.clear()
         if self.game.status is GameStatus.FINISHED:
             self.status = TurnStatus.FINISHED
             return
-        if next_deadline_at is None or next_deadline_at <= self.deadline_at:
-            raise TurnRuleViolation("INVALID_NEXT_DEADLINE")
         self.turn_no += 1
         self.deadline_at = next_deadline_at
 
