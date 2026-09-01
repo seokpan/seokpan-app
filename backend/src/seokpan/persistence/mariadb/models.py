@@ -124,6 +124,7 @@ class GameParticipantRow(Base):
         ForeignKey("game.game_id", name="fk_participant_game"),
         nullable=False,
     )
+    participant_id: Mapped[str | None] = mapped_column(mysql.CHAR(36), nullable=True)
     team: Mapped[str] = mapped_column(mysql.ENUM("BLACK", "WHITE"), nullable=False)
     member_id: Mapped[int | None] = mapped_column(
         mysql.BIGINT(unsigned=True),

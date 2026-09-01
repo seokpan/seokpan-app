@@ -82,6 +82,7 @@ coverage/
 *.log
 *.dump
 *.sql
+!backend/migrations/audit/*.sql
 *.bak
 *.backup
 *.tar

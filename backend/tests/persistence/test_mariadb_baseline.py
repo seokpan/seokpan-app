@@ -34,7 +34,15 @@ EXPECTED_COLUMNS = {
         "started_at",
         "ended_at",
     },
-    "game_participant": {"id", "game_id", "team", "member_id", "is_guest", "guest_label"},
+    "game_participant": {
+        "id",
+        "game_id",
+        "participant_id",
+        "team",
+        "member_id",
+        "is_guest",
+        "guest_label",
+    },
     "move": {
         "game_id",
         "turn_no",
@@ -137,11 +145,11 @@ def test_migration_settings_are_separate_and_required(monkeypatch: pytest.Monkey
     assert settings.migration_database_url.endswith("/stone_game")
 
 
-def test_alembic_has_one_baseline_head() -> None:
+def test_alembic_has_one_head_after_participant_identity_expand() -> None:
     config = Config(BACKEND_ROOT / "alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260901_0001"]
+    assert script.get_heads() == ["20260902_0002"]
     assert script.get_base() == "20260901_0001"
 
 
@@ -163,3 +171,5 @@ def test_offline_upgrade_emits_all_seven_tables(
         assert f"CREATE TABLE {table_name}" in sql
     assert "CREATE TABLE alembic_version" in sql
     assert "INSERT INTO alembic_version (version_num) VALUES ('20260901_0001')" in sql
+    assert "ALTER TABLE game_participant ADD COLUMN participant_id CHAR(36)" in sql
+    assert "UPDATE alembic_version SET version_num='20260902_0002'" in sql
