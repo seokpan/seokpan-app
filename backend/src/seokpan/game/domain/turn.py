@@ -254,7 +254,9 @@ class VotingMatch:
 
     def _validate_candidate(self, coordinate: Coordinate | str) -> Coordinate:
         try:
-            parsed = coordinate if isinstance(coordinate, Coordinate) else Coordinate.parse(coordinate)
+            parsed = (
+                coordinate if isinstance(coordinate, Coordinate) else Coordinate.parse(coordinate)
+            )
             if self.game.stone_at(parsed) is not Stone.EMPTY:
                 raise TurnRuleViolation("POSITION_OCCUPIED")
             if self.current_team is Stone.BLACK:
@@ -280,11 +282,14 @@ class VotingMatch:
     ) -> Coordinate:
         if len(candidates) == 1:
             if tie_selection is not None:
-                parsed = (
-                    tie_selection
-                    if isinstance(tie_selection, Coordinate)
-                    else Coordinate.parse(tie_selection)
-                )
+                try:
+                    parsed = (
+                        tie_selection
+                        if isinstance(tie_selection, Coordinate)
+                        else Coordinate.parse(tie_selection)
+                    )
+                except GameRuleViolation as error:
+                    raise TurnRuleViolation(error.code) from error
                 if parsed != candidates[0]:
                     raise TurnRuleViolation("INVALID_TIE_SELECTION")
             return candidates[0]
