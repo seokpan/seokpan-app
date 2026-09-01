@@ -12,3 +12,5 @@ class Settings(BaseSettings):
     environment: Literal["local", "test", "development", "production"] = "local"
     log_level: str = "INFO"
     instance_id: str = "local"
+    identity_database_url: str | None = None
+    game_database_url: str | None = None

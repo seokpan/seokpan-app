@@ -254,11 +254,11 @@ Domain과 기존 DB Enum은 다음처럼 명시적으로 변환한다.
 | Game `ACTIVE` | `game.status = IN_PROGRESS` |
 | Game `FINISHED` | `game.status = COMPLETED` |
 | Game `SYSTEM_INVALID` | `game.status = SYSTEM_INVALID` |
-| `BLACK_WIN`·`WHITE_WIN` | `winner`와 `result_type = NORMAL_WIN` 조합 |
-| `DRAW` | `winner = NULL`, `result_type = DRAW` |
-| `FORFEIT` | 승리 팀 `winner`, `result_type = FORFEIT` |
-| `JOINT_LOSS` | `winner = NULL`, `result_type = MUTUAL_FORFEIT` |
-| `SYSTEM_INVALID` | `winner = NULL`, `result_type = SYSTEM_INVALID` |
+| `BLACK_WIN`·`WHITE_WIN` | 승리 팀 `winner`, `end_reason = NORMAL_WIN` |
+| `DRAW` | `winner = DRAW`, `end_reason = DRAW` |
+| `FORFEIT` | 승리 팀 `winner`, `end_reason = FORFEIT` |
+| `JOINT_LOSS` | `winner = NONE`, `end_reason = MUTUAL_FORFEIT` |
+| `SYSTEM_INVALID` | `winner = NONE`, `end_reason = SYSTEM_INVALID` |
 
 Game 종료, `game_result`, `member_stats`, `rating_history`와 Member Rating은 하나의 명시적 Transaction에서 처리한다. 초기 Rating은 1000, K는 32다. 팀 평균은 변경 전 PLAYER Rating을 사용하고 Guest는 계산에만 1000을 사용한다. Delta는 Decimal `ROUND_HALF_UP`, 최종 Rating 최솟값은 0이며 `SYSTEM_INVALID`는 전적·Rating에 반영하지 않는다.
 
@@ -272,10 +272,13 @@ SEOKPAN_LOG_LEVEL
 SEOKPAN_PUBLIC_BASE_URL
 SEOKPAN_ALLOWED_ORIGINS
 SEOKPAN_TRUSTED_HOSTS
-SEOKPAN_DATABASE_URL
+SEOKPAN_IDENTITY_DATABASE_URL
+SEOKPAN_GAME_DATABASE_URL
 SEOKPAN_REDIS_URL
 SEOKPAN_INSTANCE_ID
 ```
+
+Alembic 단일 Migration Job·승인 절차만 `SEOKPAN_MIGRATION_DATABASE_URL`을 사용한다. 정상 Backend Pod에는 Migration Credential을 주입하지 않는다.
 
 실제 값은 환경에서 주입하고 `.env`, Secret, Password, Token과 Private Key를 Git에 저장하지 않는다. 다음 항목은 코드에서 추측해 고정하지 않고 Provider 통합 Issue에서 인계받는다.
 
