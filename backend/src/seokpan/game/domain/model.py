@@ -26,6 +26,7 @@ class EndReason(StrEnum):
     BLACK_WIN = "BLACK_WIN"
     WHITE_WIN = "WHITE_WIN"
     DRAW = "DRAW"
+    BOTH_LOSE = "BOTH_LOSE"
 
 
 class ForbiddenReason(StrEnum):
@@ -84,6 +85,15 @@ class MoveOutcome:
     end_reason: EndReason | None
     current_team: Stone
     winning_line: tuple[Coordinate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PassOutcome:
+    team: Stone
+    consecutive_passes: int
+    status: GameStatus
+    end_reason: EndReason | None
+    current_team: Stone
 
 
 class Game:
@@ -186,6 +196,29 @@ class Game:
             end_reason=self._end_reason,
             current_team=self._current_team,
             winning_line=self._winning_line,
+        )
+
+    def apply_pass(self, *, team: Stone, consecutive_passes: int) -> PassOutcome:
+        if self._status is not GameStatus.ACTIVE:
+            raise GameRuleViolation("GAME_NOT_ACTIVE")
+        if team is Stone.EMPTY:
+            raise GameRuleViolation("INVALID_MOVE_TEAM")
+        if team is not self._current_team:
+            raise GameRuleViolation("NOT_CURRENT_TEAM")
+        if consecutive_passes < 1:
+            raise GameRuleViolation("INVALID_CONSECUTIVE_PASSES")
+
+        if consecutive_passes >= 2:
+            self._finish(reason=EndReason.BOTH_LOSE, winning_line=())
+        else:
+            self._current_team = Stone.WHITE if team is Stone.BLACK else Stone.BLACK
+
+        return PassOutcome(
+            team=team,
+            consecutive_passes=consecutive_passes,
+            status=self._status,
+            end_reason=self._end_reason,
+            current_team=self._current_team,
         )
 
     @staticmethod
