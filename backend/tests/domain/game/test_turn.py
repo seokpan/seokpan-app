@@ -1,7 +1,10 @@
 import pytest
 
 from seokpan.game.domain import (
+    Coordinate,
     EndReason,
+    Game,
+    GameRuleViolation,
     GameStatus,
     Stone,
     TurnRuleViolation,
@@ -96,6 +99,10 @@ def test_vote_create_replace_delete_and_disconnect_leave_only_last_valid_vote() 
         now=93.0,
     )
     voting_match.set_connected(participant_id="black-2", connected=False)
+    assert voting_match.votes == ()
+
+    voting_match.set_connected(participant_id="black-2", connected=False)
+    voting_match.set_connected(participant_id="black-2", connected=True)
     assert voting_match.votes == ()
 
 
@@ -245,13 +252,24 @@ def test_tie_requires_external_selection_and_rejects_non_candidate_without_mutat
             tie_selection="H10",
         ),
     )
+    assert_rejected_without_mutation(
+        voting_match,
+        "INVALID_COORDINATE",
+        lambda: voting_match.close_turn(
+            game_id="game-1",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+            tie_selection="P1",
+        ),
+    )
 
     result = voting_match.close_turn(
         game_id="game-1",
         turn_no=1,
         now=100.0,
         next_deadline_at=200.0,
-        tie_selection="H9",
+        tie_selection=Coordinate.parse("H9"),
     )
     assert tuple(item.canonical for item in result.candidates) == ("H8", "H9")
     assert result.selected_coordinate is not None
@@ -373,3 +391,262 @@ def test_invalid_next_deadline_and_close_before_deadline_do_not_mutate_state() -
             next_deadline_at=100.0,
         ),
     )
+
+
+def test_participant_and_match_construction_reject_invalid_inputs() -> None:
+    with pytest.raises(TurnRuleViolation, match="INVALID_PARTICIPANT_ID"):
+        VotingParticipant(participant_id="", team=Stone.BLACK)
+    with pytest.raises(TurnRuleViolation, match="INVALID_PARTICIPANT_TEAM"):
+        VotingParticipant(participant_id="empty-team", team=Stone.EMPTY)
+    with pytest.raises(TurnRuleViolation, match="INVALID_GAME_ID"):
+        VotingMatch(game_id="", participants=participants(), deadline_at=100.0)
+    with pytest.raises(TurnRuleViolation, match="INVALID_DEADLINE"):
+        VotingMatch(game_id="game-1", participants=participants(), deadline_at=0.0)
+
+    duplicate = (
+        VotingParticipant(participant_id="same", team=Stone.BLACK),
+        VotingParticipant(participant_id="same", team=Stone.WHITE),
+    )
+    with pytest.raises(TurnRuleViolation, match="DUPLICATE_PARTICIPANT_ID"):
+        VotingMatch(game_id="game-1", participants=duplicate, deadline_at=100.0)
+
+
+def test_unknown_participant_is_rejected_for_connection_vote_and_remove() -> None:
+    voting_match = match()
+    with pytest.raises(TurnRuleViolation, match="PARTICIPANT_NOT_FOUND"):
+        voting_match.set_connected(participant_id="missing", connected=False)
+
+    assert_rejected_without_mutation(
+        voting_match,
+        "PARTICIPANT_NOT_FOUND",
+        lambda: voting_match.cast_vote(
+            participant_id="missing",
+            game_id="game-1",
+            turn_no=1,
+            coordinate="H8",
+            now=90.0,
+        ),
+    )
+    assert_rejected_without_mutation(
+        voting_match,
+        "PARTICIPANT_NOT_FOUND",
+        lambda: voting_match.remove_vote(
+            participant_id="missing",
+            game_id="game-1",
+            turn_no=1,
+            now=90.0,
+        ),
+    )
+
+
+def test_vote_candidate_validation_reuses_board_occupied_invalid_and_black_forbidden_rules() -> None:
+    voting_match = match()
+    assert_rejected_without_mutation(
+        voting_match,
+        "INVALID_COORDINATE",
+        lambda: voting_match.cast_vote(
+            participant_id="black-1",
+            game_id="game-1",
+            turn_no=1,
+            coordinate="P1",
+            now=90.0,
+        ),
+    )
+
+    game = Game()
+    game.apply_move(team=Stone.BLACK, coordinate="H8")
+    occupied_match = VotingMatch(
+        game_id="game-2",
+        participants=participants(),
+        deadline_at=100.0,
+        game=game,
+    )
+    assert_rejected_without_mutation(
+        occupied_match,
+        "POSITION_OCCUPIED",
+        lambda: occupied_match.cast_vote(
+            participant_id="white-1",
+            game_id="game-2",
+            turn_no=1,
+            coordinate=Coordinate.parse("H8"),
+            now=90.0,
+        ),
+    )
+
+    forbidden_game = Game()
+    for black, white in zip(
+        ("G8", "I8", "H7", "H9"),
+        ("A1", "C1", "E1", "G1"),
+        strict=True,
+    ):
+        forbidden_game.apply_move(team=Stone.BLACK, coordinate=black)
+        forbidden_game.apply_move(team=Stone.WHITE, coordinate=white)
+    forbidden_match = VotingMatch(
+        game_id="game-3",
+        participants=participants(),
+        deadline_at=100.0,
+        game=forbidden_game,
+    )
+    assert_rejected_without_mutation(
+        forbidden_match,
+        "BLACK_DOUBLE_THREE",
+        lambda: forbidden_match.cast_vote(
+            participant_id="black-1",
+            game_id="game-3",
+            turn_no=1,
+            coordinate="H8",
+            now=90.0,
+        ),
+    )
+
+
+def test_close_rejects_stale_game_stale_turn_and_non_voting_game_without_mutation() -> None:
+    voting_match = match()
+    assert_rejected_without_mutation(
+        voting_match,
+        "STALE_GAME",
+        lambda: voting_match.close_turn(
+            game_id="old-game",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+        ),
+    )
+    assert_rejected_without_mutation(
+        voting_match,
+        "STALE_TURN",
+        lambda: voting_match.close_turn(
+            game_id="game-1",
+            turn_no=2,
+            now=100.0,
+            next_deadline_at=200.0,
+        ),
+    )
+
+    finished_game = Game()
+    for black, white in zip(
+        ("E8", "F8", "G8", "H8"),
+        ("A1", "C1", "E1", "G1"),
+        strict=True,
+    ):
+        finished_game.apply_move(team=Stone.BLACK, coordinate=black)
+        finished_game.apply_move(team=Stone.WHITE, coordinate=white)
+    finished_game.apply_move(team=Stone.BLACK, coordinate="I8")
+    finished_match = VotingMatch(
+        game_id="finished",
+        participants=participants(),
+        deadline_at=100.0,
+        game=finished_game,
+    )
+    assert_rejected_without_mutation(
+        finished_match,
+        "TURN_NOT_VOTING",
+        lambda: finished_match.close_turn(
+            game_id="finished",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+        ),
+    )
+    assert_rejected_without_mutation(
+        finished_match,
+        "TURN_NOT_VOTING",
+        lambda: finished_match.cast_vote(
+            participant_id="black-1",
+            game_id="finished",
+            turn_no=1,
+            coordinate="J8",
+            now=90.0,
+        ),
+    )
+
+
+def test_close_propagates_existing_game_rejection_without_mutating_vote_state() -> None:
+    game = Game()
+    voting_match = VotingMatch(
+        game_id="game-race",
+        participants=participants(),
+        deadline_at=100.0,
+        game=game,
+    )
+    voting_match.cast_vote(
+        participant_id="black-1",
+        game_id="game-race",
+        turn_no=1,
+        coordinate="H8",
+        now=90.0,
+    )
+    game.apply_move(team=Stone.BLACK, coordinate="H8")
+
+    before_votes = voting_match.votes
+    with pytest.raises(TurnRuleViolation, match="POSITION_OCCUPIED") as error:
+        voting_match.close_turn(
+            game_id="game-race",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+        )
+    assert error.value.code == "POSITION_OCCUPIED"
+    assert voting_match.votes == before_votes
+    assert voting_match.turn_no == 1
+
+
+def test_single_candidate_optional_tie_selection_is_validated() -> None:
+    voting_match = match()
+    voting_match.cast_vote(
+        participant_id="black-1",
+        game_id="game-1",
+        turn_no=1,
+        coordinate="H8",
+        now=90.0,
+    )
+    assert_rejected_without_mutation(
+        voting_match,
+        "INVALID_TIE_SELECTION",
+        lambda: voting_match.close_turn(
+            game_id="game-1",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+            tie_selection=Coordinate.parse("H9"),
+        ),
+    )
+    assert_rejected_without_mutation(
+        voting_match,
+        "INVALID_COORDINATE",
+        lambda: voting_match.close_turn(
+            game_id="game-1",
+            turn_no=1,
+            now=100.0,
+            next_deadline_at=200.0,
+            tie_selection="P1",
+        ),
+    )
+
+    result = voting_match.close_turn(
+        game_id="game-1",
+        turn_no=1,
+        now=100.0,
+        next_deadline_at=200.0,
+        tie_selection=Coordinate.parse("H8"),
+    )
+    assert result.selected_coordinate == Coordinate.parse("H8")
+
+
+def test_game_apply_pass_rejects_invalid_state_team_turn_and_count_without_mutation() -> None:
+    game = Game()
+    with pytest.raises(GameRuleViolation, match="INVALID_MOVE_TEAM"):
+        game.apply_pass(team=Stone.EMPTY, consecutive_passes=1)
+    with pytest.raises(GameRuleViolation, match="NOT_CURRENT_TEAM"):
+        game.apply_pass(team=Stone.WHITE, consecutive_passes=1)
+    with pytest.raises(GameRuleViolation, match="INVALID_CONSECUTIVE_PASSES"):
+        game.apply_pass(team=Stone.BLACK, consecutive_passes=0)
+
+    first = game.apply_pass(team=Stone.BLACK, consecutive_passes=1)
+    assert first.status is GameStatus.ACTIVE
+    second = game.apply_pass(team=Stone.WHITE, consecutive_passes=2)
+    assert second.status is GameStatus.FINISHED
+    assert second.end_reason is EndReason.BOTH_LOSE
+
+    with pytest.raises(GameRuleViolation, match="GAME_NOT_ACTIVE"):
+        game.apply_pass(team=Stone.BLACK, consecutive_passes=3)
