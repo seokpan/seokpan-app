@@ -20,7 +20,7 @@ async def test_mutation_declares_one_hash_slot_and_separated_room_keys() -> None
 
     _, numkeys, values = client.evalsha_calls[-1]
     keys = tuple(str(item) for item in values[:numkeys])
-    assert numkeys == 8
+    assert numkeys == 9
     assert all("{room-1}" in key for key in keys)
     assert keys[:4] == (
         RedisKeyspace.room_meta("room-1"),
@@ -31,6 +31,7 @@ async def test_mutation_declares_one_hash_slot_and_separated_room_keys() -> None
     assert "redis.call('TIME')" in ROOM_MUTATION.source
     assert "expected_version_matches" in ROOM_MUTATION.source
     assert "REQUEST_ID_CONFLICT" in ROOM_MUTATION.source
+    assert "HINCRBY', KEYS[9], coordinate, -1" in ROOM_MUTATION.source
 
 
 @pytest.mark.asyncio
