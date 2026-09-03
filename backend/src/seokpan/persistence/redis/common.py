@@ -1,0 +1,122 @@
+"""Shared Redis key, JSON and versioned Lua boundaries."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Protocol, cast
+
+from redis.exceptions import NoScriptError, RedisError
+
+from seokpan.identity.application.session import SessionActorType, SessionRuleViolation
+
+REDIS_KEY_PREFIX = "stone:v1:"
+
+
+class RedisProviderError(RuntimeError):
+    """A sanitized provider failure which never includes keys or credentials."""
+
+    def __init__(self, code: str = "REDIS_PROVIDER_UNAVAILABLE") -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class RedisClient(Protocol):
+    async def get(self, key: str) -> bytes | str | None: ...
+
+    async def evalsha(
+        self,
+        sha: str,
+        numkeys: int,
+        *keys_and_args: object,
+    ) -> object: ...
+
+    async def script_load(self, script: str) -> bytes | str: ...
+
+
+class RedisKeyspace:
+    @staticmethod
+    def session(session_digest: str) -> str:
+        return f"{REDIS_KEY_PREFIX}session:{session_digest}"
+
+    @staticmethod
+    def member_sessions(member_id: str) -> str:
+        if not member_id.isdecimal():
+            raise SessionRuleViolation("INVALID_MEMBER_ID")
+        return f"{REDIS_KEY_PREFIX}identity:member:{member_id}:sessions"
+
+    @staticmethod
+    def no_member_index() -> str:
+        """An unused declared key keeps each script signature stable."""
+        return f"{REDIS_KEY_PREFIX}identity:none:sessions"
+
+    @classmethod
+    def session_index(cls, actor_type: SessionActorType, actor_id: str) -> str:
+        if actor_type is SessionActorType.MEMBER:
+            return cls.member_sessions(actor_id)
+        return cls.no_member_index()
+
+
+class VersionedJsonCodec:
+    @staticmethod
+    def encode(value: Mapping[str, object]) -> str:
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def decode(value: bytes | str) -> dict[str, object]:
+        try:
+            text = value.decode("utf-8") if isinstance(value, bytes) else value
+            decoded = json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID") from error
+        if not isinstance(decoded, dict):
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        return cast(dict[str, object], decoded)
+
+
+@dataclass(frozen=True, slots=True)
+class VersionedLuaScript:
+    name: str
+    version: int
+    source: str
+
+    @property
+    def sha(self) -> str:
+        return hashlib.sha1(self.source.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
+class LuaScriptRunner:
+    def __init__(self, client: RedisClient) -> None:
+        self._client = client
+
+    async def execute(
+        self,
+        script: VersionedLuaScript,
+        *,
+        keys: Sequence[str],
+        args: Sequence[object],
+    ) -> object:
+        try:
+            return await self._client.evalsha(script.sha, len(keys), *keys, *args)
+        except NoScriptError:
+            try:
+                loaded_sha = await self._client.script_load(script.source)
+                normalized_sha = (
+                    loaded_sha.decode("ascii") if isinstance(loaded_sha, bytes) else loaded_sha
+                )
+                if normalized_sha != script.sha:
+                    raise RedisProviderError("REDIS_SCRIPT_DIGEST_MISMATCH")
+                return await self._client.evalsha(script.sha, len(keys), *keys, *args)
+            except RedisProviderError:
+                raise
+            except RedisError as error:
+                raise RedisProviderError() from error
+        except RedisError as error:
+            raise RedisProviderError() from error
