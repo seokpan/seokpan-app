@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import fields
 
 import pytest
 
@@ -12,19 +13,28 @@ from seokpan.room.domain import (
     RoomConfig,
     RoomRuleViolation,
     RoomStatus,
+    RoomVisibility,
     Team,
 )
 
 
-def create_room(*, minimum_ready: int = 2, max_participants: int = 100) -> Room:
+def create_room(
+    *,
+    minimum_ready: int = 2,
+    max_participants: int = 100,
+    visibility: RoomVisibility = RoomVisibility.PUBLIC,
+    room_password: str | None = None,
+) -> Room:
     return Room.create(
         config=RoomConfig(
             name="  MVP Room  ",
+            visibility=visibility,
             minimum_ready=minimum_ready,
             max_participants=max_participants,
         ),
         owner_id="member-owner",
         owner_type=ActorType.MEMBER,
+        room_password=room_password,
     )
 
 
@@ -87,6 +97,79 @@ def test_room_creation_requires_member_and_normalizes_name() -> None:
     assert room.config.name == "MVP Room"
     assert room.owner_id == "member-owner"
     assert room.state_version == 1
+
+
+def test_public_room_is_the_default_and_does_not_accept_a_password() -> None:
+    room = create_room()
+
+    assert room.config.visibility is RoomVisibility.PUBLIC
+    assert room.config.password_required is False
+
+    with pytest.raises(RoomRuleViolation, match="INVALID_ROOM_PASSWORD"):
+        create_room(room_password="public-password")
+
+
+@pytest.mark.parametrize("length", [4, 20])
+def test_private_room_accepts_password_at_mvp_length_boundaries(length: int) -> None:
+    password = "p" * length
+
+    room = create_room(visibility=RoomVisibility.PRIVATE, room_password=password)
+
+    assert room.config.visibility is RoomVisibility.PRIVATE
+    assert room.config.password_required is True
+    assert "password" not in {field.name for field in fields(room.config)}
+    assert password not in repr(room.config)
+    assert password not in repr(room.__dict__)
+
+
+@pytest.mark.parametrize("room_password", [None, "p" * 3, "p" * 21])
+def test_private_room_rejects_missing_or_out_of_range_password(
+    room_password: str | None,
+) -> None:
+    with pytest.raises(RoomRuleViolation, match="INVALID_ROOM_PASSWORD"):
+        create_room(
+            visibility=RoomVisibility.PRIVATE,
+            room_password=room_password,
+        )
+
+
+def test_private_room_join_requires_verified_access_without_mutating_on_rejection() -> None:
+    room = create_room(
+        visibility=RoomVisibility.PRIVATE,
+        room_password="private-password",
+    )
+
+    assert_rejected_without_mutation(
+        room,
+        "ROOM_PASSWORD_INVALID",
+        lambda: room.join(participant_id="member-2", actor_type=ActorType.MEMBER),
+    )
+    assert_rejected_without_mutation(
+        room,
+        "ROOM_PASSWORD_INVALID",
+        lambda: room.join(
+            participant_id="member-2",
+            actor_type=ActorType.MEMBER,
+            private_access_verified=False,
+        ),
+    )
+
+    joined = room.join(
+        participant_id="member-2",
+        actor_type=ActorType.MEMBER,
+        private_access_verified=True,
+    )
+
+    assert joined.participant_id == "member-2"
+    assert room.state_version == 2
+
+
+def test_public_room_join_does_not_require_private_access_verification() -> None:
+    room = create_room()
+
+    joined = room.join(participant_id="guest-1", actor_type=ActorType.GUEST)
+
+    assert joined.participant_id == "guest-1"
 
 
 @pytest.mark.parametrize(
