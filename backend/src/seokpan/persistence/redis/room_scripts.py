@@ -112,7 +112,12 @@ local function remove_vote(participant_id)
   if payload.active_vote_turn == nil or payload.active_vote_turn == cjson.null then
     return false
   end
-  return redis.call('HDEL', KEYS[8], participant_id) == 1
+  local coordinate = redis.call('HGET', KEYS[8], participant_id)
+  if not coordinate then return false end
+  redis.call('HDEL', KEYS[8], participant_id)
+  local remaining = redis.call('HINCRBY', KEYS[9], coordinate, -1)
+  if remaining <= 0 then redis.call('HDEL', KEYS[9], coordinate) end
+  return true
 end
 
 local function departure(previous_owner_id, new_owner_id, room_closed, termination)
@@ -155,7 +160,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=1,
+    version=2,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""

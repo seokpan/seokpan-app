@@ -91,6 +91,23 @@ class RedisKeyspace:
         suffix = "none" if turn_no is None else str(turn_no)
         return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:votes:{suffix}"
 
+    @staticmethod
+    def room_game(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:game"
+
+    @staticmethod
+    def room_board(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:board"
+
+    @staticmethod
+    def room_vote_tally(room_id: str, turn_no: int | None) -> str:
+        suffix = "none" if turn_no is None else str(turn_no)
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:vote-tally:{suffix}"
+
+    @staticmethod
+    def room_resolver(room_id: str, turn_no: int) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:resolver:{turn_no}"
+
 
 class VersionedJsonCodec:
     @staticmethod

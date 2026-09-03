@@ -243,6 +243,7 @@ class RedisRoomRuntimeAdapter:
             RedisKeyspace.room_request_expiries(room_id),
             RedisKeyspace.room_closed(room_id),
             RedisKeyspace.room_votes(room_id, active_vote_turn),
+            RedisKeyspace.room_vote_tally(room_id, active_vote_turn),
         )
 
     @staticmethod
