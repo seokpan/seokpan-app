@@ -126,7 +126,11 @@ Audit 결과가 하나라도 발견되었다는 사실만으로 자동 수정하
 - 기존 `game_participant.participant_id`의 UUID Backfill
 - `participant_id` NOT NULL·UNIQUE·CHECK 최종 제약
 - `game.room_id` 물리 타입 축소·NOT NULL 전환
-- Repository와 Result·Stats·Rating Transaction
+- Baseline·Migration 작업 자체에서의 Repository와 Result·Stats·Rating Transaction
 - Seed·Fixture의 운영 자동 입력
 
 위 항목은 실제 Audit 결과 검토와 별도 Issue·Migration·Provider 검증을 거친다. Offline SQL과 정적 Test 통과는 실제 MariaDB·MaxScale 적용 성공이 아니다.
+
+후속 Application 작업에서 작성한 Game Repository와 Result Transaction의 코드·멱등성
+경계는 [Game Persistence 경계](game-persistence.md)를 따른다. 이 후속 코드도 실제
+MariaDB·MaxScale 적용이나 Provider 검증 완료를 뜻하지 않는다.

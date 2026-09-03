@@ -1,0 +1,419 @@
+"""SQLAlchemy async adapter for durable Game history in MariaDB."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Sequence
+
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from seokpan.game.application import (
+    FinalizeGameCommand,
+    GameParticipantRecord,
+    OfficialMoveRecord,
+    PersistenceOutcome,
+    PersistenceRuleViolation,
+    StartGameCommand,
+)
+from seokpan.game.domain import EndReason, GameResult, GameStatus, MemberOutcome, Stone
+from seokpan.persistence.mariadb.models import (
+    GameParticipantRow,
+    GameResultRow,
+    GameRow,
+    MemberRow,
+    MemberStatsRow,
+    MoveRow,
+    RatingHistoryRow,
+)
+
+SessionFactory = Callable[[], AsyncSession]
+
+
+class MariaDBGamePersistenceAdapter:
+    """Persist Game facts while keeping one explicit transaction per command."""
+
+    def __init__(self, session_factory: SessionFactory) -> None:
+        self._session_factory = session_factory
+
+    async def start_game(self, command: StartGameCommand) -> PersistenceOutcome:
+        async def write(session: AsyncSession) -> PersistenceOutcome:
+            existing = await session.get(GameRow, command.game_id, with_for_update=True)
+            if existing is not None:
+                return await self._compare_existing_game(session, command, existing)
+            session.add(
+                GameRow(
+                    game_id=command.game_id,
+                    room_id=command.room_id,
+                    voting_time_seconds=command.voting_time_seconds,
+                    status="IN_PROGRESS",
+                    started_at=command.started_at,
+                    ended_at=None,
+                )
+            )
+            session.add_all(self._participant_rows(command.game_id, command.participants))
+            return PersistenceOutcome.CREATED
+
+        return await self._transaction(write, lambda: self._game_matches(command))
+
+    async def append_move(self, command: OfficialMoveRecord) -> PersistenceOutcome:
+        async def write(session: AsyncSession) -> PersistenceOutcome:
+            by_turn = await session.get(MoveRow, (command.game_id, command.turn_no))
+            by_move = (
+                await session.execute(
+                    select(MoveRow).where(
+                        MoveRow.game_id == command.game_id,
+                        MoveRow.move_no == command.move_no,
+                    )
+                )
+            ).scalar_one_or_none()
+            existing = by_turn if by_turn is not None else by_move
+            if existing is not None:
+                if self._move_matches(existing, command):
+                    return PersistenceOutcome.UNCHANGED
+                raise PersistenceRuleViolation("MOVE_SEQUENCE_CONFLICT")
+            session.add(self._move_row(command))
+            return PersistenceOutcome.CREATED
+
+        return await self._transaction(write, lambda: self._move_exists(command))
+
+    async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome:
+        async def write(session: AsyncSession) -> PersistenceOutcome:
+            game = await session.get(
+                GameRow,
+                command.result.game_id,
+                with_for_update=True,
+            )
+            if game is None:
+                raise PersistenceRuleViolation("GAME_NOT_FOUND")
+            existing = await session.get(
+                GameResultRow,
+                command.result.game_id,
+                with_for_update=True,
+            )
+            if existing is not None:
+                if await self._result_is_complete(session, existing, command):
+                    return PersistenceOutcome.UNCHANGED
+                raise PersistenceRuleViolation("GAME_RESULT_CONFLICT")
+            if game.status != "IN_PROGRESS":
+                raise PersistenceRuleViolation("GAME_STATUS_CONFLICT")
+
+            members = await self._lock_members(session, command.result)
+            result_row = self._result_row(command)
+            session.add(result_row)
+            game.status = self._game_status(command.result.status)
+            game.ended_at = command.ended_at
+            if command.result.stats_eligible:
+                await self._apply_member_updates(session, command.result, members)
+            result_row.reflected_to_stats = True
+            return PersistenceOutcome.CREATED
+
+        return await self._transaction(write, lambda: self._result_exists(command))
+
+    async def _transaction(
+        self,
+        write: Callable[[AsyncSession], Awaitable[PersistenceOutcome]],
+        verify_after_error: Callable[[], Awaitable[bool]],
+    ) -> PersistenceOutcome:
+        async with self._session_factory() as session:
+            await session.begin()
+            try:
+                outcome = await write(session)
+                await session.flush()
+                await session.commit()
+                return outcome
+            except PersistenceRuleViolation:
+                await session.rollback()
+                raise
+            except SQLAlchemyError as error:
+                await session.rollback()
+                try:
+                    if await verify_after_error():
+                        return PersistenceOutcome.UNCHANGED
+                except SQLAlchemyError:
+                    pass
+                raise PersistenceRuleViolation("PERSISTENCE_COMMIT_UNCERTAIN") from error
+
+    async def _compare_existing_game(
+        self,
+        session: AsyncSession,
+        command: StartGameCommand,
+        existing: GameRow,
+    ) -> PersistenceOutcome:
+        participants = (
+            (
+                await session.execute(
+                    select(GameParticipantRow).where(GameParticipantRow.game_id == command.game_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if self._game_row_matches(existing, command) and self._participants_match(
+            participants, command.participants
+        ):
+            return PersistenceOutcome.UNCHANGED
+        raise PersistenceRuleViolation("GAME_START_CONFLICT")
+
+    async def _game_matches(self, command: StartGameCommand) -> bool:
+        async with self._session_factory() as session:
+            existing = await session.get(GameRow, command.game_id)
+            if existing is None:
+                return False
+            participants = (
+                (
+                    await session.execute(
+                        select(GameParticipantRow).where(
+                            GameParticipantRow.game_id == command.game_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if self._game_row_matches(existing, command) and self._participants_match(
+                participants, command.participants
+            ):
+                return True
+            raise PersistenceRuleViolation("GAME_START_CONFLICT")
+
+    async def _move_exists(self, command: OfficialMoveRecord) -> bool:
+        async with self._session_factory() as session:
+            by_turn = await session.get(MoveRow, (command.game_id, command.turn_no))
+            by_move = (
+                await session.execute(
+                    select(MoveRow).where(
+                        MoveRow.game_id == command.game_id,
+                        MoveRow.move_no == command.move_no,
+                    )
+                )
+            ).scalar_one_or_none()
+            existing = by_turn if by_turn is not None else by_move
+            if existing is None:
+                return False
+            if self._move_matches(existing, command):
+                return True
+            raise PersistenceRuleViolation("MOVE_SEQUENCE_CONFLICT")
+
+    async def _result_exists(self, command: FinalizeGameCommand) -> bool:
+        async with self._session_factory() as session:
+            existing = await session.get(GameResultRow, command.result.game_id)
+            if existing is None:
+                return False
+            if await self._result_is_complete(session, existing, command):
+                return True
+            raise PersistenceRuleViolation("GAME_RESULT_CONFLICT")
+
+    async def _result_is_complete(
+        self,
+        session: AsyncSession,
+        row: GameResultRow,
+        command: FinalizeGameCommand,
+    ) -> bool:
+        if not row.reflected_to_stats or not self._result_matches(row, command):
+            return False
+        histories = (
+            (
+                await session.execute(
+                    select(RatingHistoryRow).where(
+                        RatingHistoryRow.game_id == command.result.game_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        actual = {
+            (item.member_id, item.rating_before, item.rating_after, item.rating_delta)
+            for item in histories
+        }
+        expected = {
+            (
+                item.member_id,
+                item.rating_before,
+                item.rating_after,
+                item.rating_delta,
+            )
+            for item in command.result.rating_adjustments
+        }
+        return actual == expected
+
+    async def _lock_members(
+        self,
+        session: AsyncSession,
+        result: GameResult,
+    ) -> dict[int, MemberRow]:
+        member_ids = sorted(item.member_id for item in result.rating_adjustments)
+        if not member_ids:
+            return {}
+        rows = (
+            (
+                await session.execute(
+                    select(MemberRow)
+                    .where(MemberRow.member_id.in_(member_ids))
+                    .order_by(MemberRow.member_id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        members = {row.member_id: row for row in rows}
+        if set(members) != set(member_ids):
+            raise PersistenceRuleViolation("MEMBER_NOT_FOUND")
+        return members
+
+    async def _apply_member_updates(
+        self,
+        session: AsyncSession,
+        result: GameResult,
+        members: dict[int, MemberRow],
+    ) -> None:
+        for adjustment in sorted(result.rating_adjustments, key=lambda item: item.member_id):
+            member = members[adjustment.member_id]
+            if member.rating != adjustment.rating_before:
+                raise PersistenceRuleViolation("STALE_MEMBER_RATING")
+            stats = await session.get(
+                MemberStatsRow,
+                adjustment.member_id,
+                with_for_update=True,
+            )
+            if stats is None:
+                stats = MemberStatsRow(
+                    member_id=adjustment.member_id,
+                    wins=0,
+                    draws=0,
+                    losses=0,
+                    games_played=0,
+                )
+                session.add(stats)
+            stats.games_played += 1
+            if adjustment.outcome is MemberOutcome.WIN:
+                stats.wins += 1
+            elif adjustment.outcome is MemberOutcome.DRAW:
+                stats.draws += 1
+            else:
+                stats.losses += 1
+            member.rating = adjustment.rating_after
+            session.add(
+                RatingHistoryRow(
+                    member_id=adjustment.member_id,
+                    game_id=result.game_id,
+                    rating_before=adjustment.rating_before,
+                    rating_after=adjustment.rating_after,
+                    rating_delta=adjustment.rating_delta,
+                )
+            )
+
+    @staticmethod
+    def _participant_rows(
+        game_id: str,
+        participants: tuple[GameParticipantRecord, ...],
+    ) -> list[GameParticipantRow]:
+        return [
+            GameParticipantRow(
+                game_id=game_id,
+                participant_id=item.participant_id,
+                team=item.team.value,
+                member_id=item.member_id,
+                is_guest=item.member_id is None,
+                guest_label=item.guest_label,
+            )
+            for item in participants
+        ]
+
+    @staticmethod
+    def _move_row(command: OfficialMoveRecord) -> MoveRow:
+        return MoveRow(
+            game_id=command.game_id,
+            turn_no=command.turn_no,
+            move_no=command.move_no,
+            team=command.team.value,
+            pos_x=command.coordinate.column - 1,
+            pos_y=command.coordinate.row - 1,
+            final_vote_count=command.final_vote_count,
+            valid_voter_count=command.valid_voter_count,
+            confirmed_at=command.confirmed_at,
+        )
+
+    @staticmethod
+    def _result_row(command: FinalizeGameCommand) -> GameResultRow:
+        return GameResultRow(
+            game_id=command.result.game_id,
+            winner=MariaDBGamePersistenceAdapter._winner(command.result),
+            end_reason=MariaDBGamePersistenceAdapter._end_reason(command.result.end_reason),
+            reflected_to_stats=False,
+            ended_at=command.ended_at,
+        )
+
+    @staticmethod
+    def _game_row_matches(row: GameRow, command: StartGameCommand) -> bool:
+        return (
+            row.room_id == command.room_id
+            and row.voting_time_seconds == command.voting_time_seconds
+            and row.status == "IN_PROGRESS"
+            and row.started_at == command.started_at
+            and row.ended_at is None
+        )
+
+    @staticmethod
+    def _participants_match(
+        rows: Sequence[GameParticipantRow],
+        expected: tuple[GameParticipantRecord, ...],
+    ) -> bool:
+        actual_values = {
+            (row.participant_id, row.team, row.member_id, row.guest_label, row.is_guest)
+            for row in rows
+        }
+        expected_values = {
+            (
+                item.participant_id,
+                item.team.value,
+                item.member_id,
+                item.guest_label,
+                item.member_id is None,
+            )
+            for item in expected
+        }
+        return actual_values == expected_values
+
+    @staticmethod
+    def _move_matches(row: MoveRow, command: OfficialMoveRecord) -> bool:
+        return (
+            row.game_id == command.game_id
+            and row.turn_no == command.turn_no
+            and row.move_no == command.move_no
+            and row.team == command.team.value
+            and row.pos_x == command.coordinate.column - 1
+            and row.pos_y == command.coordinate.row - 1
+            and row.final_vote_count == command.final_vote_count
+            and row.valid_voter_count == command.valid_voter_count
+            and row.confirmed_at == command.confirmed_at
+        )
+
+    @staticmethod
+    def _result_matches(row: GameResultRow, command: FinalizeGameCommand) -> bool:
+        return (
+            row.winner == MariaDBGamePersistenceAdapter._winner(command.result)
+            and row.end_reason
+            == MariaDBGamePersistenceAdapter._end_reason(command.result.end_reason)
+            and row.ended_at == command.ended_at
+        )
+
+    @staticmethod
+    def _game_status(status: GameStatus) -> str:
+        return "SYSTEM_INVALID" if status is GameStatus.SYSTEM_INVALID else "COMPLETED"
+
+    @staticmethod
+    def _winner(result: GameResult) -> str:
+        if result.end_reason is EndReason.DRAW:
+            return "DRAW"
+        return result.winner.value if result.winner is not Stone.EMPTY else "NONE"
+
+    @staticmethod
+    def _end_reason(reason: EndReason) -> str:
+        if reason in {EndReason.BLACK_WIN, EndReason.WHITE_WIN}:
+            return "NORMAL_WIN"
+        if reason is EndReason.JOINT_LOSS:
+            return "MUTUAL_FORFEIT"
+        return reason.value
