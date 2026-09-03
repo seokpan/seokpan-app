@@ -96,6 +96,8 @@ async def test_new_generation_supersedes_old_and_stale_disconnect_is_ignored(
         ConnectRoomParticipant("room-1", "connect-1", "member-1", digest("b"), 1)
     )
     assert connected.connection_generation == 2
+    assert connected.snapshot is not None
+    assert connected.snapshot.state_version == 1
 
     stale = await room_harness.adapter.disconnect(
         DisconnectRoomParticipant("room-1", "disconnect-old", "member-1", 1, 1)
@@ -162,6 +164,7 @@ async def test_owner_disconnect_immediately_promotes_member_and_clears_ready(
     )
     assert reconnected.snapshot is not None
     assert reconnected.snapshot.owner_id == "member-2"
+    assert reconnected.snapshot.state_version == expected_version + 2
 
 
 @pytest.mark.asyncio
@@ -217,6 +220,7 @@ async def test_last_member_departure_closes_room_with_tombstone_without_game_los
     result = await room_harness.adapter.leave(LeaveRoomRuntime("room-1", "leave-1", "member-1", 1))
 
     assert result.room_closed is True
+    assert result.snapshot is None
     assert result.game_termination is GameTermination.NONE
     assert await room_harness.adapter.get("room-1") is None
     assert room_harness.observable.has_tombstone("room-1")
