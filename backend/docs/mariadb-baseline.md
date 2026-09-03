@@ -29,6 +29,47 @@ SEOKPAN_MIGRATION_DATABASE_URL # db_admin, Migration Job/승인 절차 전용
 
 정상 Backend Pod에는 Migration Credential을 주입하지 않는다. 실제 값은 Secret 경로로 전달하고 Git·문서·로그에 남기지 않는다.
 
+## 단일 Migration 실행 자산
+
+Repository에서 검증하는 실행 진입점은 `seokpan-migration-gate`다. 이 도구는
+`SEOKPAN_MIGRATION_DATABASE_URL`을 소비하지만 Credential이나 전체 URL을 출력하지 않는다.
+
+지원 작업:
+
+```text
+current         # 현재 Revision 조회, 읽기 전용
+stamp-baseline  # 기존 7개 Table DB를 20260901_0001로 Stamp
+upgrade-head    # 승인된 Revision Chain을 head까지 적용
+```
+
+모든 작업은 기대 Host·Port·Database와 실제 URL을 먼저 비교한다. 변경 작업은
+`--execute`와 별도 Runtime 승인 기록을 가리키는 `--approval-ref`가 모두 없으면 거부한다.
+이 검사는 Backup·Replication·Rollback 확인이나 사람의 승인을 대체하지 않는다.
+명령은 `alembic.ini`와 `migrations/`가 함께 있는 Backend 작업 디렉터리에서 실행한다.
+향후 Container Image도 이 두 실행 자산을 포함해야 한다.
+
+예시의 URL과 승인 참조는 실제 값이 아니다.
+
+```bash
+export SEOKPAN_MIGRATION_DATABASE_URL='<db_admin-secret-url>'
+
+uv run seokpan-migration-gate current \
+  --expect-host db.seokpan.soldesk.store \
+  --expect-database stone_game
+
+uv run seokpan-migration-gate stamp-baseline \
+  --expect-host db.seokpan.soldesk.store \
+  --expect-database stone_game \
+  --approval-ref '<approved-runtime-record>' \
+  --execute
+```
+
+`db.seokpan.soldesk.store`는 현재 Infra Endpoint Registry의 Canonical DB Endpoint다.
+공식 공용 문서 반영과 MaxScale TLS 연결 방식이 확정되기 전에는 위 예시를 실제 실행
+승인으로 해석하지 않는다. 이후 Kubernetes 실행 자산은 이 CLI를 정확한 Backend Image
+Digest와 Migration 전용 Secret으로 한 번만 호출하며, 정상 Backend Deployment에는
+포함하지 않는다.
+
 ## 빈 Database
 
 Infra가 빈 `stone_game` Database와 Migration 계정을 준비한 뒤 승인된 단일 실행에서 다음 Revision Chain을 적용한다.
