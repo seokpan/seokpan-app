@@ -10,6 +10,10 @@ CPython 3.13.15와 FastAPI 0.141.1을 기반으로 인증, 방 관리, 게임 �
 
 MariaDB는 기존 7개 Table을 [v1 Alembic Baseline](docs/mariadb-baseline.md)으로 채택합니다. Identity와 Game Runtime Credential은 분리하고 Migration Credential은 정상 Backend 실행에서 격리합니다. 실제 Runtime DB 적용은 별도 Provider 검토·승인을 거칩니다.
 
+Alembic의 실제 DB 변경 진입점은 `seokpan-migration-gate`로 제한합니다. 읽기 전용
+`current` 외 작업은 정확한 대상 확인, `--execute`, 별도 Runtime 승인 참조를 모두 요구합니다.
+구체 절차와 중단 조건은 [MariaDB 적용 경계](docs/mariadb-baseline.md)를 따릅니다.
+
 ## Development
 
 uv 0.12.5를 사용하며 `pyproject.toml`의 `required-version`으로 다른 버전의 실행을 거부합니다. Windows 전역 uv를 프로젝트 기준으로 사용하지 않으며, 실제 Linux Container·CI에서도 uv 0.12.5를 명시적으로 설치해 같은 Lock을 사용합니다.
