@@ -23,6 +23,11 @@ class RoomStatus(StrEnum):
     CLOSED = "CLOSED"
 
 
+class RoomVisibility(StrEnum):
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
+
+
 class ParticipantRole(StrEnum):
     PLAYER = "PLAYER"
     SPECTATOR = "SPECTATOR"
@@ -49,6 +54,7 @@ class RoomRuleViolation(ValueError):
 @dataclass(frozen=True, slots=True)
 class RoomConfig:
     name: str
+    visibility: RoomVisibility = RoomVisibility.PUBLIC
     max_participants: int = 100
     minimum_ready: int = 4
     vote_seconds: int = 15
@@ -64,6 +70,10 @@ class RoomConfig:
         if self.vote_seconds not in {5, 10, 15, 30}:
             raise RoomRuleViolation("INVALID_VOTE_SECONDS")
         object.__setattr__(self, "name", normalized_name)
+
+    @property
+    def password_required(self) -> bool:
+        return self.visibility is RoomVisibility.PRIVATE
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +142,22 @@ class Room:
         self._next_joined_order = owner.joined_order + 1
 
     @classmethod
-    def create(cls, *, config: RoomConfig, owner_id: str, owner_type: ActorType) -> Room:
+    def create(
+        cls,
+        *,
+        config: RoomConfig,
+        owner_id: str,
+        owner_type: ActorType,
+        room_password: str | None = None,
+    ) -> Room:
         if owner_type is not ActorType.MEMBER:
             raise RoomRuleViolation("MEMBER_REQUIRED_TO_CREATE_ROOM")
+        if config.visibility is RoomVisibility.PUBLIC and room_password is not None:
+            raise RoomRuleViolation("INVALID_ROOM_PASSWORD")
+        if config.visibility is RoomVisibility.PRIVATE and (
+            room_password is None or not 4 <= len(room_password) <= 20
+        ):
+            raise RoomRuleViolation("INVALID_ROOM_PASSWORD")
         owner = Participant(
             participant_id=owner_id,
             actor_type=owner_type,
@@ -152,8 +175,16 @@ class Room:
         except KeyError as error:
             raise RoomRuleViolation("PARTICIPANT_NOT_FOUND") from error
 
-    def join(self, *, participant_id: str, actor_type: ActorType) -> Participant:
+    def join(
+        self,
+        *,
+        participant_id: str,
+        actor_type: ActorType,
+        private_access_verified: bool = False,
+    ) -> Participant:
         self._require_not_closed()
+        if self.config.password_required and not private_access_verified:
+            raise RoomRuleViolation("ROOM_PASSWORD_INVALID")
         if participant_id in self._participants:
             raise RoomRuleViolation("PARTICIPANT_ALREADY_JOINED")
         if len(self._participants) >= self.config.max_participants:

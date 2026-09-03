@@ -11,6 +11,7 @@ from seokpan.room.domain.model import (
     RoomConfig,
     RoomRuleViolation,
     RoomStatus,
+    RoomVisibility,
     RosterEntry,
     StartRoster,
     Team,
@@ -28,6 +29,7 @@ __all__ = [
     "RoomConfig",
     "RoomRuleViolation",
     "RoomStatus",
+    "RoomVisibility",
     "StartRoster",
     "Team",
 ]
