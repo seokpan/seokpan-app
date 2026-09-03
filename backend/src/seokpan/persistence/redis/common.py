@@ -58,6 +58,39 @@ class RedisKeyspace:
             return cls.member_sessions(actor_id)
         return cls.no_member_index()
 
+    @staticmethod
+    def room_meta(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:meta"
+
+    @staticmethod
+    def room_participants(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:participants"
+
+    @staticmethod
+    def room_ready(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:ready"
+
+    @staticmethod
+    def room_connections(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:connections"
+
+    @staticmethod
+    def room_requests(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:requests"
+
+    @staticmethod
+    def room_request_expiries(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:request-expiries"
+
+    @staticmethod
+    def room_closed(room_id: str) -> str:
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:closed"
+
+    @staticmethod
+    def room_votes(room_id: str, turn_no: int | None) -> str:
+        suffix = "none" if turn_no is None else str(turn_no)
+        return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:votes:{suffix}"
+
 
 class VersionedJsonCodec:
     @staticmethod
