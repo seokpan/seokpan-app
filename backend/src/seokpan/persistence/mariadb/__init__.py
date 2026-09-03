@@ -1,5 +1,6 @@
 """MariaDB mappings owned by the application."""
 
+from seokpan.persistence.mariadb.game_adapter import MariaDBGamePersistenceAdapter
 from seokpan.persistence.mariadb.models import (
     Base,
     GameParticipantRow,
@@ -19,5 +20,6 @@ __all__ = [
     "MemberRow",
     "MemberStatsRow",
     "MoveRow",
+    "MariaDBGamePersistenceAdapter",
     "RatingHistoryRow",
 ]
