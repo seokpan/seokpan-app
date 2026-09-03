@@ -14,3 +14,4 @@ class Settings(BaseSettings):
     instance_id: str = "local"
     identity_database_url: str | None = None
     game_database_url: str | None = None
+    redis_url: str | None = None
