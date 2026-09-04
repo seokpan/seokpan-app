@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from seokpan.api.identity import IdentityApiServices, identity_router
 from seokpan.api.problems import install_problem_handlers
+from seokpan.api.room import RoomApiServices, room_router
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
     AuthSessionService,
@@ -11,17 +12,25 @@ from seokpan.identity.application import (
 )
 from seokpan.persistence.memory import (
     InMemoryIdentityAdapter,
+    InMemoryRoomRuntimeAdapter,
     InMemorySessionAdapter,
     InMemorySessionWorkflow,
     ManualClock,
 )
-from seokpan.security import Argon2Parameters, Argon2PasswordHasher, SecretsTokenSource
+from seokpan.room.application import RoomApplicationService
+from seokpan.security import (
+    Argon2Parameters,
+    Argon2PasswordHasher,
+    Argon2RoomPassword,
+    SecretsTokenSource,
+)
 from seokpan.settings import Settings
 
 
 @dataclass(frozen=True, slots=True)
 class ApplicationServices:
     identity_api: IdentityApiServices
+    room_api: RoomApiServices | None = None
 
 
 def build_headless_services(settings: Settings) -> ApplicationServices:
@@ -36,12 +45,18 @@ def build_headless_services(settings: Settings) -> ApplicationServices:
         password_hasher,
         dummy_password_hash=dummy_hash,
     )
-    session_adapter = InMemorySessionAdapter(ManualClock())
+    clock = ManualClock()
+    room_service = RoomApplicationService(
+        InMemoryRoomRuntimeAdapter(clock),
+        Argon2RoomPassword(password_hasher),
+    )
+    session_adapter = InMemorySessionAdapter(clock)
     sessions = AuthSessionService(
-        InMemorySessionWorkflow(session_adapter),
+        InMemorySessionWorkflow(session_adapter, room_service),
         SecretsTokenSource(),
     )
-    return ApplicationServices(IdentityApiServices(settings, members, sessions))
+    identity_api = IdentityApiServices(settings, members, sessions, room_service)
+    return ApplicationServices(identity_api, RoomApiServices(identity_api, room_service))
 
 
 def create_app(
@@ -60,6 +75,8 @@ def create_app(
     install_problem_handlers(application)
     application.include_router(health_router)
     application.include_router(identity_router(resolved_services.identity_api))
+    if resolved_services.room_api is not None:
+        application.include_router(room_router(resolved_services.room_api))
     application.state.services = resolved_services
     return application
 

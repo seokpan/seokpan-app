@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from seokpan.identity.application import IdentityRuleViolation, SessionRuleViolation
 from seokpan.identity.application.auth_session import SessionTransitionUnavailable
+from seokpan.room.domain import RoomRuleViolation
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -23,6 +24,8 @@ class ApiProblem(Exception):
     status: int
     code: str
     title: str
+    current_version: int | None = None
+    snapshot_url: str | None = None
 
 
 class ProblemResponse(BaseModel):
@@ -34,12 +37,14 @@ class ProblemResponse(BaseModel):
     code: str
     request_id: str
     errors: list[dict[str, str]] | None = None
+    current_version: int | None = None
+    snapshot_url: str | None = None
 
 
 _IDENTITY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"description": "Authentication failed or is required"},
     403: {"description": "Origin or CSRF validation failed"},
-    409: {"description": "Login ID or nickname conflict"},
+    409: {"description": "Identity or active Room state conflict"},
     422: {"description": "Request validation failed"},
     503: {"description": "Identity or Session service unavailable"},
 }
@@ -53,6 +58,18 @@ def identity_problem_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
     return {code: _IDENTITY_ERROR_RESPONSES[code] for code in codes}
 
 
+def room_problem_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
+    return {
+        code: {
+            "description": "Room request rejected",
+            "content": {
+                "application/problem+json": {"schema": ProblemResponse.model_json_schema()}
+            },
+        }
+        for code in codes
+    }
+
+
 def request_id(request: Request) -> str:
     supplied = request.headers.get("X-Request-ID", "")
     if _REQUEST_ID.fullmatch(supplied) is not None:
@@ -63,7 +80,22 @@ def request_id(request: Request) -> str:
 def install_problem_handlers(application: FastAPI) -> None:
     @application.exception_handler(ApiProblem)
     async def api_problem_handler(request: Request, error: ApiProblem) -> JSONResponse:
-        return _response(request, error.status, error.code, error.title)
+        return _response(
+            request,
+            error.status,
+            error.code,
+            error.title,
+            current_version=error.current_version,
+            snapshot_url=error.snapshot_url,
+        )
+
+    @application.exception_handler(RoomRuleViolation)
+    async def room_problem_handler(
+        request: Request,
+        error: RoomRuleViolation,
+    ) -> JSONResponse:
+        status, title = _room_status(error.code)
+        return _response(request, status, error.code, title)
 
     @application.exception_handler(IdentityRuleViolation)
     async def identity_problem_handler(
@@ -117,6 +149,28 @@ def _identity_status(code: str) -> tuple[int, str]:
     return 422, "Request validation failed"
 
 
+def _room_status(code: str) -> tuple[int, str]:
+    if code in {"ROOM_NOT_FOUND", "PARTICIPANT_NOT_FOUND"}:
+        return 404, "Room or participant not found"
+    if code in {
+        "ACTIVE_ROOM_IDENTITY_CHANGE_NOT_ALLOWED",
+        "ACTIVE_ROOM_MEMBER_CHANGE_NOT_ALLOWED",
+        "PARTICIPANT_ALREADY_JOINED",
+        "REQUEST_ID_CONFLICT",
+        "ROOM_ALREADY_EXISTS",
+        "ROOM_CAPACITY_REACHED",
+        "ROOM_RECENTLY_CLOSED",
+        "SESSION_ALREADY_IN_ROOM",
+        "STATE_VERSION_CONFLICT",
+    }:
+        return 409, "Room state conflict"
+    if code in {"MEMBER_REQUIRED_TO_CREATE_ROOM", "OWNER_REQUIRED", "SESSION_NOT_IN_ROOM"}:
+        return 403, "Room operation is not allowed"
+    if code == "ROOM_PASSWORD_INVALID":
+        return 401, "Room password is invalid"
+    return 422, "Room request is invalid"
+
+
 def _response(
     request: Request,
     status: int,
@@ -124,6 +178,8 @@ def _response(
     title: str,
     *,
     errors: list[dict[str, str]] | None = None,
+    current_version: int | None = None,
+    snapshot_url: str | None = None,
 ) -> JSONResponse:
     body: dict[str, object] = {
         "type": f"urn:seokpan:problem:{code.lower().replace('_', '-')}",
@@ -134,4 +190,8 @@ def _response(
     }
     if errors is not None:
         body["errors"] = errors
+    if current_version is not None:
+        body["current_version"] = current_version
+    if snapshot_url is not None:
+        body["snapshot_url"] = snapshot_url
     return JSONResponse(body, status_code=status, media_type="application/problem+json")

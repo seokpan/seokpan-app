@@ -459,6 +459,27 @@ def test_non_owner_departure_keeps_owner_and_room_open() -> None:
     assert room.state_version == version_before + 1
 
 
+def test_guest_identity_promotion_preserves_participant_state() -> None:
+    room = create_room()
+    room.join(participant_id="guest-1", actor_type=ActorType.GUEST)
+    room.change_team(participant_id="guest-1", team=Team.WHITE)
+    room.set_ready(participant_id="guest-1", ready=True)
+    version_before = room.state_version
+
+    room.change_identity(participant_id="guest-1", actor_type=ActorType.MEMBER)
+
+    promoted = room.participant("guest-1")
+    assert promoted.actor_type is ActorType.MEMBER
+    assert promoted.team is Team.WHITE
+    assert promoted.ready is True
+    assert room.state_version == version_before + 1
+    assert_rejected_without_mutation(
+        room,
+        "ROOM_IDENTITY_CHANGE_NOT_ALLOWED",
+        lambda: room.change_identity(participant_id="guest-1", actor_type=ActorType.GUEST),
+    )
+
+
 def test_platform_failure_cannot_be_recorded_as_participant_disconnect() -> None:
     room = create_room()
 

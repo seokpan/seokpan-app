@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Protocol
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Header, Request, Response, status
@@ -32,6 +32,11 @@ class IdentityApiServices:
     settings: Settings
     members: MemberIdentityService
     sessions: AuthSessionService
+    participations: SessionParticipationLookup | None = None
+
+
+class SessionParticipationLookup(Protocol):
+    def current_room(self, session_digest: str) -> tuple[str, str] | None: ...
 
 
 class IssuedSessionResponse(BaseModel):
@@ -75,6 +80,8 @@ class CurrentSessionResponse(BaseModel):
     actor_id: str
     display_name: str
     absolute_expires_at_ms: int
+    room_id: str | None = None
+    participant_id: str | None = None
 
 
 def identity_router(services: IdentityApiServices) -> APIRouter:
@@ -84,7 +91,7 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
         "/sessions/guest",
         response_model=IssuedSessionResponse,
         status_code=status.HTTP_201_CREATED,
-        responses=identity_problem_responses(403, 422, 503),
+        responses=identity_problem_responses(403, 409, 422, 503),
     )
     async def issue_guest_session(
         request: Request,
@@ -92,13 +99,13 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> IssuedSessionResponse:
-        current = await _state_change_context(services, request, session_cookie, csrf_token)
+        current = await state_change_context(services, request, session_cookie, csrf_token)
         issued = await services.sessions.issue_guest(current)
         _set_session_cookie(response, services.settings, issued.token)
         return IssuedSessionResponse(
             actor_type=issued.record.actor_type,
             actor_id=issued.record.actor_id,
-            display_name=_guest_display_name(issued.record.actor_id),
+            display_name=guest_display_name(issued.record.actor_id),
             csrf_token=issued.csrf_token,
             absolute_expires_at_ms=issued.record.absolute_expires_at_ms,
         )
@@ -115,7 +122,7 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> MemberResponse:
-        await _state_change_context(services, request, session_cookie, csrf_token)
+        await state_change_context(services, request, session_cookie, csrf_token)
         member = await services.members.register(
             RegisterMember(payload.login_id, payload.nickname, payload.password)
         )
@@ -124,7 +131,7 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
     @router.post(
         "/sessions/member",
         response_model=IssuedSessionResponse,
-        responses=identity_problem_responses(401, 403, 422, 503),
+        responses=identity_problem_responses(401, 403, 409, 422, 503),
     )
     async def login_member(
         payload: MemberLoginRequest,
@@ -133,7 +140,7 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> IssuedSessionResponse:
-        current = await _state_change_context(services, request, session_cookie, csrf_token)
+        current = await state_change_context(services, request, session_cookie, csrf_token)
         authenticated = await services.members.authenticate(
             AuthenticateMember(payload.login_id, payload.password)
         )
@@ -155,7 +162,7 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
     async def current_session(
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
     ) -> CurrentSessionResponse:
-        current = await _require_current(services, session_cookie, touch=True)
+        current = await require_current_session(services, session_cookie, touch=True)
         return await _current_response(services, current)
 
     @router.delete(
@@ -169,9 +176,9 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> None:
-        _require_allowed_origin(services.settings, request)
-        current = await _require_current(services, session_cookie)
-        _require_csrf(current, csrf_token)
+        require_allowed_origin(services.settings, request)
+        current = await require_current_session(services, session_cookie)
+        require_csrf(current, csrf_token)
         await services.sessions.logout(current)
         response.delete_cookie(
             SESSION_COOKIE,
@@ -184,23 +191,23 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
     return router
 
 
-async def _state_change_context(
+async def state_change_context(
     services: IdentityApiServices,
     request: Request,
     raw_session: str | None,
     csrf_token: str | None,
 ) -> SessionRecord | None:
-    _require_allowed_origin(services.settings, request)
+    require_allowed_origin(services.settings, request)
     if raw_session is None:
         return None
     current = await services.sessions.find(digest_opaque_token(raw_session))
     if current is None:
         return None
-    _require_csrf(current, csrf_token)
+    require_csrf(current, csrf_token)
     return current
 
 
-async def _require_current(
+async def require_current_session(
     services: IdentityApiServices,
     raw_session: str | None,
     *,
@@ -217,7 +224,7 @@ async def _require_current(
     return current
 
 
-def _require_csrf(current: SessionRecord, raw_csrf: str | None) -> None:
+def require_csrf(current: SessionRecord, raw_csrf: str | None) -> None:
     if raw_csrf is None:
         raise ApiProblem(403, "CSRF_INVALID", "CSRF validation failed")
     supplied = digest_opaque_token(raw_csrf)
@@ -225,7 +232,7 @@ def _require_csrf(current: SessionRecord, raw_csrf: str | None) -> None:
         raise ApiProblem(403, "CSRF_INVALID", "CSRF validation failed")
 
 
-def _require_allowed_origin(settings: Settings, request: Request) -> None:
+def require_allowed_origin(settings: Settings, request: Request) -> None:
     origin = request.headers.get("Origin")
     if origin is None:
         referer = request.headers.get("Referer")
@@ -243,7 +250,7 @@ async def _current_response(
     current: SessionRecord,
 ) -> CurrentSessionResponse:
     if current.actor_type is SessionActorType.GUEST:
-        display_name = _guest_display_name(current.actor_id)
+        display_name = guest_display_name(current.actor_id)
     else:
         try:
             member_id = int(current.actor_id)
@@ -253,11 +260,18 @@ async def _current_response(
         if member is None:
             raise ApiProblem(401, "AUTH_REQUIRED", "Authentication required")
         display_name = member.nickname
+    participation = (
+        None
+        if services.participations is None
+        else services.participations.current_room(current.session_digest)
+    )
     return CurrentSessionResponse(
         actor_type=current.actor_type,
         actor_id=current.actor_id,
         display_name=display_name,
         absolute_expires_at_ms=current.absolute_expires_at_ms,
+        room_id=None if participation is None else participation[0],
+        participant_id=None if participation is None else participation[1],
     )
 
 
@@ -270,7 +284,7 @@ def _member_response(member: Member) -> MemberResponse:
     )
 
 
-def _guest_display_name(actor_id: str) -> str:
+def guest_display_name(actor_id: str) -> str:
     number = int(hashlib.sha256(actor_id.encode("utf-8")).hexdigest()[:8], 16) % 10_000
     return f"Guest-{number:04d}"
 

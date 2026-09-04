@@ -160,7 +160,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=2,
+    version=3,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -246,6 +246,19 @@ if operation == 'change_team' then
     redis.call('SREM', KEYS[3], payload.participant_id)
     advance_version()
   end
+  return save({snapshot = snapshot()})
+end
+
+if operation == 'change_identity' then
+  if current_participant.actor_type == payload.actor_type then
+    return save({snapshot = snapshot()})
+  end
+  if current_participant.actor_type ~= 'GUEST' or payload.actor_type ~= 'MEMBER' then
+    return rejection('ROOM_IDENTITY_CHANGE_NOT_ALLOWED')
+  end
+  current_participant.actor_type = payload.actor_type
+  store_participant(payload.participant_id, current_participant)
+  advance_version()
   return save({snapshot = snapshot()})
 end
 

@@ -19,6 +19,7 @@ from seokpan.persistence.redis.common import RedisKeyspace, VersionedJsonCodec
 from seokpan.persistence.redis.session_adapter import RedisSessionAdapter
 from seokpan.persistence.redis.session_scripts import (
     CREATE_SESSION,
+    RESTORE_SESSION,
     REVOKE_SESSION,
     ROTATE_SESSION,
     TOUCH_SESSION,
@@ -45,7 +46,13 @@ class EmulatedRedisClient:
         self.loaded = (
             {
                 script.sha
-                for script in (CREATE_SESSION, TOUCH_SESSION, ROTATE_SESSION, REVOKE_SESSION)
+                for script in (
+                    CREATE_SESSION,
+                    TOUCH_SESSION,
+                    ROTATE_SESSION,
+                    RESTORE_SESSION,
+                    REVOKE_SESSION,
+                )
             }
             if scripts_loaded
             else set()
@@ -87,6 +94,22 @@ class EmulatedRedisClient:
                     replacement=command,
                 )
                 return self._session_response(record)
+            if sha == RESTORE_SESSION.sha:
+                previous = SessionRecord(
+                    session_digest=str(args[1]),
+                    actor_type=SessionActorType(str(args[2])),
+                    actor_id=str(args[3]),
+                    csrf_digest=str(args[4]),
+                    schema_version=int(str(args[5])),
+                    created_at_ms=int(str(args[6])),
+                    last_activity_at_ms=int(str(args[7])),
+                    absolute_expires_at_ms=int(str(args[8])),
+                )
+                record = await self.store.restore_after_failed_rotation(
+                    failed_replacement_digest=str(args[0]),
+                    previous=previous,
+                )
+                return self._session_response(record)
             if sha == REVOKE_SESSION.sha:
                 revoked = await self.store.revoke(str(args[0]))
                 return VersionedJsonCodec.encode(
@@ -100,7 +123,13 @@ class EmulatedRedisClient:
 
     async def script_load(self, script: str) -> str:
         self.script_load_calls.append(script)
-        for candidate in (CREATE_SESSION, TOUCH_SESSION, ROTATE_SESSION, REVOKE_SESSION):
+        for candidate in (
+            CREATE_SESSION,
+            TOUCH_SESSION,
+            ROTATE_SESSION,
+            RESTORE_SESSION,
+            REVOKE_SESSION,
+        ):
             if candidate.source == script:
                 self.loaded.add(candidate.sha)
                 return candidate.sha

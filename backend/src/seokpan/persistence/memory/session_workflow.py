@@ -43,11 +43,21 @@ class InMemorySessionWorkflow:
     ) -> SessionRecord:
         if self.fail_identity_change:
             raise SessionTransitionUnavailable
-        await self._participants.change_identity(previous, replacement)
         result = await self._sessions.rotate(
             previous_session_digest=previous.session_digest,
             replacement=replacement,
         )
+        try:
+            await self._participants.change_identity(previous, replacement)
+        except Exception:
+            try:
+                await self._sessions.restore_after_failed_rotation(
+                    failed_replacement_digest=replacement.session_digest,
+                    previous=previous,
+                )
+            except Exception as rollback_error:
+                raise SessionTransitionUnavailable from rollback_error
+            raise
         self.identity_changes.append((previous, replacement))
         return result
 

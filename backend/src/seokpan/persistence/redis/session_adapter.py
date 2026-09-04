@@ -25,6 +25,7 @@ from seokpan.persistence.redis.common import (
 )
 from seokpan.persistence.redis.session_scripts import (
     CREATE_SESSION,
+    RESTORE_SESSION,
     REVOKE_SESSION,
     ROTATE_SESSION,
     TOUCH_SESSION,
@@ -119,6 +120,35 @@ class RedisSessionAdapter:
         if not isinstance(revoked, bool):
             raise RedisProviderError("REDIS_RESPONSE_INVALID")
         return revoked
+
+    async def restore_after_failed_rotation(
+        self,
+        *,
+        failed_replacement_digest: str,
+        previous: SessionRecord,
+    ) -> SessionRecord:
+        validate_digest(failed_replacement_digest)
+        result = await self._scripts.execute(
+            RESTORE_SESSION,
+            keys=(
+                RedisKeyspace.session(failed_replacement_digest),
+                RedisKeyspace.session(previous.session_digest),
+                RedisKeyspace.session_index(previous.actor_type, previous.actor_id),
+            ),
+            args=(
+                failed_replacement_digest,
+                previous.session_digest,
+                previous.actor_type.value,
+                previous.actor_id,
+                previous.csrf_digest,
+                previous.schema_version,
+                previous.created_at_ms,
+                previous.last_activity_at_ms,
+                previous.absolute_expires_at_ms,
+                SESSION_IDLE_TTL_MS,
+            ),
+        )
+        return self._session_result(result, previous.session_digest)
 
     @classmethod
     def _session_result(cls, result: object, session_digest: str) -> SessionRecord:

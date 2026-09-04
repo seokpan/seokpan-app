@@ -5,6 +5,7 @@ import pytest
 from seokpan.room.application import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
+    ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
     ConnectRoomParticipant,
@@ -13,7 +14,7 @@ from seokpan.room.application import (
     LeaveRoomRuntime,
     SetRoomReady,
 )
-from seokpan.room.domain import GameTermination, RoomRuleViolation, RoomVisibility, Team
+from seokpan.room.domain import ActorType, GameTermination, RoomRuleViolation, RoomVisibility, Team
 
 from .conftest import RoomRuntimeHarness, create_room, digest, join_guest, join_member
 
@@ -85,6 +86,29 @@ async def test_team_ready_and_owner_setting_follow_domain_versioning(
     assert teamed.snapshot.state_version + 1 == readied.snapshot.state_version
     assert readied.snapshot.state_version + 1 == changed.snapshot.state_version
     assert all(not item.ready for item in changed.snapshot.participants)
+
+
+@pytest.mark.asyncio
+async def test_guest_identity_promotion_preserves_room_participant_state(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room())
+    await room_harness.adapter.join(join_guest("guest-1", request_id="join-guest"))
+    teamed = await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-guest", "guest-1", Team.WHITE, 2)
+    )
+    assert teamed.snapshot is not None
+
+    promoted = await room_harness.adapter.change_identity(
+        ChangeRoomIdentity("room-1", "identity-1", "guest-1", ActorType.MEMBER, 3)
+    )
+
+    assert promoted.snapshot is not None
+    participant = promoted.snapshot.participants[1]
+    assert participant.participant_id == "guest-1"
+    assert participant.actor_type is ActorType.MEMBER
+    assert participant.team is Team.WHITE
+    assert promoted.snapshot.state_version == 4
 
 
 @pytest.mark.asyncio

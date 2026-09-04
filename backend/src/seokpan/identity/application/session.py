@@ -95,4 +95,11 @@ class SessionPort(Protocol):
         replacement: CreateSession,
     ) -> SessionRecord: ...
 
+    async def restore_after_failed_rotation(
+        self,
+        *,
+        failed_replacement_digest: str,
+        previous: SessionRecord,
+    ) -> SessionRecord: ...
+
     async def revoke(self, session_digest: str) -> bool: ...
