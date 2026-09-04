@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -17,6 +18,8 @@ from seokpan.game.application.persistence import (
 from seokpan.game.domain import Coordinate, GameParticipantRole, Stone
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.room.application import (
+    NullRealtimeEventAdapter,
+    RealtimeEventPort,
     RoomApplicationService,
     RoomParticipation,
     RoomRuntimeSnapshot,
@@ -32,6 +35,8 @@ from seokpan.vote.application import (
 )
 from seokpan.vote.domain import ParticipantRole as VoteParticipantRole
 from seokpan.vote.domain import Voter, VoteRuleViolation
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MillisecondClock(Protocol):
@@ -65,11 +70,13 @@ class GameApplicationService:
         games: GamePersistencePort,
         votes: VoteRuntimePort,
         clock: MillisecondClock,
+        events: RealtimeEventPort | None = None,
     ) -> None:
         self._rooms = rooms
         self._games = games
         self._votes = votes
         self._clock = clock
+        self._events = events or NullRealtimeEventAdapter()
         self._starts: dict[tuple[str, str], _AllocatedStart] = {}
 
     async def start_game(
@@ -100,6 +107,7 @@ class GameApplicationService:
             request_id=request_id,
             game_id=allocated.game_id,
             expected_state_version=expected_state_version,
+            notify_realtime=False,
         )
         room = room_result.snapshot
         roster = room_result.start_roster
@@ -139,18 +147,24 @@ class GameApplicationService:
                 expected_state_version=1,
             )
         )
+        completed_before = (
+            persistence_outcome is PersistenceOutcome.UNCHANGED and vote_result.replayed
+        )
         replayed = (
             room_result.replayed
             or persistence_outcome is PersistenceOutcome.UNCHANGED
             or vote_result.replayed
         )
-        return GameApplicationSnapshot(
+        snapshot = GameApplicationSnapshot(
             room,
             vote_result.snapshot,
             participation.participant_id,
             self._clock.now_ms,
             replayed,
         )
+        if not completed_before:
+            await self._game_started(snapshot, request_id)
+        return snapshot
 
     async def get_game(
         self,
@@ -197,13 +211,16 @@ class GameApplicationService:
                 expected_state_version=expected_state_version,
             )
         )
-        return GameApplicationSnapshot(
+        snapshot = GameApplicationSnapshot(
             room,
             result.snapshot,
             participation.participant_id,
             self._clock.now_ms,
             result.replayed,
         )
+        if not result.replayed and result.snapshot.state_version != runtime.state_version:
+            await self._vote_tally_changed(snapshot, f"vote-cast:{request_id}")
+        return snapshot
 
     async def remove_vote(
         self,
@@ -226,13 +243,87 @@ class GameApplicationService:
                 expected_state_version=expected_state_version,
             )
         )
-        return GameApplicationSnapshot(
+        snapshot = GameApplicationSnapshot(
             room,
             result.snapshot,
             participation.participant_id,
             self._clock.now_ms,
             result.replayed,
         )
+        if not result.replayed and result.snapshot.state_version != runtime.state_version:
+            await self._vote_tally_changed(snapshot, f"vote-remove:{request_id}")
+        return snapshot
+
+    async def _game_started(self, snapshot: GameApplicationSnapshot, request_id: str) -> None:
+        game = snapshot.game
+        payload: dict[str, object] = {
+            "room_state_version": snapshot.room.state_version,
+            "game_state_version": game.state_version,
+            "turn_no": game.turn_no,
+            "current_team": game.current_team.value,
+            "deadline_ms": game.deadline_ms,
+        }
+        try:
+            await self._events.room_changed(
+                event_type="game.started",
+                event_key=f"game-start:{snapshot.room.room_id}:{request_id}",
+                room_id=snapshot.room.room_id,
+                game_id=game.game_id,
+                turn_no=game.turn_no,
+                payload=payload,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Game start realtime event delivery failed: room_id=%s game_id=%s",
+                snapshot.room.room_id,
+                game.game_id,
+            )
+        try:
+            await self._events.lobby_rooms_changed(
+                {"reason": "GAME_STARTED", "room_id": snapshot.room.room_id},
+                event_key=f"game-start:{snapshot.room.room_id}:{request_id}",
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Game start lobby event delivery failed: room_id=%s game_id=%s",
+                snapshot.room.room_id,
+                game.game_id,
+            )
+
+    async def _vote_tally_changed(
+        self,
+        snapshot: GameApplicationSnapshot,
+        event_key: str,
+    ) -> None:
+        game = snapshot.game
+        valid_voter_count = sum(
+            item.connected
+            and item.role is VoteParticipantRole.PLAYER
+            and item.team is game.current_team
+            for item in game.participants
+        )
+        try:
+            await self._events.room_changed(
+                event_type="vote.tally_changed",
+                event_key=event_key,
+                room_id=snapshot.room.room_id,
+                game_id=game.game_id,
+                turn_no=game.turn_no,
+                payload={
+                    "game_state_version": game.state_version,
+                    "tally": [
+                        {"coordinate": item.coordinate.canonical, "count": item.count}
+                        for item in game.tally
+                    ],
+                    "valid_voter_count": valid_voter_count,
+                },
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Vote tally realtime event delivery failed: room_id=%s game_id=%s",
+                snapshot.room.room_id,
+                game.game_id,
+            )
 
     async def _current(
         self,

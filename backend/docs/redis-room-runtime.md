@@ -14,7 +14,9 @@ stone:v1:room:{room_id}:connections
 stone:v1:room:{room_id}:requests
 stone:v1:room:{room_id}:request-expiries
 stone:v1:room:{room_id}:closed
+stone:v1:room:{room_id}:game
 stone:v1:room:{room_id}:votes:{turn_no}
+stone:v1:room:{room_id}:vote-tally:{turn_no}
 ```
 
 Room 전체를 하나의 JSON 값으로 저장하지 않는다. Meta와 참가자, Ready, Connection, 중복 요청을 분리하고 한 Room의 변경만 Lua에서 원자 처리한다. 상태 변경 명령은 `expected_state_version`을 검사하고 stale 명령을 `STATE_VERSION_CONFLICT`로 거부한다. 활성 Room Key에는 서로 다른 짧은 TTL을 두지 않는다.
@@ -40,7 +42,7 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 - 정상 Game Result 저장 뒤에는 Room Mutation Script v5의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거와 모든 Ready 해제를 한 번에 반영한다.
 - Room 종료에는 뒤따를 공개 Snapshot이 없으므로 삭제 직전 `state_version`을 따로 증가시키지 않는다. Key 삭제·Tombstone 생성·`room_closed` 종료 결과를 한 원자 처리로 반환하며, 후속 HTTP/WebSocket 계층은 이 종료 결과로 Room 종료와 Lobby 이동을 알린다.
 
-단절·퇴장 명령은 현재 Turn 번호가 주어진 경우 해당 참가자의 Vote를 같은 Hash Slot의 Vote Key에서 함께 제거한다. Vote 생성·교체·마감과 Resolver Lease는 후속 A-05c가 이 경계를 확장한다.
+단절·퇴장 명령은 현재 Turn 번호가 주어진 경우 해당 참가자의 마감 전 Vote와 집계를 같은 Hash Slot에서 함께 제거한다. 진행 중 PLAYER의 공개 연결 상태나 Vote가 바뀌면 Game/Vote JSON과 그 Resource Version도 같은 Lua 실행에서 한 번 갱신한다. Room Resource Version과 Game/Vote Resource Version은 별도로 유지하므로 Ready·설정처럼 Game과 무관한 Room 변경은 Game/Vote Version을 바꾸지 않는다.
 
 ## 멱등성과 오류
 

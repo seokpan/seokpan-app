@@ -32,19 +32,26 @@ class RealtimeEventPort(Protocol):
     @property
     def lobby_version(self) -> int: ...
 
+    def room_version(self, room_id: str) -> int: ...
+
     async def subscribe_lobby(self) -> RealtimeSubscription: ...
 
     async def subscribe_room(self, room_id: str) -> RealtimeSubscription: ...
 
-    async def lobby_rooms_changed(self, payload: Mapping[str, object]) -> None: ...
+    async def lobby_rooms_changed(
+        self,
+        payload: Mapping[str, object],
+        *,
+        event_key: str | None = None,
+    ) -> None: ...
 
     async def room_changed(
         self,
         *,
         event_type: str,
         room_id: str,
-        state_version: int,
         payload: Mapping[str, object],
+        event_key: str | None = None,
         game_id: str | None = None,
         turn_no: int | None = None,
     ) -> None: ...
@@ -57,6 +64,10 @@ class NullRealtimeEventAdapter:
     def lobby_version(self) -> int:
         return 1
 
+    def room_version(self, room_id: str) -> int:
+        del room_id
+        return 1
+
     async def subscribe_lobby(self) -> RealtimeSubscription:
         raise RuntimeError("REALTIME_SUBSCRIPTION_NOT_CONFIGURED")
 
@@ -64,17 +75,22 @@ class NullRealtimeEventAdapter:
         del room_id
         raise RuntimeError("REALTIME_SUBSCRIPTION_NOT_CONFIGURED")
 
-    async def lobby_rooms_changed(self, payload: Mapping[str, object]) -> None:
-        del payload
+    async def lobby_rooms_changed(
+        self,
+        payload: Mapping[str, object],
+        *,
+        event_key: str | None = None,
+    ) -> None:
+        del payload, event_key
 
     async def room_changed(
         self,
         *,
         event_type: str,
         room_id: str,
-        state_version: int,
         payload: Mapping[str, object],
+        event_key: str | None = None,
         game_id: str | None = None,
         turn_no: int | None = None,
     ) -> None:
-        del event_type, room_id, state_version, payload, game_id, turn_no
+        del event_type, room_id, payload, event_key, game_id, turn_no

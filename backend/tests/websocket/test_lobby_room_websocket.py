@@ -32,8 +32,13 @@ ORIGIN = "http://localhost:5173"
 
 
 class _FailingRealtimeEvents(InMemoryRealtimeEventAdapter):
-    async def lobby_rooms_changed(self, payload: Mapping[str, object]) -> None:
-        del payload
+    async def lobby_rooms_changed(
+        self,
+        payload: Mapping[str, object],
+        *,
+        event_key: str | None = None,
+    ) -> None:
+        del payload, event_key
         raise RuntimeError("EVENT_PROVIDER_UNAVAILABLE")
 
 
@@ -147,9 +152,10 @@ def _assert_event_envelope(value: dict[str, object]) -> None:
 def _next_room_event(socket: WebSocketTestSession) -> dict[str, object]:
     while True:
         value = cast(dict[str, object], socket.receive_json())
-        if value.get("event_type") != "snapshot.required" or value.get("payload") != {
-            "reason": "PARTICIPANT_CONNECTED"
-        }:
+        payload = cast(dict[str, object], value.get("payload", {}))
+        if value.get("event_type") != "snapshot.required" or payload.get("reason") != (
+            "PARTICIPANT_CONNECTED"
+        ):
             return value
 
 
@@ -458,7 +464,10 @@ def test_explicit_leave_closes_that_participants_room_socket(
                 headers={"Origin": ORIGIN, "X-CSRF-Token": guest_csrf},
                 json={
                     "request_id": str(uuid4()),
-                    "expected_state_version": snapshot["state_version"],
+                    "expected_state_version": cast(
+                        dict[str, object],
+                        cast(dict[str, object], snapshot["payload"])["room"],
+                    )["state_version"],
                 },
             )
             event = _next_room_event(socket)
@@ -497,7 +506,10 @@ def test_socket_disconnect_after_guest_to_member_transition_uses_participant_ide
             _upgrade_guest_to_member(guest, guest_csrf, "idmember")
             changed = _next_room_event(socket)
             assert changed["event_type"] == "snapshot.required"
-            assert changed["payload"] == {"reason": "PARTICIPANT_IDENTITY_CHANGED"}
+            assert cast(dict[str, object], changed["payload"])["reason"] == (
+                "PARTICIPANT_IDENTITY_CHANGED"
+            )
+            assert int(str(cast(dict[str, object], changed["payload"])["room_state_version"])) >= 1
 
         current = guest.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
         assert current.status_code == 200
@@ -626,6 +638,7 @@ def test_game_vote_is_removed_when_room_socket_disconnects(
 
         current = member.get(f"/api/v1/games/{game['game_id']}")
         assert current.status_code == 200
+        assert current.json()["state_version"] == first["payload"]["game"]["state_version"] + 1
         assert current.json()["vote_aggregation"] == []
         owner_state = next(
             item
@@ -633,6 +646,88 @@ def test_game_vote_is_removed_when_room_socket_disconnects(
             if item["participant_id"] == room["participants"][0]["participant_id"]
         )
         assert owner_state["connected"] is False
+        current_room = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert current_room.status_code == 200
+        assert current_room.json()["state_version"] == first["payload"]["room"]["state_version"] + 1
+
+
+def test_explicit_player_leave_removes_vote_and_updates_both_resources_once(
+    headless: tuple[FastAPI, ApplicationServices],
+) -> None:
+    application, _services = headless
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as member,
+    ):
+        owner_csrf = _member(owner, "lvowner")
+        room = _create_room(owner, owner_csrf)
+        member_csrf = _member(member, "lvmember")
+        room = _join(member, member_csrf, str(room["room_id"]), int(room["state_version"]))
+        for client, csrf, team in (
+            (owner, owner_csrf, "BLACK"),
+            (member, member_csrf, "WHITE"),
+        ):
+            room = _room_mutation(
+                client,
+                csrf,
+                f"/api/v1/rooms/{room['room_id']}/participants/me/team",
+                int(room["state_version"]),
+                team=team,
+            )
+            room = _room_mutation(
+                client,
+                csrf,
+                f"/api/v1/rooms/{room['room_id']}/participants/me/ready",
+                int(room["state_version"]),
+                ready=True,
+            )
+        game = _start_game(owner, owner_csrf, str(room["room_id"]), int(room["state_version"]))
+        vote = owner.put(
+            f"/api/v1/games/{game['game_id']}/turns/{game['turn_no']}/vote",
+            headers={"Origin": ORIGIN, "X-CSRF-Token": owner_csrf},
+            json={
+                "request_id": str(uuid4()),
+                "expected_state_version": game["state_version"],
+                "coordinate": "H8",
+            },
+        )
+        assert vote.status_code == 200, vote.text
+
+        with member.websocket_connect(
+            f"/ws/v1/rooms/{room['room_id']}", headers=_ws_headers(member)
+        ) as socket:
+            first = socket.receive_json()
+            room_before = first["payload"]["room"]["state_version"]
+            game_before = first["payload"]["game"]["state_version"]
+            left = owner.request(
+                "DELETE",
+                f"/api/v1/rooms/{room['room_id']}/participants/me",
+                headers={"Origin": ORIGIN, "X-CSRF-Token": owner_csrf},
+                json={
+                    "request_id": str(uuid4()),
+                    "expected_state_version": room_before,
+                },
+            )
+            events = tuple([_next_room_event(socket) for _ in range(3)])
+            current_game = member.get(f"/api/v1/games/{game['game_id']}")
+            current_room = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+
+        assert left.status_code == 200, left.text
+        assert tuple(item["event_type"] for item in events) == (
+            "room.participant_left",
+            "room.owner_changed",
+            "vote.tally_changed",
+        )
+        assert events[-1]["payload"]["tally"] == []
+        assert events[-1]["payload"]["valid_voter_count"] == 0
+        assert tuple(int(item["state_version"]) for item in events) == tuple(
+            range(int(events[0]["state_version"]), int(events[0]["state_version"]) + 3)
+        )
+        assert current_game.status_code == 200
+        assert current_room.status_code == 200
+        assert current_game.json()["state_version"] == game_before + 1
+        assert current_room.json()["state_version"] == room_before + 1
+        assert current_game.json()["vote_aggregation"] == []
 
 
 def test_waiting_room_close_notifies_guest_to_return_to_lobby(
@@ -730,13 +825,11 @@ async def test_slow_consumer_receives_snapshot_required_instead_of_unbounded_que
     await events.room_changed(
         event_type="room.ready_changed",
         room_id="room-1",
-        state_version=2,
         payload={},
     )
     await events.room_changed(
         event_type="room.team_changed",
         room_id="room-1",
-        state_version=3,
         payload={},
     )
 
@@ -745,6 +838,46 @@ async def test_slow_consumer_receives_snapshot_required_instead_of_unbounded_que
     assert overflow.event_type == "snapshot.required"
     assert overflow.payload == {"reason": "SLOW_CONSUMER"}
     assert overflow.state_version == 3
+    await subscription.close()
+
+
+@pytest.mark.asyncio
+async def test_room_stream_version_is_independent_and_reuses_stable_event_envelope() -> None:
+    events = InMemoryRealtimeEventAdapter()
+    subscription = await events.subscribe_room("room-1")
+
+    await events.room_changed(
+        event_type="room.ready_changed",
+        room_id="room-1",
+        event_key="room-ready:8",
+        payload={"room_state_version": 8},
+    )
+    first = await subscription.receive()
+    await events.room_changed(
+        event_type="vote.tally_changed",
+        room_id="room-1",
+        event_key="vote-change:41",
+        game_id="game-1",
+        turn_no=3,
+        payload={"game_state_version": 41},
+    )
+    second = await subscription.receive()
+    await events.room_changed(
+        event_type="vote.tally_changed",
+        room_id="room-1",
+        event_key="vote-change:41",
+        game_id="game-1",
+        turn_no=3,
+        payload={"game_state_version": 41},
+    )
+    replayed = await subscription.receive()
+
+    assert (first.state_version, second.state_version) == (2, 3)
+    assert first.payload["room_state_version"] == 8
+    assert second.payload["game_state_version"] == 41
+    assert replayed == second
+    assert events.room_version("room-1") == 3
+    assert events.room_version("room-2") == 1
     await subscription.close()
 
 
@@ -788,7 +921,8 @@ async def test_participant_left_event_is_delayed_until_disconnect_lease_expires(
     disconnected = await subscription.receive()
 
     assert disconnected.event_type == "snapshot.required"
-    assert disconnected.payload == {"reason": "PARTICIPANT_DISCONNECTED"}
+    assert disconnected.payload["reason"] == "PARTICIPANT_DISCONNECTED"
+    assert disconnected.payload["room_state_version"] == 3
     assert await runner.run_once() == ()
 
     clock.advance(30_000)
@@ -796,7 +930,10 @@ async def test_participant_left_event_is_delayed_until_disconnect_lease_expires(
     left = await subscription.receive()
 
     assert left.event_type == "room.participant_left"
-    assert left.payload == {"participant_id": joined.snapshot.participants[1].participant_id}
+    assert left.payload == {
+        "participant_id": joined.snapshot.participants[1].participant_id,
+        "room_state_version": 4,
+    }
     assert await runner.run_once() == ()
     await subscription.close()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -139,6 +140,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         end = StreamEnd.SHUTDOWN
         try:
             subscription = await services.events.subscribe_room(room_id)
+            snapshot_version = services.events.room_version(room_id)
             room = await services.rooms.rooms.get(room_id)
             if room is None:
                 raise RoomRuleViolation("ROOM_NOT_FOUND")
@@ -152,7 +154,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
             await websocket.send_json(
                 _snapshot_envelope(
                     "room.snapshot",
-                    room.state_version,
+                    snapshot_version,
                     {
                         "room": room_payload.model_dump(mode="json"),
                         "game": game_payload,
@@ -161,7 +163,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                     game_id=room.game_id,
                 )
             )
-            generation, connected_state_version = await services.connections.connect(
+            generation, _connected_state_version = await services.connections.connect(
                 session=current,
                 room_id=room_id,
             )
@@ -178,7 +180,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 replaced=replaced,
                 room_id=room_id,
                 participant_id=participation.participant_id,
-                state_version=connected_state_version,
+                state_version=lambda: services.events.room_version(room_id),
             )
         except WebSocketDisconnect:
             end = StreamEnd.CLIENT_DISCONNECT
@@ -230,7 +232,7 @@ async def _stream_events(
     replaced: asyncio.Event | None = None,
     room_id: str | None = None,
     participant_id: str | None = None,
-    state_version: int = 1,
+    state_version: Callable[[], int] | None = None,
 ) -> StreamEnd:
     receive_task = asyncio.create_task(websocket.receive())
     shutdown_task = asyncio.create_task(registry.wait_for_shutdown())
@@ -254,7 +256,7 @@ async def _stream_events(
                 await websocket.send_json(
                     _snapshot_envelope(
                         "connection.reconnect_required",
-                        state_version,
+                        1 if state_version is None else state_version(),
                         {"reason": "CONNECTION_REPLACED"},
                         room_id=room_id,
                     )

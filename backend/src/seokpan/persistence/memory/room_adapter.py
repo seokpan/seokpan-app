@@ -382,6 +382,14 @@ class InMemoryRoomRuntimeAdapter:
             command.active_vote_turn,
             command.participant_id,
         )
+        if self._vote_connections is not None:
+            vote_removed = (
+                await self._vote_connections.participant_disconnected(
+                    command.room_id,
+                    command.participant_id,
+                )
+                or vote_removed
+            )
         if departure.room_closed:
             return self._close(
                 command,
@@ -410,6 +418,14 @@ class InMemoryRoomRuntimeAdapter:
             command.active_vote_turn,
             command.participant_id,
         )
+        if self._vote_connections is not None:
+            vote_removed = (
+                await self._vote_connections.participant_disconnected(
+                    command.room_id,
+                    command.participant_id,
+                )
+                or vote_removed
+            )
         if departure.room_closed:
             return self._close(
                 command,

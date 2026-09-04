@@ -162,6 +162,7 @@ class TurnResolutionRunner:
         ):
             if not await self._games.game_is_finalized(due_turn.game_id):
                 return TurnProcessingResult(due_turn, TurnProcessingStatus.RETRY_REQUIRED)
+            await self._game_finished(due_turn, snapshot)
             await self._complete_room(due_turn)
             return TurnProcessingResult(due_turn, TurnProcessingStatus.GAME_ENDED)
         if snapshot.deadline_ms is not None and self._clock.now_ms < snapshot.deadline_ms:
@@ -188,10 +189,13 @@ class TurnResolutionRunner:
             if closed.closure is None:
                 raise VoteRuleViolation("TURN_CLOSURE_MISSING")
             if closed.closure.result is TurnResultKind.PASSED:
+                await self._turn_passed(due_turn, closed.snapshot)
                 return TurnProcessingResult(due_turn, TurnProcessingStatus.PASS)
             snapshot = closed.snapshot
         elif snapshot.turn_status is not TurnStatus.RESOLVING:
             return TurnProcessingResult(due_turn, TurnProcessingStatus.STALE)
+
+        await self._turn_resolving(due_turn, snapshot)
 
         try:
             leased = await self._votes.acquire_resolver(
@@ -265,8 +269,14 @@ class TurnResolutionRunner:
                 )
             raise
 
+        if resolution.result is TurnResultKind.JOINT_LOSS:
+            await self._turn_passed(due_turn, applied.snapshot)
+        else:
+            await self._move_applied(due_turn, leased.snapshot, applied.snapshot)
+
         if resolution.end_reason is None:
             return TurnProcessingResult(due_turn, TurnProcessingStatus.MOVE, applied.resolution)
+        await self._game_finished(due_turn, applied.snapshot)
         await self._complete_room(due_turn)
         return TurnProcessingResult(due_turn, TurnProcessingStatus.GAME_ENDED, applied.resolution)
 
@@ -414,7 +424,6 @@ class TurnResolutionRunner:
             await self._events.room_changed(
                 event_type="snapshot.required",
                 room_id=due_turn.room_id,
-                state_version=completed.snapshot.state_version,
                 game_id=due_turn.game_id,
                 payload={"reason": "GAME_COMPLETED"},
             )
@@ -434,6 +443,140 @@ class TurnResolutionRunner:
                 due_turn.room_id,
                 due_turn.game_id,
             )
+
+    async def _turn_resolving(
+        self,
+        due_turn: DueTurn,
+        snapshot: VoteRuntimeSnapshot,
+    ) -> None:
+        await self._emit(
+            due_turn,
+            "turn.resolving",
+            snapshot,
+            {
+                "game_state_version": snapshot.state_version,
+                "team": snapshot.current_team.value,
+                "tally": self._tally(snapshot),
+                "valid_voter_count": snapshot.valid_voter_count,
+                "candidates": [item.canonical for item in snapshot.candidates],
+            },
+        )
+
+    async def _turn_passed(
+        self,
+        due_turn: DueTurn,
+        snapshot: VoteRuntimeSnapshot,
+    ) -> None:
+        game_ended = snapshot.game_status is not GameStatus.ACTIVE
+        await self._emit(
+            due_turn,
+            "turn.passed",
+            snapshot,
+            {
+                "game_state_version": snapshot.state_version,
+                "completed_turn_no": due_turn.turn_no,
+                "next_turn_no": None if game_ended else snapshot.turn_no,
+                "next_team": None if game_ended else snapshot.current_team.value,
+                "deadline_ms": snapshot.deadline_ms,
+                "consecutive_passes": snapshot.consecutive_passes,
+            },
+        )
+
+    async def _move_applied(
+        self,
+        due_turn: DueTurn,
+        closed: VoteRuntimeSnapshot,
+        applied: VoteRuntimeSnapshot,
+    ) -> None:
+        stored = await self._games.get_move(due_turn.game_id, due_turn.turn_no)
+        if stored is None:
+            raise PersistenceRuleViolation("MOVE_NOT_FOUND")
+        await self._emit(
+            due_turn,
+            "game.move_applied",
+            applied,
+            {
+                "game_state_version": applied.state_version,
+                "move_no": stored.move_no,
+                "team": stored.team.value,
+                "coordinate": stored.coordinate.canonical,
+                "final_vote_count": stored.final_vote_count,
+                "valid_voter_count": stored.valid_voter_count,
+                "board": self._board(applied),
+                "next_turn_no": (
+                    applied.turn_no if applied.game_status is GameStatus.ACTIVE else None
+                ),
+                "next_team": (
+                    applied.current_team.value if applied.game_status is GameStatus.ACTIVE else None
+                ),
+                "deadline_ms": applied.deadline_ms,
+                "final_tally": self._tally(closed),
+            },
+        )
+
+    async def _game_finished(
+        self,
+        due_turn: DueTurn,
+        snapshot: VoteRuntimeSnapshot,
+    ) -> None:
+        if snapshot.end_reason is None:
+            raise VoteRuleViolation("GAME_END_REASON_MISSING")
+        winner = {
+            EndReason.BLACK_WIN: "BLACK",
+            EndReason.WHITE_WIN: "WHITE",
+        }.get(snapshot.end_reason)
+        await self._emit(
+            due_turn,
+            "game.finished",
+            snapshot,
+            {
+                "game_state_version": snapshot.state_version,
+                "end_reason": snapshot.end_reason.value,
+                "winner": winner,
+                "board": self._board(snapshot),
+            },
+        )
+
+    async def _emit(
+        self,
+        due_turn: DueTurn,
+        event_type: str,
+        snapshot: VoteRuntimeSnapshot,
+        payload: dict[str, object],
+    ) -> None:
+        try:
+            await self._events.room_changed(
+                event_type=event_type,
+                event_key=f"{event_type}:{due_turn.game_id}:{due_turn.turn_no}",
+                room_id=due_turn.room_id,
+                game_id=due_turn.game_id,
+                turn_no=due_turn.turn_no,
+                payload=payload,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Turn realtime event delivery failed: event_type=%s room_id=%s "
+                "game_id=%s turn_no=%s game_state_version=%s",
+                event_type,
+                due_turn.room_id,
+                due_turn.game_id,
+                due_turn.turn_no,
+                snapshot.state_version,
+            )
+
+    @staticmethod
+    def _tally(snapshot: VoteRuntimeSnapshot) -> list[dict[str, object]]:
+        return [
+            {"coordinate": item.coordinate.canonical, "count": item.count}
+            for item in snapshot.tally
+        ]
+
+    @staticmethod
+    def _board(snapshot: VoteRuntimeSnapshot) -> list[dict[str, object]]:
+        return [
+            {"coordinate": item.coordinate.canonical, "stone": item.stone.value}
+            for item in snapshot.occupied_cells
+        ]
 
     def _next_deadline(
         self,
