@@ -339,6 +339,15 @@ def test_guest_login_preserves_participant_and_member_switch_is_rejected(
             team="WHITE",
         )
         assert room is not None
+        room = _mutate(
+            guest,
+            guest_csrf,
+            "PUT",
+            f"/api/v1/rooms/{room['room_id']}/participants/me/ready",
+            int(room["state_version"]),
+            ready=True,
+        )
+        assert room is not None
         register = guest.post(
             "/api/v1/members",
             headers={"Origin": ORIGIN, "X-CSRF-Token": guest_csrf},
@@ -360,6 +369,7 @@ def test_guest_login_preserves_participant_and_member_switch_is_rejected(
         )
         assert promoted["actor_type"] == "MEMBER"
         assert promoted["team"] == "WHITE"
+        assert promoted["ready"] is True
         with TestClient(application, base_url=ORIGIN) as previous_session:
             previous_session.cookies.set("seokpan_session", previous_cookie)
             assert previous_session.get("/api/v1/session").status_code == 401

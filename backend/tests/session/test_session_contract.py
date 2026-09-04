@@ -84,6 +84,27 @@ async def test_rotation_replaces_guest_with_member_atomically(
 
 
 @pytest.mark.asyncio
+async def test_failed_follow_up_can_restore_the_exact_previous_session(
+    session_harness: SessionHarness,
+) -> None:
+    previous = await session_harness.adapter.create(guest_command())
+    await session_harness.adapter.rotate(
+        previous_session_digest=previous.session_digest,
+        replacement=member_command(),
+    )
+
+    restored = await session_harness.adapter.restore_after_failed_rotation(
+        failed_replacement_digest=digest("b"),
+        previous=previous,
+    )
+
+    assert restored == previous
+    assert await session_harness.adapter.get(digest("a")) == previous
+    assert await session_harness.adapter.get(digest("b")) is None
+    assert session_harness.member_sessions("42") == ()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_create_and_invalid_rotation_do_not_replace_state(
     session_harness: SessionHarness,
 ) -> None:

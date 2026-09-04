@@ -168,6 +168,67 @@ return response(true, replacement, cjson.null)
 """,
 )
 
+RESTORE_SESSION = VersionedLuaScript(
+    name="session-restore-after-failed-rotation",
+    version=1,
+    source=_COMMON
+    + """
+local failed_key = KEYS[1]
+local previous_key = KEYS[2]
+local previous_index_key = KEYS[3]
+local failed_digest = ARGV[1]
+local previous_digest = ARGV[2]
+local previous_actor_type = ARGV[3]
+local previous_actor_id = ARGV[4]
+local previous_csrf_digest = ARGV[5]
+local previous_schema_version = tonumber(ARGV[6])
+local previous_created_at_ms = tonumber(ARGV[7])
+local previous_last_activity_at_ms = tonumber(ARGV[8])
+local previous_absolute_expires_at_ms = tonumber(ARGV[9])
+local idle_ttl_ms = tonumber(ARGV[10])
+
+local failed_raw = redis.call('GET', failed_key)
+if not failed_raw then
+  return response(false, cjson.null, 'SESSION_NOT_FOUND')
+end
+if redis.call('EXISTS', previous_key) == 1 then
+  return response(false, cjson.null, 'SESSION_ALREADY_EXISTS')
+end
+
+local current_ms = now_ms()
+local idle_expires_at_ms = math.min(
+  previous_last_activity_at_ms + idle_ttl_ms,
+  previous_absolute_expires_at_ms
+)
+local failed = cjson.decode(failed_raw)
+local failed_index_key = member_index(failed.actor_type, failed.actor_id)
+redis.call('DEL', failed_key)
+if failed_index_key then
+  redis.call('ZREM', failed_index_key, failed_digest)
+  refresh_member_index(failed_index_key, current_ms)
+end
+if current_ms >= idle_expires_at_ms then
+  return response(false, cjson.null, 'SESSION_ROLLBACK_EXPIRED')
+end
+
+local previous = {
+  schema_version = previous_schema_version,
+  actor_type = previous_actor_type,
+  actor_id = previous_actor_id,
+  csrf_digest = previous_csrf_digest,
+  created_at_ms = previous_created_at_ms,
+  last_activity_at_ms = previous_last_activity_at_ms,
+  absolute_expires_at_ms = previous_absolute_expires_at_ms
+}
+redis.call('SET', previous_key, cjson.encode(previous), 'PXAT', idle_expires_at_ms)
+if previous_actor_type == 'MEMBER' then
+  redis.call('ZADD', previous_index_key, idle_expires_at_ms, previous_digest)
+  refresh_member_index(previous_index_key, current_ms)
+end
+return response(true, previous, cjson.null)
+""",
+)
+
 REVOKE_SESSION = VersionedLuaScript(
     name="session-revoke",
     version=1,

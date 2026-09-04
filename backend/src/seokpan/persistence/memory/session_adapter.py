@@ -85,6 +85,38 @@ class InMemorySessionAdapter:
         self._remove(previous.record)
         return self._store(replacement)
 
+    async def restore_after_failed_rotation(
+        self,
+        *,
+        failed_replacement_digest: str,
+        previous: SessionRecord,
+    ) -> SessionRecord:
+        """Restore the exact previous identity after a later Room step fails."""
+        validate_digest(failed_replacement_digest)
+        self._purge_expired()
+        failed_replacement = self._sessions.get(failed_replacement_digest)
+        if failed_replacement is None:
+            raise SessionRuleViolation("SESSION_NOT_FOUND")
+        if previous.session_digest in self._sessions:
+            raise SessionRuleViolation("SESSION_ALREADY_EXISTS")
+        idle_expires_at_ms = min(
+            previous.last_activity_at_ms + SESSION_IDLE_TTL_MS,
+            previous.absolute_expires_at_ms,
+        )
+        self._remove(failed_replacement.record)
+        if idle_expires_at_ms <= self._clock.now_ms:
+            raise SessionRuleViolation("SESSION_ROLLBACK_EXPIRED")
+
+        self._sessions[previous.session_digest] = _StoredSession(
+            record=previous,
+            idle_expires_at_ms=idle_expires_at_ms,
+        )
+        if previous.actor_type is SessionActorType.MEMBER:
+            self._member_sessions.setdefault(previous.actor_id, {})[previous.session_digest] = (
+                idle_expires_at_ms
+            )
+        return previous
+
     async def revoke(self, session_digest: str) -> bool:
         validate_digest(session_digest)
         self._purge_expired()
