@@ -1,0 +1,16 @@
+# 작성자: 최유준 / 작성 날짜: 2026-09-04
+tests/
+docs/
+migrations/audit/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+README.md
+*.egg-info/
+.coverage
+htmlcov/
