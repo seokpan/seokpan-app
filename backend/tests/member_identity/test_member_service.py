@@ -88,6 +88,20 @@ async def test_authentication_returns_member_and_rehash_signal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_member_returns_public_member_without_password_hash() -> None:
+    persistence = InMemoryIdentityAdapter()
+    identity = service(persistence, RecordingPasswordHasher())
+    stored = await persistence.create(
+        CreateMember("member_01", "돌장인", "$argon2id$test-member-hash")
+    )
+
+    member = await identity.find_member(stored.member.member_id)
+
+    assert member == stored.member
+    assert "$argon2id$" not in repr(member)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("login_id", "password", "expected_hash"),
     [

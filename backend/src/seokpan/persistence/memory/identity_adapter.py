@@ -19,6 +19,7 @@ class InMemoryIdentityAdapter:
         self._next_member_id = first_member_id
         self._by_login_id: dict[str, StoredMember] = {}
         self._by_nickname: dict[str, StoredMember] = {}
+        self._by_member_id: dict[int, StoredMember] = {}
 
     async def create(self, command: CreateMember) -> StoredMember:
         if command.login_id in self._by_login_id:
@@ -37,6 +38,7 @@ class InMemoryIdentityAdapter:
         self._next_member_id += 1
         self._by_login_id[command.login_id] = stored
         self._by_nickname[command.nickname] = stored
+        self._by_member_id[stored.member.member_id] = stored
         return stored
 
     async def find_by_login_id(self, login_id: str) -> StoredMember | None:
@@ -44,3 +46,6 @@ class InMemoryIdentityAdapter:
 
     async def find_by_nickname(self, nickname: str) -> StoredMember | None:
         return self._by_nickname.get(nickname)
+
+    async def find_by_member_id(self, member_id: int) -> StoredMember | None:
+        return self._by_member_id.get(member_id)
