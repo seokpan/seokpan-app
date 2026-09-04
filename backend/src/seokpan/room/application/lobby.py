@@ -41,6 +41,9 @@ from seokpan.room.domain import (
     RoomVisibility,
     Team,
 )
+from seokpan.vote.application import VoteRuntimePort, VoteRuntimeSnapshot
+from seokpan.vote.domain import ParticipantRole as VoteParticipantRole
+from seokpan.vote.domain import TurnStatus
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,10 +69,12 @@ class RoomApplicationService(ParticipantSessionPort):
         runtime: LobbyRoomRuntimePort,
         passwords: RoomPasswordPort,
         events: RealtimeEventPort | None = None,
+        votes: VoteRuntimePort | None = None,
     ) -> None:
         self._runtime = runtime
         self._passwords = passwords
         self._events = events or NullRealtimeEventAdapter()
+        self._votes = votes
         self._by_session: dict[str, RoomParticipation] = {}
         self._by_participant: dict[str, RoomParticipation] = {}
         self._allocated_ids: dict[tuple[str, str, str], tuple[str, str]] = {}
@@ -256,13 +261,25 @@ class RoomApplicationService(ParticipantSessionPort):
                 expected_state_version=expected_state_version,
             )
         )
+        if (
+            result.replayed
+            or result.snapshot is None
+            or result.snapshot.state_version == expected_state_version
+        ):
+            return result
         await self._room_changed(
             "room.settings_changed",
             result,
             room_id=participation.room_id,
             payload={"vote_seconds": vote_seconds},
         )
-        await self._lobby_changed("ROOM_SETTINGS_CHANGED", participation.room_id)
+        await self._lobby_changed(
+            "ROOM_SETTINGS_CHANGED",
+            participation.room_id,
+            event_key=(
+                f"room.settings_changed:{participation.room_id}:{result.snapshot.state_version}"
+            ),
+        )
         return result
 
     async def start_game(
@@ -272,6 +289,7 @@ class RoomApplicationService(ParticipantSessionPort):
         request_id: str,
         game_id: str,
         expected_state_version: int,
+        notify_realtime: bool = True,
     ) -> RoomMutationResult:
         participation = self._require_participation(session.session_digest)
         result = await self._runtime.start_game(
@@ -283,14 +301,15 @@ class RoomApplicationService(ParticipantSessionPort):
                 expected_state_version=expected_state_version,
             )
         )
-        await self._room_changed(
-            "snapshot.required",
-            result,
-            room_id=participation.room_id,
-            payload={"reason": "GAME_STARTED"},
-            game_id=game_id,
-        )
-        await self._lobby_changed("GAME_STARTED", participation.room_id)
+        if notify_realtime:
+            await self._room_changed(
+                "snapshot.required",
+                result,
+                room_id=participation.room_id,
+                payload={"reason": "GAME_STARTED"},
+                game_id=game_id,
+            )
+            await self._lobby_changed("GAME_STARTED", participation.room_id)
         return result
 
     async def leave_room(
@@ -306,17 +325,19 @@ class RoomApplicationService(ParticipantSessionPort):
         if replay is not None:
             return replay
         participation = self._require_participation(session.session_digest)
+        active_vote_turn = await self._active_vote_turn(participation.room_id)
         result = await self._runtime.leave(
             LeaveRoomRuntime(
                 room_id=participation.room_id,
                 request_id=request_id,
                 participant_id=participation.participant_id,
                 expected_state_version=expected_state_version,
+                active_vote_turn=active_vote_turn,
             )
         )
         if result.room_closed:
             self._unbind_room(participation.room_id)
-            await self._closed(participation.room_id, expected_state_version + 1)
+            await self._closed(participation.room_id)
         else:
             self._unbind(participation)
             await self._room_changed(
@@ -327,6 +348,11 @@ class RoomApplicationService(ParticipantSessionPort):
             )
             await self._owner_changed(result, participation.room_id)
         await self._lobby_changed("PARTICIPANT_LEFT", participation.room_id)
+        if result.vote_removed:
+            await self._vote_tally_changed(
+                participation.room_id,
+                f"vote-leave:{participation.participant_id}:{request_id}",
+            )
         self._results[key] = (fingerprint, result)
         return result
 
@@ -395,7 +421,6 @@ class RoomApplicationService(ParticipantSessionPort):
         active_vote_turn: int | None = None,
     ) -> RoomMutationResult:
         result: RoomMutationResult | None = None
-        closing_version = 1
         for attempt in range(3):
             snapshot = await self._runtime.get(room_id)
             if snapshot is None:
@@ -403,7 +428,6 @@ class RoomApplicationService(ParticipantSessionPort):
                 if participation is not None:
                     self._unbind(participation)
                 raise RoomRuleViolation("ROOM_NOT_FOUND")
-            closing_version = snapshot.state_version + 1
             try:
                 result = await self._runtime.disconnect(
                     DisconnectRoomParticipant(
@@ -424,7 +448,7 @@ class RoomApplicationService(ParticipantSessionPort):
             return result
         if result.room_closed:
             self._unbind_room(room_id)
-            await self._closed(room_id, closing_version)
+            await self._closed(room_id)
             await self._lobby_changed("ROOM_CLOSED", room_id)
             return result
         await self._owner_changed(result, room_id)
@@ -434,6 +458,11 @@ class RoomApplicationService(ParticipantSessionPort):
             room_id=room_id,
             payload={"reason": "PARTICIPANT_DISCONNECTED"},
         )
+        if result.vote_removed:
+            await self._vote_tally_changed(
+                room_id,
+                f"vote-disconnect:{participant_id}:{connection_generation}",
+            )
         return result
 
     async def expire_disconnect(
@@ -445,12 +474,10 @@ class RoomApplicationService(ParticipantSessionPort):
         active_vote_turn: int | None = None,
     ) -> RoomMutationResult:
         result: RoomMutationResult | None = None
-        closing_version = 1
         for attempt in range(3):
             snapshot = await self._runtime.get(room_id)
             if snapshot is None:
                 raise RoomRuleViolation("ROOM_NOT_FOUND")
-            closing_version = snapshot.state_version + 1
             try:
                 result = await self._runtime.expire_disconnect(
                     ExpireRoomDisconnect(
@@ -472,7 +499,7 @@ class RoomApplicationService(ParticipantSessionPort):
         participation = self._by_participant.get(participant_id)
         if result.room_closed:
             self._unbind_room(room_id)
-            await self._closed(room_id, closing_version)
+            await self._closed(room_id)
         elif participation is not None:
             self._unbind(participation)
             await self._room_changed(
@@ -483,6 +510,11 @@ class RoomApplicationService(ParticipantSessionPort):
             )
             await self._owner_changed(result, room_id)
         await self._lobby_changed("DISCONNECT_EXPIRED", room_id)
+        if result.vote_removed:
+            await self._vote_tally_changed(
+                room_id,
+                f"vote-expire:{participant_id}:{connection_generation}",
+            )
         return result
 
     async def change_identity(
@@ -623,12 +655,20 @@ class RoomApplicationService(ParticipantSessionPort):
     ) -> None:
         if result.replayed or result.stale_connection or result.snapshot is None:
             return
+        event_payload = dict(payload)
+        event_payload["room_state_version"] = result.snapshot.state_version
+        game = await self._game_runtime(room_id)
+        if game is not None:
+            event_payload["game_state_version"] = game.state_version
         try:
             await self._events.room_changed(
                 event_type=event_type,
                 room_id=room_id,
-                state_version=result.snapshot.state_version,
-                payload=payload,
+                event_key=(
+                    f"{event_type}:{result.snapshot.state_version}:"
+                    f"{None if game is None else game.state_version}"
+                ),
+                payload=event_payload,
                 game_id=game_id,
             )
         except Exception:
@@ -658,21 +698,29 @@ class RoomApplicationService(ParticipantSessionPort):
             },
         )
 
-    async def _closed(self, room_id: str, state_version: int) -> None:
+    async def _closed(self, room_id: str) -> None:
         try:
             await self._events.room_changed(
                 event_type="room.closed",
                 room_id=room_id,
-                state_version=state_version,
                 payload={"action": "RETURN_TO_LOBBY"},
             )
         except Exception:
             _LOGGER.exception("Room close event delivery failed: room_id=%s", room_id)
             return
 
-    async def _lobby_changed(self, reason: str, room_id: str) -> None:
+    async def _lobby_changed(
+        self,
+        reason: str,
+        room_id: str,
+        *,
+        event_key: str | None = None,
+    ) -> None:
         try:
-            await self._events.lobby_rooms_changed({"reason": reason, "room_id": room_id})
+            await self._events.lobby_rooms_changed(
+                {"reason": reason, "room_id": room_id},
+                event_key=event_key,
+            )
         except Exception:
             _LOGGER.exception(
                 "Lobby event delivery failed: reason=%s room_id=%s",
@@ -680,6 +728,50 @@ class RoomApplicationService(ParticipantSessionPort):
                 room_id,
             )
             return
+
+    async def _active_vote_turn(self, room_id: str) -> int | None:
+        game = await self._game_runtime(room_id)
+        if game is None or game.turn_status is not TurnStatus.VOTING:
+            return None
+        return game.turn_no
+
+    async def _game_runtime(self, room_id: str) -> VoteRuntimeSnapshot | None:
+        if self._votes is None:
+            return None
+        return await self._votes.get(room_id)
+
+    async def _vote_tally_changed(self, room_id: str, event_key: str) -> None:
+        game = await self._game_runtime(room_id)
+        if game is None:
+            return
+        valid_voter_count = sum(
+            item.connected
+            and item.role is VoteParticipantRole.PLAYER
+            and item.team is game.current_team
+            for item in game.participants
+        )
+        try:
+            await self._events.room_changed(
+                event_type="vote.tally_changed",
+                event_key=event_key,
+                room_id=room_id,
+                game_id=game.game_id,
+                turn_no=game.turn_no,
+                payload={
+                    "game_state_version": game.state_version,
+                    "tally": [
+                        {"coordinate": item.coordinate.canonical, "count": item.count}
+                        for item in game.tally
+                    ],
+                    "valid_voter_count": valid_voter_count,
+                },
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Vote tally realtime event delivery failed: room_id=%s game_id=%s",
+                room_id,
+                game.game_id,
+            )
 
 
 def _room_actor_type(actor_type: SessionActorType) -> ActorType:

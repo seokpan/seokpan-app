@@ -27,6 +27,11 @@ def test_vote_keyspace_uses_one_room_hash_tag() -> None:
     assert "local function response(value)" in VOTE_MUTATION.source
     assert "return value\nend" in VOTE_MUTATION.source
     assert "return remember(response({" in VOTE_MUTATION.source
+    assert "state_version = payload.expected_state_version + 1" in VOTE_MUTATION.source
+    assert "game.state_version = current_version(game) + 1" in VOTE_MUTATION.source
+    assert "HGET', KEYS[1], 'state_version'" not in VOTE_MUTATION.source
+    assert "'status') ~= 'PLAYING'" in VOTE_MUTATION.source
+    assert "'game_id') ~= payload.game_id" in VOTE_MUTATION.source
 
 
 @pytest.mark.asyncio

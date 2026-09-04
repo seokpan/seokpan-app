@@ -229,7 +229,9 @@ async def test_deadline_and_serviceability_gate_leave_turn_unchanged() -> None:
 
 @pytest.mark.asyncio
 async def test_single_candidate_persists_official_move_before_runtime_advances() -> None:
-    runner, clock, _, votes, games, _ = await setup_runner()
+    events = InMemoryRealtimeEventAdapter()
+    runner, clock, _, votes, games, _ = await setup_runner(events=events)
+    room_events = await events.subscribe_room(ROOM_ID)
     snapshot = await votes.get(ROOM_ID)
     assert snapshot is not None
     await votes.cast_vote(
@@ -248,6 +250,25 @@ async def test_single_candidate_persists_official_move_before_runtime_advances()
     assert current is not None
     assert current.move_no == 1
     assert current.turn_no == 2
+    resolving = await room_events.receive()
+    moved = await room_events.receive()
+    assert (resolving.event_type, moved.event_type) == (
+        "turn.resolving",
+        "game.move_applied",
+    )
+    assert resolving.payload == {
+        "game_state_version": 4,
+        "team": "BLACK",
+        "tally": [{"coordinate": "H8", "count": 1}],
+        "valid_voter_count": 2,
+        "candidates": ["H8"],
+    }
+    assert moved.payload["coordinate"] == "H8"
+    assert moved.payload["move_no"] == 1
+    assert moved.payload["board"] == [{"coordinate": "H8", "stone": "BLACK"}]
+    assert moved.payload["final_tally"] == [{"coordinate": "H8", "count": 1}]
+    assert moved.state_version == resolving.state_version + 1
+    await room_events.close()
 
     with pytest.raises(ValueError, match="INVALID_DUE_TURN_LIMIT"):
         await runner.run_once(limit=0)
@@ -322,12 +343,32 @@ async def test_game_completion_notifies_room_snapshot_and_lobby_availability() -
     assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 2))).status is (
         TurnProcessingStatus.GAME_ENDED
     )
-    room_event = await room_events.receive()
+    room_events_received = tuple([await room_events.receive() for _ in range(5)])
     lobby_event = await lobby_events.receive()
 
-    assert room_event.event_type == "snapshot.required"
-    assert room_event.game_id == GAME_ID
-    assert room_event.payload == {"reason": "GAME_COMPLETED"}
+    assert tuple(item.event_type for item in room_events_received) == (
+        "turn.passed",
+        "turn.resolving",
+        "turn.passed",
+        "game.finished",
+        "snapshot.required",
+    )
+    first_pass, resolving, second_pass, finished, _snapshot = room_events_received
+    assert first_pass.payload == {
+        "game_state_version": 3,
+        "completed_turn_no": 1,
+        "next_turn_no": 2,
+        "next_team": "WHITE",
+        "deadline_ms": 10_000,
+        "consecutive_passes": 1,
+    }
+    assert resolving.payload["valid_voter_count"] == 1
+    assert second_pass.payload["next_turn_no"] is None
+    assert second_pass.payload["consecutive_passes"] == 2
+    assert finished.payload["end_reason"] == "JOINT_LOSS"
+    assert finished.payload["winner"] is None
+    assert finished.payload["board"] == []
+    assert tuple(item.state_version for item in room_events_received) == (2, 3, 4, 5, 6)
     assert lobby_event.event_type == "lobby.rooms_changed"
     assert lobby_event.payload == {"reason": "GAME_COMPLETED", "room_id": ROOM_ID}
     await room_events.close()
@@ -499,7 +540,12 @@ async def test_winning_move_persists_result_before_room_returns_to_waiting() -> 
 async def test_finished_runtime_retry_only_completes_room_after_room_failure() -> None:
     rooms = FailOnceRoomCompletionAdapter(ManualClock())
     games = CountingGamePersistenceAdapter()
-    runner, clock, _, votes, _, _ = await setup_runner(rooms=rooms, games=games)
+    events = InMemoryRealtimeEventAdapter()
+    runner, clock, _, votes, _, _ = await setup_runner(
+        rooms=rooms,
+        games=games,
+        events=events,
+    )
     sequence = (
         (BLACK_ID, "A1"),
         (WHITE_ID, "A2"),
@@ -560,12 +606,14 @@ async def test_finished_runtime_retry_only_completes_room_after_room_failure() -
     assert room_before_retry.status is RoomStatus.PLAYING
     stored_result = games.results[GAME_ID]
     assert (games.append_calls, games.finalize_calls, rooms.complete_calls) == (9, 1, 1)
+    stream_version_before_retry = events.room_version(ROOM_ID)
 
     retried = await runner.process(due)
 
     assert retried.status is TurnProcessingStatus.GAME_ENDED
     assert games.results[GAME_ID] == stored_result
     assert (games.append_calls, games.finalize_calls, rooms.complete_calls) == (9, 1, 2)
+    assert events.room_version(ROOM_ID) == stream_version_before_retry + 1
     room = await rooms.get(ROOM_ID)
     assert room is not None
     assert room.status is RoomStatus.WAITING

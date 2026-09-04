@@ -113,11 +113,39 @@ local function remove_vote(participant_id)
   if payload.active_vote_turn == nil or payload.active_vote_turn == cjson.null then
     return false
   end
+  local raw_game = redis.call('GET', KEYS[10])
+  if not raw_game then return false end
+  local game = cjson.decode(raw_game)
+  if game.turn_no ~= payload.active_vote_turn
+      or game.turn_status ~= 'VOTING'
+      or current_ms >= game.deadline_ms then
+    return false
+  end
   local coordinate = redis.call('HGET', KEYS[8], participant_id)
   if not coordinate then return false end
   redis.call('HDEL', KEYS[8], participant_id)
   local remaining = redis.call('HINCRBY', KEYS[9], coordinate, -1)
   if remaining <= 0 then redis.call('HDEL', KEYS[9], coordinate) end
+  return true
+end
+
+local function update_game_player(participant_id, connected, vote_removed)
+  local raw = redis.call('GET', KEYS[10])
+  if not raw then return false end
+  local game = cjson.decode(raw)
+  local changed = vote_removed
+  for _, item in ipairs(game.participants or {}) do
+    if item.participant_id == participant_id and item.role == 'PLAYER' then
+      if item.connected ~= connected then
+        item.connected = connected
+        changed = true
+      end
+      break
+    end
+  end
+  if not changed then return false end
+  game.state_version = tonumber(game.state_version or 1) + 1
+  redis.call('SET', KEYS[10], cjson.encode(game))
   return true
 end
 
@@ -161,7 +189,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=5,
+    version=6,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -360,6 +388,7 @@ if operation == 'connect' then
     connected = true,
     disconnect_expires_at_ms = cjson.null
   }))
+  update_game_player(payload.participant_id, true, false)
   return save({snapshot = snapshot(), connection_generation = generation})
 end
 
@@ -384,6 +413,7 @@ if operation == 'disconnect' then
   connection.disconnect_expires_at_ms = current_ms + disconnect_lease_ms
   redis.call('HSET', KEYS[4], payload.participant_id, cjson.encode(connection))
   local vote_removed = remove_vote(payload.participant_id)
+  update_game_player(payload.participant_id, false, vote_removed)
   local resolved = owner_departure(payload.participant_id, previous_owner_id)
   if not resolved.room_closed then advance_version() end
   return save({
@@ -410,6 +440,7 @@ if operation == 'expire_disconnect' then
   redis.call('SREM', KEYS[3], payload.participant_id)
   redis.call('HDEL', KEYS[4], payload.participant_id)
   local vote_removed = remove_vote(payload.participant_id)
+  update_game_player(payload.participant_id, false, vote_removed)
   local resolved = owner_departure(payload.participant_id, previous_owner_id)
   if not resolved.room_closed then advance_version() end
   return save({snapshot = snapshot(), vote_removed = vote_removed, departure = resolved})
@@ -421,6 +452,7 @@ if operation == 'leave' then
   redis.call('SREM', KEYS[3], payload.participant_id)
   redis.call('HDEL', KEYS[4], payload.participant_id)
   local vote_removed = remove_vote(payload.participant_id)
+  update_game_player(payload.participant_id, false, vote_removed)
   local resolved = owner_departure(payload.participant_id, previous_owner_id)
   if not resolved.room_closed then advance_version() end
   return save({snapshot = snapshot(), vote_removed = vote_removed, departure = resolved})

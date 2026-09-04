@@ -26,8 +26,10 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 - 현재 팀의 연결된 PLAYER만 `ACTIVE / VOTING` 상태와 Redis 서버 deadline 이전에 Vote를 등록·교체·삭제한다.
 - `request_id`는 동일 명령 결과를 24시간 재사용하고 다른 명령의 ID 재사용은 `REQUEST_ID_CONFLICT`로 거부한다.
 - `expected_state_version`이 다르면 상태를 바꾸지 않고 `STATE_VERSION_CONFLICT`로 거부한다.
+- Game/Vote `state_version`은 `room:{room_id}:game`에 보관하며 Room Meta의 `state_version`과 서로 독립적으로 증가한다.
 - 단절·퇴장은 Room Lua가 같은 Vote·Tally Key에서 마감 전 표와 집계를 함께 제거한다.
-- 이 연동부터 Room Mutation Script는 v2이며 Vote·Tally Key를 같은 Room Hash Slot에서 갱신한다.
+- 단절·퇴장으로 PLAYER 연결 상태나 Vote가 바뀌면 Room Lua가 Game/Vote Version도 같은 실행에서 한 번 증가시킨다.
+- 이 연동의 Room Mutation Script는 v6, Vote Mutation·Read Script는 v3이며 관련 Key를 같은 Room Hash Slot에서 갱신한다.
 - 마감은 Redis 서버 시각을 기준으로 Vote를 고정하고 한 번만 `RESOLVING` 또는 Pass로 전이한다.
 - 첫 0표 Pass는 `turn_no`와 연속 Pass 횟수만 진행하고 `move_no`를 유지한다. 두 번째 연속 0표는 `JOINT_LOSS` 후보로 `RESOLVING`에 머물며, 공식 Result 저장이 확인된 뒤에만 Redis 종료 상태로 반영한다.
 - 두 번째 0표의 대기 상태와 마감 시점 유효 투표자 수를 보존하는 Vote Runtime Schema·Script는 v2다.

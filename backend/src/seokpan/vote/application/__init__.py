@@ -2,6 +2,7 @@
 
 from seokpan.vote.application.runtime import (
     RESOLVER_LEASE_MS,
+    VOTE_RUNTIME_SCHEMA_VERSION,
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
     CastRuntimeVote,
@@ -16,6 +17,7 @@ from seokpan.vote.application.runtime import (
 
 __all__ = [
     "RESOLVER_LEASE_MS",
+    "VOTE_RUNTIME_SCHEMA_VERSION",
     "AcquireRuntimeResolver",
     "ApplyRuntimeResolution",
     "CastRuntimeVote",

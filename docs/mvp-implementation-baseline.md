@@ -161,7 +161,9 @@ game.move_applied, turn.passed, game.finished
 connection.reconnect_required, snapshot.required
 ```
 
-`vote.tally_changed`는 집계만 전달하고 다른 참가자의 Session이나 개인별 투표를 공개하지 않는다. Client는 중복·역전 Event를 무시하고 `state_version`이 건너뛰거나 재접속하면 Snapshot으로 수렴한다.
+Envelope의 `state_version`은 Lobby 또는 Room별 WebSocket Stream 순서다. HTTP 변경 검사에 쓰는 Room과 Game/Vote Resource Version은 Snapshot 객체와 Event Payload의 `room_state_version`·`game_state_version`에 구분해 유지한다. 연결 직후 Snapshot은 현재 Stream Version을 사용하되 번호를 증가시키지 않는다.
+
+`vote.tally_changed`는 집계만 전달하고 다른 참가자의 Session이나 개인별 투표를 공개하지 않는다. `game.started`는 Game 저장과 Vote Runtime 초기화 뒤에 전달한다. Turn 마감 뒤에는 `turn.resolving` 다음 `game.move_applied` 또는 `turn.passed`를 전달하고, 종료 시 `game.finished`를 뒤이어 전달한다. Client는 `event_id`가 같은 중복·역전 Event를 무시하고 Stream Version이 건너뛰거나 재접속하면 Snapshot으로 수렴한다.
 
 ## 7. Domain 상태와 불변조건
 
@@ -223,7 +225,9 @@ stone:v1:room:{room_id}:requests
 | Command 결과 Dedupe | 24시간 |
 | Closed Room Tombstone | 10분 |
 
-Versioned Lua는 권한·상태·Game·Turn·deadline·`expected_state_version`을 검사하고 Vote, Ready, 팀, 방장, 연결 세대, Resolver 소유권, `request_id` 결과와 Version 증가를 원자 처리한다. MariaDB Commit 후 Redis 갱신에 실패하면 MariaDB 확정 결과를 조회해 멱등 재동기화한다.
+Room과 Game/Vote Resource Version은 서로 분리한다. Ready·설정처럼 Room에만 해당하는 변경은 Game/Vote Version을 바꾸지 않는다. 진행 중 PLAYER의 연결 상태와 Vote가 함께 바뀌면 같은 Room Lua 실행에서 Room과 Game/Vote Version을 각각 한 번 증가시킨다.
+
+Versioned Lua는 권한·상태·Game·Turn·deadline·`expected_state_version`을 검사하고 Vote, Ready, 팀, 방장, 연결 세대, Resolver 소유권, `request_id` 결과와 Version 증가를 처리한다. MariaDB Commit 후 Redis 갱신에 실패하면 MariaDB 확정 결과를 조회해 멱등 재동기화한다.
 
 ## 9. MariaDB 영속 데이터
 

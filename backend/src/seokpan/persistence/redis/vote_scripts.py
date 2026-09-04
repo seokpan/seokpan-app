@@ -29,24 +29,26 @@ local function decode_or_nil(value)
   return cjson.decode(value)
 end
 
-local function current_version()
-  return tonumber(redis.call('HGET', KEYS[1], 'state_version'))
-end
-
-local function advance_version()
-  return redis.call('HINCRBY', KEYS[1], 'state_version', 1)
-end
-
-local function expected_version_matches()
-  return current_version() == payload.expected_state_version
-end
-
 local function game_state()
   return decode_or_nil(redis.call('GET', KEYS[4]))
 end
 
 local function store_game(game)
   redis.call('SET', KEYS[4], cjson.encode(game))
+end
+
+local function current_version(game)
+  return tonumber(game.state_version)
+end
+
+local function advance_version(game)
+  game.state_version = current_version(game) + 1
+  store_game(game)
+  return game.state_version
+end
+
+local function expected_version_matches(game)
+  return current_version(game) == payload.expected_state_version
 end
 
 local function sorted_hash(key)
@@ -76,8 +78,7 @@ local function snapshot(game)
   local participants = {}
   for _, participant in ipairs(game.participants) do
     local current = decode_or_nil(redis.call('HGET', KEYS[2], participant.participant_id))
-    local connected = participant.connected
-    if current then connected = current.connected end
+    local connected = current and current.connected or false
     table.insert(participants, {
       participant_id = participant.participant_id,
       team = participant.team,
@@ -97,7 +98,7 @@ local function snapshot(game)
     schema_version = game.schema_version,
     room_id = payload.room_id,
     game_id = game.game_id,
-    state_version = current_version(),
+    state_version = current_version(game),
     turn_no = game.turn_no,
     turn_status = game.turn_status,
     current_team = game.current_team,
@@ -145,10 +146,15 @@ if operation == 'initialize' then
     return rejection('GAME_RUNTIME_ALREADY_EXISTS')
   end
   if redis.call('EXISTS', KEYS[1]) == 0 then return rejection('ROOM_NOT_FOUND') end
-  if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
+  if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING'
+      or redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
+    return rejection('GAME_NOT_IN_CURRENT_ROOM')
+  end
+  if payload.expected_state_version ~= 1 then return rejection('STATE_VERSION_CONFLICT') end
   local game = {
     schema_version = payload.schema_version,
     game_id = payload.game_id,
+    state_version = payload.expected_state_version + 1,
     turn_no = 1,
     turn_status = 'VOTING',
     current_team = 'BLACK',
@@ -162,8 +168,6 @@ if operation == 'initialize' then
     candidates = {}
   }
   redis.call('DEL', KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9], KEYS[10], KEYS[11])
-  redis.call('HSET', KEYS[1], 'status', 'PLAYING')
-  advance_version()
   store_game(game)
   return remember(response({snapshot = snapshot(game)}))
 end
@@ -172,7 +176,7 @@ local game = game_state()
 if not game then return rejection('GAME_RUNTIME_NOT_FOUND') end
 if game.game_id ~= payload.game_id then return rejection('STALE_GAME') end
 if game.turn_no ~= payload.turn_no then return rejection('STALE_TURN') end
-if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
+if not expected_version_matches(game) then return rejection('STATE_VERSION_CONFLICT') end
 
 local function participant(participant_id)
   for _, item in ipairs(game.participants) do
@@ -209,13 +213,13 @@ if operation == 'cast_vote' or operation == 'remove_vote' then
       end
       redis.call('HSET', KEYS[6], payload.participant_id, payload.coordinate)
       redis.call('HINCRBY', KEYS[7], payload.coordinate, 1)
-      advance_version()
+      advance_version(game)
     end
   elseif previous then
     redis.call('HDEL', KEYS[6], payload.participant_id)
     local remaining = redis.call('HINCRBY', KEYS[7], previous, -1)
     if remaining <= 0 then redis.call('HDEL', KEYS[7], previous) end
-    advance_version()
+    advance_version(game)
   end
   return remember(response({snapshot = snapshot(game)}))
 end
@@ -269,8 +273,7 @@ if operation == 'close_turn' then
     closure.status = 'RESOLVING'
     closure.result = 'RESOLUTION_REQUIRED'
   end
-  advance_version()
-  store_game(game)
+  advance_version(game)
   return remember(response({
     snapshot = snapshot(game), closure = closure, valid_voter_count = valid_voter_count
   }))
@@ -350,8 +353,7 @@ if operation == 'apply_resolution' then
     game.deadline_ms = cjson.null
   end
   redis.call('DEL', KEYS[6], KEYS[7], KEYS[8])
-  advance_version()
-  store_game(game)
+  advance_version(game)
   return remember(response({snapshot = snapshot(game), resolution = resolution}))
 end
 
@@ -360,13 +362,13 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=2,
+    version=3,
     source=_COMMON + _MUTATION,
 )
 
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",
-    version=2,
+    version=3,
     source=r"""
 local payload = cjson.decode(ARGV[1])
 local function sorted_hash(key)
@@ -385,8 +387,7 @@ local participants = {}
 for _, participant in ipairs(game.participants) do
   local raw = redis.call('HGET', KEYS[2], participant.participant_id)
   local current = raw and cjson.decode(raw) or nil
-  local connected = participant.connected
-  if current then connected = current.connected end
+  local connected = current and current.connected or false
   table.insert(participants, {
     participant_id = participant.participant_id,
     team = participant.team,
@@ -411,7 +412,7 @@ return cjson.encode({ok = true, error = cjson.null, snapshot = {
   schema_version = game.schema_version,
   room_id = payload.room_id,
   game_id = game.game_id,
-  state_version = tonumber(redis.call('HGET', KEYS[1], 'state_version')),
+  state_version = tonumber(game.state_version),
   turn_no = game.turn_no,
   turn_status = game.turn_status,
   current_team = game.current_team,

@@ -20,6 +20,7 @@ from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
 from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS
 from seokpan.vote.application import (
     RESOLVER_LEASE_MS,
+    VOTE_RUNTIME_SCHEMA_VERSION,
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
     CastRuntimeVote,
@@ -55,7 +56,7 @@ class RedisVoteRuntimeAdapter:
             "initialize",
             1,
             {
-                "schema_version": 1,
+                "schema_version": VOTE_RUNTIME_SCHEMA_VERSION,
                 "game_id": command.game_id,
                 "participants": [self._voter_value(item) for item in command.participants],
                 "deadline_ms": command.deadline_ms,

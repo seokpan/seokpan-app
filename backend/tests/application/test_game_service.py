@@ -6,6 +6,7 @@ from seokpan.game.application import GameApplicationService
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.persistence.memory import (
     InMemoryGamePersistenceAdapter,
+    InMemoryRealtimeEventAdapter,
     InMemoryRoomRuntimeAdapter,
     InMemoryVoteRuntimeAdapter,
     ManualClock,
@@ -100,11 +101,14 @@ async def test_start_retry_continues_after_vote_initialization_failure() -> None
 
     persistence = InMemoryGamePersistenceAdapter()
     votes = FailFirstInitializeAdapter(clock)
+    events = InMemoryRealtimeEventAdapter()
+    room_events = await events.subscribe_room(room_id)
     service = GameApplicationService(
         rooms=rooms,
         games=persistence,
         votes=votes,
         clock=clock,
+        events=events,
     )
 
     with pytest.raises(RuntimeError, match="simulated Vote provider failure"):
@@ -119,6 +123,8 @@ async def test_start_retry_continues_after_vote_initialization_failure() -> None
     assert room_after_failure is not None
     assert room_after_failure.game_id is not None
     assert len(persistence.games) == 1
+    assert events.room_version(room_id) == 1
+    assert events.lobby_version == 1
     clock.advance(5_000)
 
     completed = await service.start_game(
@@ -133,3 +139,26 @@ async def test_start_retry_continues_after_vote_initialization_failure() -> None
     assert completed.game.deadline_ms == 16_000
     assert len(persistence.games) == 1
     assert votes.initialize_calls == 2
+    started = await room_events.receive()
+    assert started.event_type == "game.started"
+    assert started.game_id == completed.game.game_id
+    assert started.turn_no == 1
+    assert started.payload == {
+        "room_state_version": completed.room.state_version,
+        "game_state_version": completed.game.state_version,
+        "turn_no": 1,
+        "current_team": "BLACK",
+        "deadline_ms": 16_000,
+    }
+    stream_version = events.room_version(room_id)
+
+    replay = await service.start_game(
+        session=owner,
+        room_id=room_id,
+        request_id="start",
+        expected_state_version=6,
+    )
+
+    assert replay.replayed is True
+    assert events.room_version(room_id) == stream_version
+    await room_events.close()

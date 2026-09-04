@@ -71,12 +71,17 @@ class InMemoryRealtimeEventAdapter:
             raise ValueError("INVALID_REALTIME_QUEUE_SIZE")
         self._max_queue_size = max_queue_size
         self._lobby_version = 1
+        self._room_versions: dict[str, int] = {}
+        self._published: dict[tuple[str, str], RealtimeEvent] = {}
         self._lobby_subscriptions: set[_Subscription] = set()
         self._room_subscriptions: dict[str, set[_Subscription]] = {}
 
     @property
     def lobby_version(self) -> int:
         return self._lobby_version
+
+    def room_version(self, room_id: str) -> int:
+        return self._room_versions.get(room_id, 1)
 
     async def subscribe_lobby(self) -> RealtimeSubscription:
         subscription = _Subscription(
@@ -103,15 +108,25 @@ class InMemoryRealtimeEventAdapter:
         subscriptions.add(subscription)
         return subscription
 
-    async def lobby_rooms_changed(self, payload: Mapping[str, object]) -> None:
-        self._lobby_version += 1
-        event = RealtimeEvent(
-            event_type="lobby.rooms_changed",
-            event_id=str(uuid4()),
-            occurred_at=_occurred_at(),
-            state_version=self._lobby_version,
-            payload=dict(payload),
-        )
+    async def lobby_rooms_changed(
+        self,
+        payload: Mapping[str, object],
+        *,
+        event_key: str | None = None,
+    ) -> None:
+        cache_key = None if event_key is None else ("lobby", event_key)
+        event = None if cache_key is None else self._published.get(cache_key)
+        if event is None:
+            self._lobby_version += 1
+            event = RealtimeEvent(
+                event_type="lobby.rooms_changed",
+                event_id=str(uuid4()),
+                occurred_at=_occurred_at(),
+                state_version=self._lobby_version,
+                payload=dict(payload),
+            )
+            if cache_key is not None:
+                self._published[cache_key] = event
         for subscription in tuple(self._lobby_subscriptions):
             subscription.offer(event)
 
@@ -120,21 +135,28 @@ class InMemoryRealtimeEventAdapter:
         *,
         event_type: str,
         room_id: str,
-        state_version: int,
         payload: Mapping[str, object],
+        event_key: str | None = None,
         game_id: str | None = None,
         turn_no: int | None = None,
     ) -> None:
-        event = RealtimeEvent(
-            event_type=event_type,
-            event_id=str(uuid4()),
-            occurred_at=_occurred_at(),
-            state_version=state_version,
-            room_id=room_id,
-            game_id=game_id,
-            turn_no=turn_no,
-            payload=dict(payload),
-        )
+        cache_key = None if event_key is None else (f"room:{room_id}", event_key)
+        event = None if cache_key is None else self._published.get(cache_key)
+        if event is None:
+            version = self.room_version(room_id) + 1
+            self._room_versions[room_id] = version
+            event = RealtimeEvent(
+                event_type=event_type,
+                event_id=str(uuid4()),
+                occurred_at=_occurred_at(),
+                state_version=version,
+                room_id=room_id,
+                game_id=game_id,
+                turn_no=turn_no,
+                payload=dict(payload),
+            )
+            if cache_key is not None:
+                self._published[cache_key] = event
         for subscription in tuple(self._room_subscriptions.get(room_id, ())):
             subscription.offer(event)
 

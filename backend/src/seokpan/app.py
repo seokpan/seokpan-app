@@ -78,6 +78,7 @@ def build_headless_services(
         room_runtime,
         Argon2RoomPassword(password_hasher),
         events,
+        votes,
     )
     session_adapter = InMemorySessionAdapter(clock)
     sessions = AuthSessionService(
@@ -90,6 +91,7 @@ def build_headless_services(
         games=InMemoryGamePersistenceAdapter(),
         votes=votes,
         clock=clock,
+        events=events,
     )
     room_api = RoomApiServices(identity_api, room_service)
     game_api = GameApiServices(identity_api, game_service)
