@@ -2,6 +2,10 @@
 # 작성자: 최유준
 # 작성 날짜: 2026-09-04 (v2 - PR #48 팀 확정 스펙 반영, 2026-09-04 재작성)
 #
+# [정정 2026-09-04, 실제 검증 중 발견] 최상단 `# syntax=docker/dockerfile:1` pragma
+# 제거함. backend/Dockerfile과 동일 원인(외부 frontend nested 실행 실패) —
+# 상세 근거는 backend/Dockerfile 주석 참고.
+#
 # [확정 스펙 출처] 팀원 메시지(PR #48 적용 값, 2026-09-04)
 # - Build: Node.js 24.19.0, npm 12.0.2, npm ci && npm run build
 # - Runtime Image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24
@@ -26,7 +30,16 @@ FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare npm@12.0.2 --activate
+# [정정 2026-09-04, 리뷰 반영] corepack enable(인자 없음)은 npm을 shim 대상에서
+# 기본 제외한다 — npm은 Node.js에 이미 번들되어 있어, corepack 공식 문서가
+# "npm shim은 명시적으로 요청하지 않으면 설치되지 않는다"고 명시함. 그 결과
+# corepack prepare npm@12.0.2 --activate가 버전을 준비만 하고 실제 `npm` 커맨드는
+# Node 24 이미지에 번들된 기본 npm(11.17.0)을 그대로 참조 — npm ci 시점
+# EBADENGINE 경고로 발견됨. `corepack enable npm`으로 npm을 명시적으로 shim
+# 대상에 포함시키고, npm --version 검증을 빌드 타임에 강제해 재발 방지.
+RUN corepack enable npm && \
+    corepack prepare npm@12.0.2 --activate && \
+    npm --version | grep -qx '12.0.2' || (echo "ERROR: npm version mismatch, expected 12.0.2" && exit 1)
 
 COPY package.json package-lock.json ./
 RUN npm ci
