@@ -9,15 +9,15 @@
 1. D07의 MVP 포함·제외 범위
 2. D01의 MVP 포함 기능 상세 동작
 3. D03~D06의 역할·기술·물리·검증 기준
-4. [`PROJECT_CHANGES.md`](https://github.com/seokpan/seokpan-docs/blob/e41f47a/PROJECT_CHANGES.md)에 기록된 PDF 이후 확정 변경
-5. [`MVP_IMPLEMENTATION_BASELINE.md`](https://github.com/seokpan/seokpan-docs/blob/e41f47a/MVP_IMPLEMENTATION_BASELINE.md)의 공용 구현 기준
+4. [`PROJECT_CHANGES.md`](https://github.com/seokpan/seokpan-docs/blob/ed33648/PROJECT_CHANGES.md)에 기록된 PDF 이후 확정 변경
+5. [`MVP_IMPLEMENTATION_BASELINE.md`](https://github.com/seokpan/seokpan-docs/blob/ed33648/MVP_IMPLEMENTATION_BASELINE.md)의 공용 구현 기준
 6. 이 문서의 Application 상세
 
 `PROJECT_CHANGES.md`의 확정 변경은 지정된 항목에 한해서 해당 PDF 원문보다 우선한다. 예를 들어 방장 연결 단절은 D01의 30초 후 승계가 아니라 PDF 이후 확정된 즉시 승계를 적용한다.
 
 기준 문서와 코드가 다르면 코드를 수정한다. Issue, PR, README 또는 Runtime 상태만으로 요구사항을 변경하지 않는다. 공용 기준의 확정값을 바꾸어야 하면 먼저 `seokpan-docs`의 변경 이력을 갱신한다.
 
-현재 기준점은 `seokpan-docs` main `e41f47a`다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
+현재 기준점은 `seokpan-docs` main `ed33648`이다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
 
 ## 2. MVP와 First Success 범위
 
