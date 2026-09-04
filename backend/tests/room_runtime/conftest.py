@@ -17,6 +17,7 @@ from seokpan.room.application import (
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
+    CompleteRoomGame,
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
@@ -179,6 +180,15 @@ class EmulatedRoomRedisClient:
                     room_id,
                     request_id,
                     str(payload["actor_id"]),
+                    str(payload["game_id"]),
+                    int(str(payload["expected_state_version"])),
+                )
+            )
+        if operation == "complete_game":
+            return await self.store.complete_game(
+                CompleteRoomGame(
+                    room_id,
+                    request_id,
                     str(payload["game_id"]),
                     int(str(payload["expected_state_version"])),
                 )

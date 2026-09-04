@@ -212,6 +212,75 @@ def game_row() -> GameRow:
     )
 
 
+@pytest.mark.asyncio
+async def test_load_game_returns_start_participants_ratings_and_ordered_moves() -> None:
+    black = MemberRow(
+        member_id=1, login_id="black", nickname="Black", password_hash="x", rating=1000
+    )
+    participant_rows = [
+        GameParticipantRow(
+            game_id=GAME_ID,
+            participant_id=BLACK_ID,
+            team="BLACK",
+            member_id=1,
+            is_guest=False,
+            guest_label=None,
+        ),
+        GameParticipantRow(
+            game_id=GAME_ID,
+            participant_id=WHITE_ID,
+            team="WHITE",
+            member_id=None,
+            is_guest=True,
+            guest_label="Guest-0001",
+        ),
+    ]
+    move = MoveRow(
+        game_id=GAME_ID,
+        turn_no=1,
+        move_no=1,
+        team="BLACK",
+        pos_x=0,
+        pos_y=14,
+        final_vote_count=2,
+        valid_voter_count=3,
+        confirmed_at=NOW,
+    )
+    session = FakeSession(
+        rows={(GameRow, GAME_ID): game_row()},
+        execute_results=[participant_rows, [move], [], [black]],
+    )
+    adapter = MariaDBGamePersistenceAdapter(SessionFactory(session))
+
+    snapshot = await adapter.load_game(GAME_ID)
+
+    assert snapshot is not None
+    assert snapshot.start == start_command()
+    assert snapshot.participants[0].rating == 1000
+    assert snapshot.participants[1].rating is None
+    assert snapshot.moves == (move_command(),)
+
+
+@pytest.mark.asyncio
+async def test_get_move_returns_recoverable_official_record() -> None:
+    row = MoveRow(
+        game_id=GAME_ID,
+        turn_no=1,
+        move_no=1,
+        team="BLACK",
+        pos_x=0,
+        pos_y=14,
+        final_vote_count=2,
+        valid_voter_count=3,
+        confirmed_at=NOW,
+    )
+    adapter = MariaDBGamePersistenceAdapter(
+        SessionFactory(FakeSession(rows={(MoveRow, (GAME_ID, 1)): row}))
+    )
+
+    assert await adapter.get_move(GAME_ID, 1) == move_command()
+
+
 @pytest.mark.parametrize(
     ("build", "code"),
     [
@@ -414,6 +483,23 @@ async def test_existing_result_requires_matching_history_before_idempotent_succe
     with pytest.raises(PersistenceRuleViolation, match="GAME_RESULT_CONFLICT"):
         await MariaDBGamePersistenceAdapter(SessionFactory(incomplete)).finalize_game(command)
     assert incomplete.rollback_count == 1
+
+
+@pytest.mark.asyncio
+async def test_game_is_finalized_requires_completed_game_and_reflected_result() -> None:
+    game = game_row()
+    game.status = "COMPLETED"
+    game.ended_at = NOW
+    result = MariaDBGamePersistenceAdapter._result_row(completed_result())
+    result.reflected_to_stats = True
+    complete = FakeSession(rows={(GameRow, GAME_ID): game, (GameResultRow, GAME_ID): result})
+    assert await MariaDBGamePersistenceAdapter(SessionFactory(complete)).game_is_finalized(GAME_ID)
+
+    result.reflected_to_stats = False
+    incomplete = FakeSession(rows={(GameRow, GAME_ID): game, (GameResultRow, GAME_ID): result})
+    assert not await MariaDBGamePersistenceAdapter(SessionFactory(incomplete)).game_is_finalized(
+        GAME_ID
+    )
 
 
 @pytest.mark.asyncio

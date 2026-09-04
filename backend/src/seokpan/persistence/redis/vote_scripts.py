@@ -106,6 +106,7 @@ local function snapshot(game)
     move_no = game.move_no,
     game_status = game.game_status,
     end_reason = game.end_reason,
+    valid_voter_count = game.valid_voter_count or cjson.null,
     participants = participants,
     votes = votes,
     tally = tally_values(),
@@ -156,6 +157,7 @@ if operation == 'initialize' then
     move_no = 0,
     game_status = 'ACTIVE',
     end_reason = cjson.null,
+    valid_voter_count = cjson.null,
     participants = payload.participants,
     candidates = {}
   }
@@ -230,6 +232,7 @@ if operation == 'close_turn' then
       if room_value and room_value.connected then valid_voter_count = valid_voter_count + 1 end
     end
   end
+  game.valid_voter_count = valid_voter_count
   local closure = {
     game_id = game.game_id,
     turn_no = game.turn_no,
@@ -238,14 +241,15 @@ if operation == 'close_turn' then
     candidates = {}
   }
   if #tally == 0 then
-    game.consecutive_passes = game.consecutive_passes + 1
-    game.turn_status = 'PASSED'
-    closure.status = 'PASSED'
-    closure.result = game.consecutive_passes == 2 and 'JOINT_LOSS' or 'PASSED'
-    if game.consecutive_passes == 2 then
-      game.game_status = 'FINISHED'
-      game.end_reason = 'JOINT_LOSS'
+    local next_passes = game.consecutive_passes + 1
+    closure.result = next_passes == 2 and 'JOINT_LOSS' or 'PASSED'
+    if next_passes == 2 then
+      game.turn_status = 'RESOLVING'
+      closure.status = 'RESOLVING'
     else
+      game.consecutive_passes = next_passes
+      game.turn_status = 'PASSED'
+      closure.status = 'PASSED'
       if payload.next_deadline_ms == nil or payload.next_deadline_ms <= game.deadline_ms then
         return rejection('INVALID_NEXT_DEADLINE')
       end
@@ -301,23 +305,35 @@ if operation == 'apply_resolution' then
   if resolution.game_id ~= game.game_id or resolution.turn_no ~= game.turn_no then
     return rejection('RESOLUTION_MISMATCH')
   end
-  if resolution.result ~= 'MOVE_APPLIED' or resolution.status ~= 'MOVE_APPLIED'
-      or resolution.team ~= game.current_team or not resolution.applied_move
-      or resolution.applied_move.team ~= resolution.team
-      or resolution.applied_move.move_no ~= game.move_no + 1
-      or resolution.applied_move.coordinate ~= resolution.selected_coordinate then
+  local move_resolution = resolution.result == 'MOVE_APPLIED'
+      and resolution.status == 'MOVE_APPLIED'
+      and resolution.team == game.current_team
+      and resolution.applied_move
+      and resolution.applied_move.team == resolution.team
+      and resolution.applied_move.move_no == game.move_no + 1
+      and resolution.applied_move.coordinate == resolution.selected_coordinate
+  local joint_loss_resolution = resolution.result == 'JOINT_LOSS'
+      and resolution.status == 'PASSED'
+      and (resolution.selected_coordinate == nil or resolution.selected_coordinate == cjson.null)
+      and (resolution.applied_move == nil or resolution.applied_move == cjson.null)
+      and resolution.end_reason == 'JOINT_LOSS'
+  if not move_resolution and not joint_loss_resolution then
     return rejection('RESOLUTION_MISMATCH')
   end
-  local selected = resolution.selected_coordinate
-  local valid = false
-  for _, candidate in ipairs(game.candidates) do
-    if candidate == selected then valid = true end
+  if move_resolution then
+    local selected = resolution.selected_coordinate
+    local valid = false
+    for _, candidate in ipairs(game.candidates) do
+      if candidate == selected then valid = true end
+    end
+    if not valid then return rejection('INVALID_RESOLUTION_CANDIDATE') end
+    if redis.call('HEXISTS', KEYS[5], selected) == 1 then return rejection('POSITION_OCCUPIED') end
+    redis.call('HSET', KEYS[5], selected, resolution.team)
+    game.move_no = resolution.applied_move.move_no
+    game.consecutive_passes = 0
+  else
+    game.consecutive_passes = 2
   end
-  if not valid then return rejection('INVALID_RESOLUTION_CANDIDATE') end
-  if redis.call('HEXISTS', KEYS[5], selected) == 1 then return rejection('POSITION_OCCUPIED') end
-  redis.call('HSET', KEYS[5], selected, resolution.team)
-  game.move_no = resolution.applied_move.move_no
-  game.consecutive_passes = 0
   game.game_status = payload.next_game_status
   game.end_reason = payload.next_end_reason
   game.candidates = {}
@@ -330,7 +346,7 @@ if operation == 'apply_resolution' then
     game.deadline_ms = payload.next_deadline_ms
     game.turn_status = 'VOTING'
   else
-    game.turn_status = 'MOVE_APPLIED'
+    game.turn_status = resolution.status
     game.deadline_ms = cjson.null
   end
   redis.call('DEL', KEYS[6], KEYS[7], KEYS[8])
@@ -344,13 +360,13 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=1,
+    version=2,
     source=_COMMON + _MUTATION,
 )
 
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",
-    version=1,
+    version=2,
     source=r"""
 local payload = cjson.decode(ARGV[1])
 local function sorted_hash(key)
@@ -404,6 +420,7 @@ return cjson.encode({ok = true, error = cjson.null, snapshot = {
   move_no = game.move_no,
   game_status = game.game_status,
   end_reason = game.end_reason,
+  valid_voter_count = game.valid_voter_count or cjson.null,
   participants = participants,
   votes = votes,
   tally = tally,

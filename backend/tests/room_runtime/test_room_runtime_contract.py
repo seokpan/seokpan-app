@@ -8,6 +8,7 @@ from seokpan.room.application import (
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
+    CompleteRoomGame,
     ConnectRoomParticipant,
     DisconnectRoomParticipant,
     ExpireRoomDisconnect,
@@ -20,6 +21,7 @@ from seokpan.room.domain import (
     GameTermination,
     ParticipantRole,
     RoomRuleViolation,
+    RoomStatus,
     RoomVisibility,
     Team,
 )
@@ -55,6 +57,38 @@ async def test_start_game_returns_stable_roster_and_game_id(
     assert all(item.role is ParticipantRole.PLAYER for item in first.start_roster.entries)
     assert replay.replayed is True
     assert replay.start_roster == first.start_roster
+
+
+@pytest.mark.asyncio
+async def test_complete_game_returns_room_to_waiting_and_clears_ready(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room(minimum_ready=2))
+    await room_harness.adapter.join(
+        join_member("member-2", request_id="join-complete", session_character="b")
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-1", "member-1", Team.BLACK, 2)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-1", "member-1", True, 3))
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-2", "member-2", Team.WHITE, 4)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-2", "member-2", True, 5))
+    await room_harness.adapter.start_game(
+        StartRoomGame("room-1", "start-complete", "member-1", "game-1", 6)
+    )
+    command = CompleteRoomGame("room-1", "complete-1", "game-1", 7)
+
+    result = await room_harness.adapter.complete_game(command)
+    replay = await room_harness.adapter.complete_game(command)
+
+    assert result.snapshot is not None
+    assert result.snapshot.status is RoomStatus.WAITING
+    assert result.snapshot.game_id is None
+    assert result.snapshot.state_version == 8
+    assert all(not item.ready for item in result.snapshot.participants)
+    assert replay.replayed is True
 
 
 @pytest.mark.asyncio

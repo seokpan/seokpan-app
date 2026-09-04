@@ -2,6 +2,12 @@
 
 from seokpan.persistence.memory.game_adapter import InMemoryGamePersistenceAdapter
 from seokpan.persistence.memory.identity_adapter import InMemoryIdentityAdapter
+from seokpan.persistence.memory.resolution import (
+    InMemoryDueTurnSource,
+    InMemoryTieSelectionAudit,
+    InMemoryTieSelector,
+    InMemoryTurnFinalizationGate,
+)
 from seokpan.persistence.memory.room_adapter import InMemoryRoomRuntimeAdapter
 from seokpan.persistence.memory.session_adapter import InMemorySessionAdapter, ManualClock
 from seokpan.persistence.memory.session_workflow import InMemorySessionWorkflow
@@ -11,6 +17,10 @@ __all__ = [
     "InMemoryIdentityAdapter",
     "InMemoryGamePersistenceAdapter",
     "InMemoryRoomRuntimeAdapter",
+    "InMemoryDueTurnSource",
+    "InMemoryTieSelectionAudit",
+    "InMemoryTieSelector",
+    "InMemoryTurnFinalizationGate",
     "InMemorySessionAdapter",
     "InMemorySessionWorkflow",
     "InMemoryVoteRuntimeAdapter",

@@ -29,7 +29,8 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 - 단절·퇴장은 Room Lua가 같은 Vote·Tally Key에서 마감 전 표와 집계를 함께 제거한다.
 - 이 연동부터 Room Mutation Script는 v2이며 Vote·Tally Key를 같은 Room Hash Slot에서 갱신한다.
 - 마감은 Redis 서버 시각을 기준으로 Vote를 고정하고 한 번만 `RESOLVING` 또는 Pass로 전이한다.
-- 0표 Pass는 `turn_no`와 연속 Pass 횟수만 진행하고 `move_no`를 유지한다. 양 팀이 연속으로 0표이면 `JOINT_LOSS`로 종료한다.
+- 첫 0표 Pass는 `turn_no`와 연속 Pass 횟수만 진행하고 `move_no`를 유지한다. 두 번째 연속 0표는 `JOINT_LOSS` 후보로 `RESOLVING`에 머물며, 공식 Result 저장이 확인된 뒤에만 Redis 종료 상태로 반영한다.
+- 두 번째 0표의 대기 상태와 마감 시점 유효 투표자 수를 보존하는 Vote Runtime Schema·Script는 v2다.
 - 공식 Move가 확정되면 연속 Pass 횟수를 0으로 초기화한다.
 
 ## Resolver와 장애 수렴
@@ -39,6 +40,7 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 - 동률 선택은 Redis Adapter 내부 난수가 아니라 서버 Application 계층이 후보 중 하나를 선택해 전달하며, 선택 결과를 확정 자료에 포함해 재현 가능하게 남긴다. Browser가 선택 결과를 확정하지 않는다.
 - Lease를 잃었거나 MariaDB Commit 성공 여부가 불명확하면 Redis 확정을 반복하지 않고 기존 MariaDB Move·Result를 먼저 조회한다.
 - MariaDB 확정 후 Redis 갱신에 실패하면 같은 확정 결과를 이용해 Redis Board·Turn·Snapshot을 멱등하게 재동기화한다.
+- 종료 결과가 확인되면 Room은 `PLAYING`에서 `WAITING`으로 돌아가고 `game_id`와 모든 Ready가 함께 정리된다.
 - Pub/Sub은 식별자와 새 Version을 알리는 무효화 신호일 뿐 권위 상태나 Replay 원본이 아니다.
 
 ## 현재 검증 경계

@@ -18,7 +18,7 @@ from seokpan.vote.domain import (
     VoteTally,
 )
 
-VOTE_RUNTIME_SCHEMA_VERSION = 1
+VOTE_RUNTIME_SCHEMA_VERSION = 2
 RESOLVER_LEASE_MS = 5 * 1000
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -141,14 +141,22 @@ class ApplyRuntimeResolution:
         if self.resolution.game_id != self.game_id or self.resolution.turn_no != self.turn_no:
             raise VoteRuleViolation("RESOLUTION_MISMATCH")
         move = self.resolution.applied_move
-        if (
-            self.resolution.result is not TurnResultKind.MOVE_APPLIED
-            or self.resolution.status is not TurnStatus.MOVE_APPLIED
-            or self.resolution.selected_coordinate is None
-            or move is None
-            or move.team is not self.resolution.team
-            or move.coordinate != self.resolution.selected_coordinate
-        ):
+        move_resolution = (
+            self.resolution.result is TurnResultKind.MOVE_APPLIED
+            and self.resolution.status is TurnStatus.MOVE_APPLIED
+            and self.resolution.selected_coordinate is not None
+            and move is not None
+            and move.team is self.resolution.team
+            and move.coordinate == self.resolution.selected_coordinate
+        )
+        joint_loss_resolution = (
+            self.resolution.result is TurnResultKind.JOINT_LOSS
+            and self.resolution.status is TurnStatus.PASSED
+            and self.resolution.selected_coordinate is None
+            and move is None
+            and self.resolution.end_reason is EndReason.JOINT_LOSS
+        )
+        if not move_resolution and not joint_loss_resolution:
             raise VoteRuleViolation("RESOLUTION_MISMATCH")
         if self.resolution.end_reason is None and self.next_deadline_ms is None:
             raise VoteRuleViolation("INVALID_NEXT_DEADLINE")
@@ -179,6 +187,7 @@ class VoteRuntimeSnapshot:
     candidates: tuple[Coordinate, ...]
     occupied_cells: tuple[BoardCell, ...]
     resolver: ResolverLease | None
+    valid_voter_count: int | None = None
     schema_version: int = VOTE_RUNTIME_SCHEMA_VERSION
 
 

@@ -45,6 +45,7 @@ class _VoteState:
     state_version: int
     resolver: ResolverLease | None = None
     closure: TurnClosure | None = None
+    valid_voter_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,7 @@ class InMemoryVoteRuntimeAdapter:
             next_deadline_ms=command.next_deadline_ms,
         )
         state.closure = closure if closure.status is TurnStatus.RESOLVING else None
+        state.valid_voter_count = valid_voter_count
         state.state_version += 1
         return self._remember(
             command,
@@ -173,12 +175,18 @@ class InMemoryVoteRuntimeAdapter:
             raise VoteRuleViolation("RESOLVER_NOT_OWNER")
         if resolver.expires_at_ms <= self._clock.now_ms:
             raise VoteRuleViolation("RESOLVER_LEASE_EXPIRED")
-        resolution = state.game.resolve_move(
-            game_id=command.game_id,
-            turn_no=command.turn_no,
-            selected_coordinate=command.resolution.selected_coordinate,
-            next_deadline_ms=command.next_deadline_ms,
-        )
+        if command.resolution.result.value == "JOINT_LOSS":
+            resolution = state.game.resolve_joint_loss(
+                game_id=command.game_id,
+                turn_no=command.turn_no,
+            )
+        else:
+            resolution = state.game.resolve_move(
+                game_id=command.game_id,
+                turn_no=command.turn_no,
+                selected_coordinate=command.resolution.selected_coordinate,
+                next_deadline_ms=command.next_deadline_ms,
+            )
         if resolution != command.resolution:
             raise VoteRuleViolation("RESOLUTION_MISMATCH")
         state.resolver = None
@@ -241,6 +249,7 @@ class InMemoryVoteRuntimeAdapter:
             candidates=candidates,
             occupied_cells=state.game.game.occupied_cells,
             resolver=state.resolver,
+            valid_voter_count=state.valid_voter_count,
         )
 
     def _replay(self, command: _VoteCommand) -> VoteMutationResult | None:

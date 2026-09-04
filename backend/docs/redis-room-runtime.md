@@ -37,6 +37,7 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 - 이전 방장이 재접속해도 방장으로 자동 복귀하지 않는다.
 - 승계할 Member가 없으면 Room Runtime Key를 제거하고 10분 Tombstone을 남긴다.
 - WAITING 종료는 Game 기록을 만들지 않고, PLAYING 종료만 후속 흐름에 `SYSTEM_INVALID`를 전달한다.
+- 정상 Game Result 저장 뒤에는 Room Mutation Script v5의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거와 모든 Ready 해제를 한 번에 반영한다.
 - Room 종료에는 뒤따를 공개 Snapshot이 없으므로 삭제 직전 `state_version`을 따로 증가시키지 않는다. Key 삭제·Tombstone 생성·`room_closed` 종료 결과를 한 원자 처리로 반환하며, 후속 HTTP/WebSocket 계층은 이 종료 결과로 Room 종료와 Lobby 이동을 알린다.
 
 단절·퇴장 명령은 현재 Turn 번호가 주어진 경우 해당 참가자의 Vote를 같은 Hash Slot의 Vote Key에서 함께 제거한다. Vote 생성·교체·마감과 Resolver Lease는 후속 A-05c가 이 경계를 확장한다.

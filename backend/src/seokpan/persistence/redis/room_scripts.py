@@ -161,7 +161,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=4,
+    version=5,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -329,6 +329,20 @@ if operation == 'start_game' then
   redis.call('HSET', KEYS[1], 'status', 'PLAYING', 'game_id', payload.game_id)
   advance_version()
   return save({snapshot = snapshot(), start_roster = roster})
+end
+
+if operation == 'complete_game' then
+  if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
+  if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING' then
+    return rejection('ROOM_NOT_PLAYING')
+  end
+  if redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
+    return rejection('STALE_GAME')
+  end
+  redis.call('HSET', KEYS[1], 'status', 'WAITING', 'game_id', '')
+  redis.call('DEL', KEYS[3])
+  advance_version()
+  return save({snapshot = snapshot()})
 end
 
 if operation == 'connect' then
