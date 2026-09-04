@@ -261,13 +261,25 @@ class RoomApplicationService(ParticipantSessionPort):
                 expected_state_version=expected_state_version,
             )
         )
+        if (
+            result.replayed
+            or result.snapshot is None
+            or result.snapshot.state_version == expected_state_version
+        ):
+            return result
         await self._room_changed(
             "room.settings_changed",
             result,
             room_id=participation.room_id,
             payload={"vote_seconds": vote_seconds},
         )
-        await self._lobby_changed("ROOM_SETTINGS_CHANGED", participation.room_id)
+        await self._lobby_changed(
+            "ROOM_SETTINGS_CHANGED",
+            participation.room_id,
+            event_key=(
+                f"room.settings_changed:{participation.room_id}:{result.snapshot.state_version}"
+            ),
+        )
         return result
 
     async def start_game(
@@ -697,9 +709,18 @@ class RoomApplicationService(ParticipantSessionPort):
             _LOGGER.exception("Room close event delivery failed: room_id=%s", room_id)
             return
 
-    async def _lobby_changed(self, reason: str, room_id: str) -> None:
+    async def _lobby_changed(
+        self,
+        reason: str,
+        room_id: str,
+        *,
+        event_key: str | None = None,
+    ) -> None:
         try:
-            await self._events.lobby_rooms_changed({"reason": reason, "room_id": room_id})
+            await self._events.lobby_rooms_changed(
+                {"reason": reason, "room_id": room_id},
+                event_key=event_key,
+            )
         except Exception:
             _LOGGER.exception(
                 "Lobby event delivery failed: reason=%s room_id=%s",

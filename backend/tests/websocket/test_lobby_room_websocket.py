@@ -197,13 +197,17 @@ def _room_mutation(
     csrf: str,
     path: str,
     state_version: int,
+    *,
+    method: str = "PUT",
+    request_id: str | None = None,
     **values: object,
 ) -> dict[str, object]:
-    response = client.put(
+    response = client.request(
+        method,
         path,
         headers={"Origin": ORIGIN, "X-CSRF-Token": csrf},
         json={
-            "request_id": str(uuid4()),
+            "request_id": request_id or str(uuid4()),
             "expected_state_version": state_version,
             **values,
         },
@@ -311,6 +315,56 @@ def test_lobby_first_message_and_version_change_only_for_visible_list_change(
                 team="BLACK",
             )
             assert services.realtime_api.events.lobby_version == after_create
+
+
+def test_vote_seconds_changes_lobby_version_only_for_actual_state_change(
+    headless: tuple[FastAPI, ApplicationServices],
+) -> None:
+    application, services = headless
+    assert services.realtime_api is not None
+    with TestClient(application, base_url=ORIGIN) as client:
+        csrf = _member(client, "votesec")
+        room = _create_room(client, csrf)
+        room_id = str(room["room_id"])
+        initial_room_version = int(room["state_version"])
+        initial_lobby_version = services.realtime_api.events.lobby_version
+        path = f"/api/v1/rooms/{room_id}/settings"
+
+        changed = _room_mutation(
+            client,
+            csrf,
+            path,
+            initial_room_version,
+            method="PATCH",
+            request_id="00000000-0000-4000-8000-000000000051",
+            vote_seconds=30,
+        )
+        assert int(changed["state_version"]) == initial_room_version + 1
+        assert services.realtime_api.events.lobby_version == initial_lobby_version + 1
+
+        replayed = _room_mutation(
+            client,
+            csrf,
+            path,
+            initial_room_version,
+            method="PATCH",
+            request_id="00000000-0000-4000-8000-000000000051",
+            vote_seconds=30,
+        )
+        assert replayed["replayed"] is True
+        assert services.realtime_api.events.lobby_version == initial_lobby_version + 1
+
+        unchanged = _room_mutation(
+            client,
+            csrf,
+            path,
+            int(changed["state_version"]),
+            method="PATCH",
+            request_id="00000000-0000-4000-8000-000000000052",
+            vote_seconds=30,
+        )
+        assert int(unchanged["state_version"]) == int(changed["state_version"])
+        assert services.realtime_api.events.lobby_version == initial_lobby_version + 1
 
 
 def test_room_socket_rejects_session_that_did_not_join_room(
