@@ -13,10 +13,48 @@ from seokpan.room.application import (
     ExpireRoomDisconnect,
     LeaveRoomRuntime,
     SetRoomReady,
+    StartRoomGame,
 )
-from seokpan.room.domain import ActorType, GameTermination, RoomRuleViolation, RoomVisibility, Team
+from seokpan.room.domain import (
+    ActorType,
+    GameTermination,
+    ParticipantRole,
+    RoomRuleViolation,
+    RoomVisibility,
+    Team,
+)
 
 from .conftest import RoomRuntimeHarness, create_room, digest, join_guest, join_member
+
+
+@pytest.mark.asyncio
+async def test_start_game_returns_stable_roster_and_game_id(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room(minimum_ready=2))
+    await room_harness.adapter.join(
+        join_member("member-2", request_id="join-start", session_character="b")
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-1", "member-1", Team.BLACK, 2)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-1", "member-1", True, 3))
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-2", "member-2", Team.WHITE, 4)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-2", "member-2", True, 5))
+    command = StartRoomGame("room-1", "start-1", "member-1", "game-1", 6)
+
+    first = await room_harness.adapter.start_game(command)
+    replay = await room_harness.adapter.start_game(command)
+
+    assert first.snapshot is not None
+    assert first.snapshot.game_id == "game-1"
+    assert first.snapshot.state_version == 7
+    assert first.start_roster is not None
+    assert all(item.role is ParticipantRole.PLAYER for item in first.start_roster.entries)
+    assert replay.replayed is True
+    assert replay.start_roster == first.start_roster
 
 
 @pytest.mark.asyncio

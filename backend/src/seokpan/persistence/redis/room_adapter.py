@@ -35,16 +35,20 @@ from seokpan.room.application.runtime import (
     RoomRuntimeParticipant,
     RoomRuntimeSnapshot,
     SetRoomReady,
+    StartRoomGame,
     validate_room_id,
 )
 from seokpan.room.domain import (
     ActorType,
     DepartureResult,
     GameTermination,
+    ParticipantRole,
     RoomConfig,
     RoomRuleViolation,
     RoomStatus,
     RoomVisibility,
+    RosterEntry,
+    StartRoster,
     Team,
 )
 
@@ -156,6 +160,18 @@ class RedisRoomRuntimeAdapter:
             {
                 "actor_id": command.actor_id,
                 "vote_seconds": command.vote_seconds,
+                "expected_state_version": command.expected_state_version,
+            },
+        )
+
+    async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
+        return await self._mutate(
+            command.room_id,
+            command.request_id,
+            "start_game",
+            {
+                "actor_id": command.actor_id,
+                "game_id": command.game_id,
                 "expected_state_version": command.expected_state_version,
             },
         )
@@ -287,6 +303,7 @@ class RedisRoomRuntimeAdapter:
             stale_connection=_optional_bool(value, "stale_connection", False),
             vote_removed=_optional_bool(value, "vote_removed", False),
             departure=cls._optional_departure(value.get("departure")),
+            start_roster=cls._optional_roster(value.get("start_roster")),
         )
 
     @classmethod
@@ -309,7 +326,23 @@ class RedisRoomRuntimeAdapter:
             owner_id=_optional_string(snapshot, "owner_id"),
             state_version=_integer(snapshot, "state_version"),
             participants=tuple(cls._participant(item) for item in participants_value),
+            game_id=_optional_string(snapshot, "game_id"),
             schema_version=_integer(snapshot, "schema_version"),
+        )
+
+    @staticmethod
+    def _optional_roster(value: object) -> StartRoster | None:
+        if value is None:
+            return None
+        return StartRoster(
+            entries=tuple(
+                RosterEntry(
+                    participant_id=_string(_mapping(item), "participant_id"),
+                    team=Team(_string(_mapping(item), "team")),
+                    role=ParticipantRole(_string(_mapping(item), "role")),
+                )
+                for item in _list(value)
+            )
         )
 
     @staticmethod

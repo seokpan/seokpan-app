@@ -14,10 +14,11 @@ from seokpan.room.domain import (
     RoomRuleViolation,
     RoomStatus,
     RoomVisibility,
+    StartRoster,
     Team,
 )
 
-ROOM_RUNTIME_SCHEMA_VERSION = 1
+ROOM_RUNTIME_SCHEMA_VERSION = 2
 ROOM_DISCONNECT_LEASE_MS = 30 * 1000
 ROOM_CLOSED_TOMBSTONE_TTL_MS = 10 * 60 * 1000
 ROOM_REQUEST_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000
@@ -146,6 +147,21 @@ class ChangeRoomVoteSeconds:
 
 
 @dataclass(frozen=True, slots=True)
+class StartRoomGame:
+    room_id: str
+    request_id: str
+    actor_id: str
+    game_id: str
+    expected_state_version: int
+
+    def __post_init__(self) -> None:
+        _validate_request(self.room_id, self.request_id)
+        _validate_identifier(self.actor_id, code="INVALID_PARTICIPANT_ID")
+        _validate_identifier(self.game_id, code="INVALID_GAME_ID")
+        _validate_state_version(self.expected_state_version)
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectRoomParticipant:
     room_id: str
     request_id: str
@@ -241,6 +257,7 @@ class RoomRuntimeSnapshot:
     owner_id: str | None
     state_version: int
     participants: tuple[RoomRuntimeParticipant, ...]
+    game_id: str | None = None
     schema_version: int = ROOM_RUNTIME_SCHEMA_VERSION
 
     @property
@@ -257,6 +274,7 @@ class RoomMutationResult:
     stale_connection: bool = False
     vote_removed: bool = False
     departure: DepartureResult | None = None
+    start_roster: StartRoster | None = None
 
     @property
     def room_closed(self) -> bool:
@@ -285,6 +303,8 @@ class RoomRuntimePort(Protocol):
     async def set_ready(self, command: SetRoomReady) -> RoomMutationResult: ...
 
     async def change_vote_seconds(self, command: ChangeRoomVoteSeconds) -> RoomMutationResult: ...
+
+    async def start_game(self, command: StartRoomGame) -> RoomMutationResult: ...
 
     async def connect(self, command: ConnectRoomParticipant) -> RoomMutationResult: ...
 

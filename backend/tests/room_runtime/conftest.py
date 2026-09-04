@@ -27,6 +27,7 @@ from seokpan.room.application import (
     RoomRuntimePort,
     RoomRuntimeSnapshot,
     SetRoomReady,
+    StartRoomGame,
 )
 from seokpan.room.domain import ActorType, RoomConfig, RoomRuleViolation, RoomVisibility, Team
 
@@ -172,6 +173,16 @@ class EmulatedRoomRedisClient:
                     int(str(payload["expected_state_version"])),
                 )
             )
+        if operation == "start_game":
+            return await self.store.start_game(
+                StartRoomGame(
+                    room_id,
+                    request_id,
+                    str(payload["actor_id"]),
+                    str(payload["game_id"]),
+                    int(str(payload["expected_state_version"])),
+                )
+            )
         if operation == "connect":
             return await self.store.connect(
                 ConnectRoomParticipant(
@@ -248,6 +259,18 @@ class EmulatedRoomRedisClient:
                             "game_termination": result.departure.game_termination.value,
                         }
                     ),
+                    "start_roster": (
+                        None
+                        if result.start_roster is None
+                        else [
+                            {
+                                "participant_id": item.participant_id,
+                                "team": item.team.value,
+                                "role": item.role.value,
+                            }
+                            for item in result.start_roster.entries
+                        ]
+                    ),
                 }
             )
         return cls._encode(value)
@@ -280,6 +303,7 @@ class EmulatedRoomRedisClient:
                 }
                 for item in snapshot.participants
             ],
+            "game_id": snapshot.game_id,
         }
 
     @staticmethod
@@ -313,11 +337,16 @@ def create_room(
     *,
     request_id: str = "create-1",
     visibility: RoomVisibility = RoomVisibility.PUBLIC,
+    minimum_ready: int = 4,
 ) -> CreateRoomRuntime:
     return CreateRoomRuntime(
         room_id="room-1",
         request_id=request_id,
-        config=RoomConfig(name="MVP Room", visibility=visibility),
+        config=RoomConfig(
+            name="MVP Room",
+            visibility=visibility,
+            minimum_ready=minimum_ready,
+        ),
         owner_id="member-1",
         owner_session_digest=digest("a"),
         encoded_password=(

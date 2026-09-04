@@ -25,6 +25,7 @@ from seokpan.room.application.runtime import (
     RoomRuntimePort,
     RoomRuntimeSnapshot,
     SetRoomReady,
+    StartRoomGame,
 )
 
 __all__ = [
@@ -50,4 +51,5 @@ __all__ = [
     "RoomRuntimePort",
     "RoomRuntimeSnapshot",
     "SetRoomReady",
+    "StartRoomGame",
 ]

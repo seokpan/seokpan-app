@@ -12,9 +12,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from seokpan.game.application import PersistenceRuleViolation
+from seokpan.game.domain import GameRuleViolation
 from seokpan.identity.application import IdentityRuleViolation, SessionRuleViolation
 from seokpan.identity.application.auth_session import SessionTransitionUnavailable
 from seokpan.room.domain import RoomRuleViolation
+from seokpan.vote.domain import VoteRuleViolation
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -70,6 +73,18 @@ def room_problem_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
     }
 
 
+def game_problem_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
+    return {
+        code: {
+            "description": "Game request rejected",
+            "content": {
+                "application/problem+json": {"schema": ProblemResponse.model_json_schema()}
+            },
+        }
+        for code in codes
+    }
+
+
 def request_id(request: Request) -> str:
     supplied = request.headers.get("X-Request-ID", "")
     if _REQUEST_ID.fullmatch(supplied) is not None:
@@ -95,6 +110,30 @@ def install_problem_handlers(application: FastAPI) -> None:
         error: RoomRuleViolation,
     ) -> JSONResponse:
         status, title = _room_status(error.code)
+        return _response(request, status, error.code, title)
+
+    @application.exception_handler(VoteRuleViolation)
+    async def vote_problem_handler(
+        request: Request,
+        error: VoteRuleViolation,
+    ) -> JSONResponse:
+        status, title = _game_status(error.code)
+        return _response(request, status, error.code, title)
+
+    @application.exception_handler(GameRuleViolation)
+    async def game_rule_problem_handler(
+        request: Request,
+        error: GameRuleViolation,
+    ) -> JSONResponse:
+        status, title = _game_status(error.code)
+        return _response(request, status, error.code, title)
+
+    @application.exception_handler(PersistenceRuleViolation)
+    async def persistence_problem_handler(
+        request: Request,
+        error: PersistenceRuleViolation,
+    ) -> JSONResponse:
+        status, title = _game_status(error.code)
         return _response(request, status, error.code, title)
 
     @application.exception_handler(IdentityRuleViolation)
@@ -157,8 +196,11 @@ def _room_status(code: str) -> tuple[int, str]:
         "ACTIVE_ROOM_MEMBER_CHANGE_NOT_ALLOWED",
         "PARTICIPANT_ALREADY_JOINED",
         "REQUEST_ID_CONFLICT",
+        "BOTH_TEAMS_REQUIRED",
+        "MINIMUM_READY_NOT_MET",
         "ROOM_ALREADY_EXISTS",
         "ROOM_CAPACITY_REACHED",
+        "ROOM_NOT_WAITING",
         "ROOM_RECENTLY_CLOSED",
         "SESSION_ALREADY_IN_ROOM",
         "STATE_VERSION_CONFLICT",
@@ -169,6 +211,33 @@ def _room_status(code: str) -> tuple[int, str]:
     if code == "ROOM_PASSWORD_INVALID":
         return 401, "Room password is invalid"
     return 422, "Room request is invalid"
+
+
+def _game_status(code: str) -> tuple[int, str]:
+    if code in {"GAME_NOT_FOUND", "GAME_RUNTIME_NOT_FOUND"}:
+        return 404, "Game not found"
+    if code in {
+        "CURRENT_TEAM_REQUIRED",
+        "GAME_NOT_IN_CURRENT_ROOM",
+        "PARTICIPANT_DISCONNECTED",
+        "PARTICIPANT_NOT_FOUND",
+        "PLAYER_REQUIRED",
+        "SESSION_NOT_IN_ROOM",
+    }:
+        return 403, "Game operation is not allowed"
+    if code in {
+        "GAME_RUNTIME_ALREADY_EXISTS",
+        "GAME_START_CONFLICT",
+        "REQUEST_ID_CONFLICT",
+        "RESOLUTION_ALREADY_APPLIED",
+        "STALE_GAME",
+        "STALE_TURN",
+        "STATE_VERSION_CONFLICT",
+        "TURN_DEADLINE_REACHED",
+        "TURN_NOT_VOTING",
+    }:
+        return 409, "Game state conflict"
+    return 422, "Game request is invalid"
 
 
 def _response(

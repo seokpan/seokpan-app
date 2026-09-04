@@ -137,6 +137,7 @@ class Room:
         self.config = config
         self.status = RoomStatus.WAITING
         self.owner_id: str | None = owner.participant_id
+        self.game_id: str | None = None
         self.state_version = 1
         self._participants = {owner.participant_id: owner}
         self._next_joined_order = owner.joined_order + 1
@@ -238,9 +239,11 @@ class Room:
         self._reset_all_ready()
         self._advance_version()
 
-    def start_game(self, *, actor_id: str) -> StartRoster:
+    def start_game(self, *, actor_id: str, game_id: str) -> StartRoster:
         self._require_waiting()
         self._require_owner(actor_id)
+        if not game_id:
+            raise RoomRuleViolation("INVALID_GAME_ID")
         ready_participants = tuple(item for item in self.participants if item.ready)
         if len(ready_participants) < self.config.minimum_ready:
             raise RoomRuleViolation("MINIMUM_READY_NOT_MET")
@@ -259,6 +262,7 @@ class Room:
             )
         )
         self.status = RoomStatus.PLAYING
+        self.game_id = game_id
         self._advance_version()
         return roster
 
