@@ -11,6 +11,7 @@ from seokpan.room.application.runtime import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
     ROOM_REQUEST_DEDUPE_TTL_MS,
+    ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
     ConnectRoomParticipant,
@@ -112,6 +113,12 @@ class InMemoryRoomRuntimeAdapter:
         state = self._rooms.get(room_id)
         return None if state is None else self._snapshot(room_id, state)
 
+    async def list_rooms(self) -> tuple[RoomRuntimeSnapshot, ...]:
+        self._purge_expired()
+        return tuple(
+            self._snapshot(room_id, state) for room_id, state in sorted(self._rooms.items())
+        )
+
     async def get_private_access_hash(self, room_id: str) -> str | None:
         validate_room_id(room_id)
         self._purge_expired()
@@ -153,6 +160,18 @@ class InMemoryRoomRuntimeAdapter:
         state = self._require_room(command.room_id)
         self._require_expected_version(state, command.expected_state_version)
         state.room.change_team(participant_id=command.participant_id, team=command.team)
+        return self._remember_result(command, state)
+
+    async def change_identity(self, command: ChangeRoomIdentity) -> RoomMutationResult:
+        replay = self._replay(command)
+        if replay is not None:
+            return replay
+        state = self._require_room(command.room_id)
+        self._require_expected_version(state, command.expected_state_version)
+        state.room.change_identity(
+            participant_id=command.participant_id,
+            actor_type=command.actor_type,
+        )
         return self._remember_result(command, state)
 
     async def set_ready(self, command: SetRoomReady) -> RoomMutationResult:

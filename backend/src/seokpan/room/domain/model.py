@@ -208,6 +208,16 @@ class Room:
         self._participants[participant_id] = replace(participant, team=team, ready=False)
         self._advance_version()
 
+    def change_identity(self, *, participant_id: str, actor_type: ActorType) -> None:
+        """Promote a Guest participant without changing its Room identity or state."""
+        participant = self.participant(participant_id)
+        if participant.actor_type is actor_type:
+            return
+        if participant.actor_type is not ActorType.GUEST or actor_type is not ActorType.MEMBER:
+            raise RoomRuleViolation("ROOM_IDENTITY_CHANGE_NOT_ALLOWED")
+        self._participants[participant_id] = replace(participant, actor_type=actor_type)
+        self._advance_version()
+
     def set_ready(self, *, participant_id: str, ready: bool) -> None:
         self._require_waiting()
         participant = self.participant(participant_id)

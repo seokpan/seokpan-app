@@ -14,6 +14,7 @@ from seokpan.persistence.redis.room_scripts import (
     ROOM_READ,
 )
 from seokpan.room.application import (
+    ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
     ConnectRoomParticipant,
@@ -138,6 +139,16 @@ class EmulatedRoomRedisClient:
                     request_id,
                     str(payload["participant_id"]),
                     Team(str(payload["team"])),
+                    int(str(payload["expected_state_version"])),
+                )
+            )
+        if operation == "change_identity":
+            return await self.store.change_identity(
+                ChangeRoomIdentity(
+                    room_id,
+                    request_id,
+                    str(payload["participant_id"]),
+                    ActorType(str(payload["actor_type"])),
                     int(str(payload["expected_state_version"])),
                 )
             )

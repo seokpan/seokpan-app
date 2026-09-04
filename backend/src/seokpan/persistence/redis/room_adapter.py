@@ -22,6 +22,7 @@ from seokpan.room.application.runtime import (
     ROOM_DISCONNECT_LEASE_MS,
     ROOM_REQUEST_DEDUPE_TTL_MS,
     ROOM_RUNTIME_SCHEMA_VERSION,
+    ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
     ConnectRoomParticipant,
@@ -119,6 +120,18 @@ class RedisRoomRuntimeAdapter:
             {
                 "participant_id": command.participant_id,
                 "team": command.team.value,
+                "expected_state_version": command.expected_state_version,
+            },
+        )
+
+    async def change_identity(self, command: ChangeRoomIdentity) -> RoomMutationResult:
+        return await self._mutate(
+            command.room_id,
+            command.request_id,
+            "change_identity",
+            {
+                "participant_id": command.participant_id,
+                "actor_type": command.actor_type.value,
                 "expected_state_version": command.expected_state_version,
             },
         )

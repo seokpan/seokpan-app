@@ -102,6 +102,20 @@ class ChangeRoomTeam:
 
 
 @dataclass(frozen=True, slots=True)
+class ChangeRoomIdentity:
+    room_id: str
+    request_id: str
+    participant_id: str
+    actor_type: ActorType
+    expected_state_version: int
+
+    def __post_init__(self) -> None:
+        _validate_request(self.room_id, self.request_id)
+        _validate_identifier(self.participant_id, code="INVALID_PARTICIPANT_ID")
+        _validate_state_version(self.expected_state_version)
+
+
+@dataclass(frozen=True, slots=True)
 class SetRoomReady:
     room_id: str
     request_id: str
@@ -263,6 +277,8 @@ class RoomRuntimePort(Protocol):
     async def get_private_access_hash(self, room_id: str) -> str | None: ...
 
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult: ...
+
+    async def change_identity(self, command: ChangeRoomIdentity) -> RoomMutationResult: ...
 
     async def change_team(self, command: ChangeRoomTeam) -> RoomMutationResult: ...
 
