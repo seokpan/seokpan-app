@@ -1,5 +1,13 @@
 """Identity application ports."""
 
+from seokpan.identity.application.auth_session import (
+    AuthSessionService,
+    IssuedSession,
+    ParticipantSessionPort,
+    SessionTransitionUnavailable,
+    SessionWorkflowPort,
+    TokenSource,
+)
 from seokpan.identity.application.member import (
     AuthenticateMember,
     AuthenticationResult,
@@ -22,11 +30,14 @@ from seokpan.identity.application.session import (
 
 __all__ = [
     "AuthenticateMember",
+    "AuthSessionService",
     "AuthenticationResult",
     "CreateMember",
     "CreateSession",
     "IdentityPersistencePort",
     "IdentityRuleViolation",
+    "IssuedSession",
+    "ParticipantSessionPort",
     "MemberIdentityService",
     "PasswordHashPort",
     "RegisterMember",
@@ -34,6 +45,9 @@ __all__ = [
     "SessionPort",
     "SessionRecord",
     "SessionRuleViolation",
+    "SessionTransitionUnavailable",
+    "SessionWorkflowPort",
     "StoredMember",
+    "TokenSource",
     "digest_opaque_token",
 ]

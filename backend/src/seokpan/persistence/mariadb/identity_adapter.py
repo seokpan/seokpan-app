@@ -58,10 +58,13 @@ class MariaDBIdentityAdapter:
     async def find_by_nickname(self, nickname: str) -> StoredMember | None:
         return await self._find(MemberRow.nickname, nickname)
 
+    async def find_by_member_id(self, member_id: int) -> StoredMember | None:
+        return await self._find(MemberRow.member_id, member_id)
+
     async def _find(
         self,
-        column: InstrumentedAttribute[str],
-        value: str,
+        column: InstrumentedAttribute[str] | InstrumentedAttribute[int],
+        value: str | int,
     ) -> StoredMember | None:
         try:
             async with self._session_factory() as session:

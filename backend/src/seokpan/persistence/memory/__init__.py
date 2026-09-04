@@ -3,12 +3,14 @@
 from seokpan.persistence.memory.identity_adapter import InMemoryIdentityAdapter
 from seokpan.persistence.memory.room_adapter import InMemoryRoomRuntimeAdapter
 from seokpan.persistence.memory.session_adapter import InMemorySessionAdapter, ManualClock
+from seokpan.persistence.memory.session_workflow import InMemorySessionWorkflow
 from seokpan.persistence.memory.vote_adapter import InMemoryVoteRuntimeAdapter
 
 __all__ = [
     "InMemoryIdentityAdapter",
     "InMemoryRoomRuntimeAdapter",
     "InMemorySessionAdapter",
+    "InMemorySessionWorkflow",
     "InMemoryVoteRuntimeAdapter",
     "ManualClock",
 ]

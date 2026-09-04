@@ -90,6 +90,8 @@ class IdentityPersistencePort(Protocol):
 
     async def find_by_nickname(self, nickname: str) -> StoredMember | None: ...
 
+    async def find_by_member_id(self, member_id: int) -> StoredMember | None: ...
+
 
 class MemberIdentityService:
     """Coordinate validation, password hashing, and Member persistence."""
@@ -140,3 +142,9 @@ class MemberIdentityService:
             member=stored.member,
             password_rehash_required=self._password_hasher.needs_rehash(stored.password_hash),
         )
+
+    async def find_member(self, member_id: int) -> Member | None:
+        if member_id <= 0:
+            raise IdentityRuleViolation("INVALID_MEMBER_ID")
+        stored = await self._persistence.find_by_member_id(member_id)
+        return None if stored is None else stored.member

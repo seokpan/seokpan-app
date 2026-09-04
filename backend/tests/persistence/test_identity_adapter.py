@@ -178,6 +178,16 @@ async def test_find_maps_member_without_touching_other_tables() -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_by_member_id_maps_the_same_public_member() -> None:
+    session = FakeSession(execute_results=[[member_row()]])
+
+    stored = await MariaDBIdentityAdapter(SessionFactory(session)).find_by_member_id(7)
+
+    assert stored is not None
+    assert (stored.member.member_id, stored.member.nickname) == (7, "돌장인")
+
+
+@pytest.mark.asyncio
 async def test_find_hides_provider_details_behind_stable_error() -> None:
     session = FakeSession(fail_execute=True)
 

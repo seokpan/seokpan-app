@@ -15,3 +15,4 @@ class Settings(BaseSettings):
     identity_database_url: str | None = None
     game_database_url: str | None = None
     redis_url: str | None = None
+    allowed_origins: tuple[str, ...] = ("http://localhost:5173",)
