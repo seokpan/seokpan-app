@@ -100,3 +100,6 @@ class InMemoryGamePersistenceAdapter:
         if existing == command:
             return True
         raise PersistenceRuleViolation("GAME_RESULT_CONFLICT")
+
+    async def game_is_finalized(self, game_id: str) -> bool:
+        return game_id in self.results

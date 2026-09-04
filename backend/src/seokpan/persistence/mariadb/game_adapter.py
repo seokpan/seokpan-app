@@ -222,6 +222,18 @@ class MariaDBGamePersistenceAdapter:
     async def result_matches(self, command: FinalizeGameCommand) -> bool:
         return await self._result_exists(command)
 
+    async def game_is_finalized(self, game_id: str) -> bool:
+        async with self._session_factory() as session:
+            game = await session.get(GameRow, game_id)
+            result = await session.get(GameResultRow, game_id)
+            return bool(
+                game is not None
+                and game.status != "IN_PROGRESS"
+                and game.ended_at is not None
+                and result is not None
+                and result.reflected_to_stats
+            )
+
     async def _transaction(
         self,
         write: Callable[[AsyncSession], Awaitable[PersistenceOutcome]],

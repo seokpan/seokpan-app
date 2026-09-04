@@ -33,6 +33,8 @@ MariaDB와 Redis는 하나의 Transaction으로 묶지 않습니다. 기존 Move
 
 Move·Result 저장 뒤 Resolver Lease가 만료되면 늦은 실행자는 Redis를 바꾸지 않고 `RETRY_REQUIRED`를 반환합니다. 다음 실행은 저장 기록을 다시 읽고 새 Lease를 얻어 남은 단계를 처리합니다.
 
+Vote Runtime의 종료 반영 뒤 Room 정리만 실패한 경우에는 다음 실행이 DB의 완료된 Result를 확인한 뒤 `complete_game`만 다시 호출합니다. 이때 Move·Result·Rating은 다시 기록하지 않습니다.
+
 deadline이 지났더라도 Backend·Redis·플랫폼 장애 때문에 정상 투표 기회가 보장됐는지 판단할 수 없으면 `RECOVERY_REQUIRED`로 남깁니다. 이 경우 0표 Pass, 공동 패배, `SYSTEM_INVALID`를 자동 생성하지 않습니다.
 
 ## 현재 검증과 남은 연동

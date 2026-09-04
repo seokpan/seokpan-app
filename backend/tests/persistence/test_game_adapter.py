@@ -486,6 +486,23 @@ async def test_existing_result_requires_matching_history_before_idempotent_succe
 
 
 @pytest.mark.asyncio
+async def test_game_is_finalized_requires_completed_game_and_reflected_result() -> None:
+    game = game_row()
+    game.status = "COMPLETED"
+    game.ended_at = NOW
+    result = MariaDBGamePersistenceAdapter._result_row(completed_result())
+    result.reflected_to_stats = True
+    complete = FakeSession(rows={(GameRow, GAME_ID): game, (GameResultRow, GAME_ID): result})
+    assert await MariaDBGamePersistenceAdapter(SessionFactory(complete)).game_is_finalized(GAME_ID)
+
+    result.reflected_to_stats = False
+    incomplete = FakeSession(rows={(GameRow, GAME_ID): game, (GameResultRow, GAME_ID): result})
+    assert not await MariaDBGamePersistenceAdapter(SessionFactory(incomplete)).game_is_finalized(
+        GAME_ID
+    )
+
+
+@pytest.mark.asyncio
 async def test_finalize_rejects_missing_member_before_personal_updates() -> None:
     black = MemberRow(
         member_id=1, login_id="black", nickname="Black", password_hash="x", rating=1000

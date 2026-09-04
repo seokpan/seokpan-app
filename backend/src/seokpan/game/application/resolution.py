@@ -15,7 +15,7 @@ from seokpan.game.application.persistence import (
     OfficialMoveRecord,
     PersistenceRuleViolation,
 )
-from seokpan.game.domain import EndReason, Game, GameResultService
+from seokpan.game.domain import EndReason, Game, GameResultService, GameStatus
 from seokpan.room.application import CompleteRoomGame, RoomRuntimePort, RoomRuntimeSnapshot
 from seokpan.room.domain import RoomStatus
 from seokpan.vote.application import (
@@ -144,6 +144,15 @@ class TurnResolutionRunner:
             return TurnProcessingResult(due_turn, TurnProcessingStatus.STALE)
         if snapshot.turn_no != due_turn.turn_no:
             return TurnProcessingResult(due_turn, TurnProcessingStatus.STALE)
+        if (
+            snapshot.game_status is GameStatus.FINISHED
+            and snapshot.end_reason is not None
+            and snapshot.turn_status in {TurnStatus.MOVE_APPLIED, TurnStatus.PASSED}
+        ):
+            if not await self._games.game_is_finalized(due_turn.game_id):
+                return TurnProcessingResult(due_turn, TurnProcessingStatus.RETRY_REQUIRED)
+            await self._complete_room(due_turn)
+            return TurnProcessingResult(due_turn, TurnProcessingStatus.GAME_ENDED)
         if snapshot.deadline_ms is not None and self._clock.now_ms < snapshot.deadline_ms:
             return TurnProcessingResult(due_turn, TurnProcessingStatus.NOT_DUE)
         if snapshot.turn_status is TurnStatus.VOTING:

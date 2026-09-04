@@ -6,7 +6,11 @@ import pytest
 
 from seokpan.game.application import (
     DueTurn,
+    FinalizeGameCommand,
     GameParticipantRecord,
+    OfficialMoveRecord,
+    PersistenceOutcome,
+    PersistenceRuleViolation,
     StartGameCommand,
     TurnFinalizationApproval,
     TurnProcessingStatus,
@@ -25,8 +29,10 @@ from seokpan.persistence.memory import (
 )
 from seokpan.room.application import (
     ChangeRoomTeam,
+    CompleteRoomGame,
     CreateRoomRuntime,
     JoinRoomRuntime,
+    RoomMutationResult,
     SetRoomReady,
     StartRoomGame,
 )
@@ -61,11 +67,68 @@ class FailOnceAfterPersistenceVoteAdapter(InMemoryVoteRuntimeAdapter):
         return await super().apply_resolution(command)
 
 
+class FailOnceRoomCompletionAdapter(InMemoryRoomRuntimeAdapter):
+    def __init__(self, clock: ManualClock) -> None:
+        super().__init__(clock)
+        self.fail_complete_once = True
+        self.complete_calls = 0
+
+    async def complete_game(self, command: CompleteRoomGame) -> RoomMutationResult:
+        self.complete_calls += 1
+        if self.fail_complete_once:
+            self.fail_complete_once = False
+            raise RuntimeError("simulated Room completion failure")
+        return await super().complete_game(command)
+
+
+class CountingGamePersistenceAdapter(InMemoryGamePersistenceAdapter):
+    def __init__(self) -> None:
+        super().__init__({1: 1000, 2: 1000, 3: 1000})
+        self.append_calls = 0
+        self.finalize_calls = 0
+
+    async def append_move(self, command: OfficialMoveRecord) -> PersistenceOutcome:
+        self.append_calls += 1
+        return await super().append_move(command)
+
+    async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome:
+        self.finalize_calls += 1
+        return await super().finalize_game(command)
+
+
+class UncertainResultPersistenceAdapter(CountingGamePersistenceAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_finalize_once = True
+
+    async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome:
+        outcome = await super().finalize_game(command)
+        if self.fail_finalize_once:
+            self.fail_finalize_once = False
+            raise PersistenceRuleViolation("PERSISTENCE_COMMIT_UNCERTAIN")
+        return outcome
+
+
+class FailBeforeResultPersistenceAdapter(CountingGamePersistenceAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_finalize_once = True
+
+    async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome:
+        if self.fail_finalize_once:
+            self.fail_finalize_once = False
+            self.finalize_calls += 1
+            raise RuntimeError("simulated Result persistence failure")
+        return await super().finalize_game(command)
+
+
 async def setup_runner(
     *,
     gate: TurnFinalizationApproval = TurnFinalizationApproval.ALLOWED,
     tie: str = "A1",
     votes: InMemoryVoteRuntimeAdapter | None = None,
+    rooms: InMemoryRoomRuntimeAdapter | None = None,
+    games: InMemoryGamePersistenceAdapter | None = None,
 ) -> tuple[
     TurnResolutionRunner,
     ManualClock,
@@ -75,9 +138,10 @@ async def setup_runner(
     InMemoryTieSelectionAudit,
 ]:
     clock = ManualClock()
-    room_store = InMemoryRoomRuntimeAdapter(clock)
+    room_store = rooms if rooms is not None else InMemoryRoomRuntimeAdapter(clock)
     vote_store = votes if votes is not None else InMemoryVoteRuntimeAdapter(clock)
-    games = InMemoryGamePersistenceAdapter({1: 1000, 2: 1000, 3: 1000})
+    member_ratings = {1: 1000, 2: 1000, 3: 1000}
+    game_store = games if games is not None else InMemoryGamePersistenceAdapter(member_ratings)
     await room_store.create(
         CreateRoomRuntime(
             ROOM_ID,
@@ -101,7 +165,7 @@ async def setup_runner(
     await room_store.set_ready(SetRoomReady(ROOM_ID, "ready-black-two", BLACK_TWO_ID, True, 7))
     await room_store.set_ready(SetRoomReady(ROOM_ID, "ready-white", WHITE_ID, True, 8))
     await room_store.start_game(StartRoomGame(ROOM_ID, "start", BLACK_ID, GAME_ID, 9))
-    await games.start_game(
+    await game_store.start_game(
         StartGameCommand(
             game_id=GAME_ID,
             room_id=ROOM_ID,
@@ -135,12 +199,12 @@ async def setup_runner(
         tie_selector=InMemoryTieSelector(tie),
         tie_audit=audit,
         votes=vote_store,
-        games=games,
+        games=game_store,
         rooms=room_store,
         clock=clock,
         runner_id="runner-a",
     )
-    return runner, clock, room_store, vote_store, games, audit
+    return runner, clock, room_store, vote_store, game_store, audit
 
 
 @pytest.mark.asyncio
@@ -264,6 +328,57 @@ async def test_retry_reuses_persisted_move_after_resolver_lease_expiry() -> None
 
 
 @pytest.mark.asyncio
+async def test_uncertain_result_commit_is_confirmed_before_runtime_and_room_advance() -> None:
+    games = UncertainResultPersistenceAdapter()
+    runner, clock, rooms, votes, _, _ = await setup_runner(games=games)
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+    clock.advance(5_000)
+    due = DueTurn(ROOM_ID, GAME_ID, 2)
+
+    with pytest.raises(PersistenceRuleViolation, match="PERSISTENCE_COMMIT_UNCERTAIN"):
+        await runner.process(due)
+
+    assert games.finalize_calls == 1
+    assert GAME_ID in games.results
+    resolving = await votes.get(ROOM_ID)
+    assert resolving is not None
+    assert resolving.game_status is GameStatus.ACTIVE
+    assert (await runner.process(due)).status is TurnProcessingStatus.GAME_ENDED
+    assert games.finalize_calls == 1
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.WAITING
+
+
+@pytest.mark.asyncio
+async def test_result_write_failure_retries_before_runtime_and_room_advance() -> None:
+    games = FailBeforeResultPersistenceAdapter()
+    runner, clock, rooms, votes, _, _ = await setup_runner(games=games)
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+    clock.advance(5_000)
+    due = DueTurn(ROOM_ID, GAME_ID, 2)
+
+    with pytest.raises(RuntimeError, match="simulated Result persistence failure"):
+        await runner.process(due)
+
+    assert GAME_ID not in games.results
+    resolving = await votes.get(ROOM_ID)
+    assert resolving is not None
+    assert resolving.game_status is GameStatus.ACTIVE
+    assert (await runner.process(due)).status is TurnProcessingStatus.GAME_ENDED
+    assert games.finalize_calls == 2
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.WAITING
+
+
+@pytest.mark.asyncio
 async def test_replayed_due_item_is_stale_after_one_runner_finishes() -> None:
     runner, clock, _, votes, games, _ = await setup_runner()
     snapshot = await votes.get(ROOM_ID)
@@ -347,3 +462,81 @@ async def test_winning_move_persists_result_before_room_returns_to_waiting() -> 
     room = await rooms.get(ROOM_ID)
     assert room is not None
     assert room.status is RoomStatus.WAITING
+
+
+@pytest.mark.asyncio
+async def test_finished_runtime_retry_only_completes_room_after_room_failure() -> None:
+    rooms = FailOnceRoomCompletionAdapter(ManualClock())
+    games = CountingGamePersistenceAdapter()
+    runner, clock, _, votes, _, _ = await setup_runner(rooms=rooms, games=games)
+    sequence = (
+        (BLACK_ID, "A1"),
+        (WHITE_ID, "A2"),
+        (BLACK_ID, "B1"),
+        (WHITE_ID, "B2"),
+        (BLACK_ID, "C1"),
+        (WHITE_ID, "C2"),
+        (BLACK_ID, "D1"),
+        (WHITE_ID, "D2"),
+        (BLACK_ID, "E1"),
+    )
+
+    for turn_no, (participant_id, coordinate) in enumerate(sequence[:-1], 1):
+        snapshot = await votes.get(ROOM_ID)
+        assert snapshot is not None
+        await votes.cast_vote(
+            CastRuntimeVote(
+                ROOM_ID,
+                f"vote-{turn_no}",
+                GAME_ID,
+                turn_no,
+                participant_id,
+                coordinate,
+                snapshot.state_version,
+            )
+        )
+        clock.advance(5_000)
+        assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, turn_no))).status is (
+            TurnProcessingStatus.MOVE
+        )
+
+    final_turn = len(sequence)
+    participant_id, coordinate = sequence[-1]
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            f"vote-{final_turn}",
+            GAME_ID,
+            final_turn,
+            participant_id,
+            coordinate,
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+    due = DueTurn(ROOM_ID, GAME_ID, final_turn)
+
+    with pytest.raises(RuntimeError, match="simulated Room completion failure"):
+        await runner.process(due)
+
+    finished = await votes.get(ROOM_ID)
+    assert finished is not None
+    assert finished.game_status is GameStatus.FINISHED
+    room_before_retry = await rooms.get(ROOM_ID)
+    assert room_before_retry is not None
+    assert room_before_retry.status is RoomStatus.PLAYING
+    stored_result = games.results[GAME_ID]
+    assert (games.append_calls, games.finalize_calls, rooms.complete_calls) == (9, 1, 1)
+
+    retried = await runner.process(due)
+
+    assert retried.status is TurnProcessingStatus.GAME_ENDED
+    assert games.results[GAME_ID] == stored_result
+    assert (games.append_calls, games.finalize_calls, rooms.complete_calls) == (9, 1, 2)
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.WAITING
+    assert room.game_id is None
+    assert all(not participant.ready for participant in room.participants)
