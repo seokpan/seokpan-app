@@ -162,6 +162,19 @@ class StartRoomGame:
 
 
 @dataclass(frozen=True, slots=True)
+class CompleteRoomGame:
+    room_id: str
+    request_id: str
+    game_id: str
+    expected_state_version: int
+
+    def __post_init__(self) -> None:
+        _validate_request(self.room_id, self.request_id)
+        _validate_identifier(self.game_id, code="INVALID_GAME_ID")
+        _validate_state_version(self.expected_state_version)
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectRoomParticipant:
     room_id: str
     request_id: str
@@ -305,6 +318,8 @@ class RoomRuntimePort(Protocol):
     async def change_vote_seconds(self, command: ChangeRoomVoteSeconds) -> RoomMutationResult: ...
 
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult: ...
+
+    async def complete_game(self, command: CompleteRoomGame) -> RoomMutationResult: ...
 
     async def connect(self, command: ConnectRoomParticipant) -> RoomMutationResult: ...
 

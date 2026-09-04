@@ -25,6 +25,7 @@ from seokpan.room.application.runtime import (
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
+    CompleteRoomGame,
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
@@ -171,6 +172,17 @@ class RedisRoomRuntimeAdapter:
             "start_game",
             {
                 "actor_id": command.actor_id,
+                "game_id": command.game_id,
+                "expected_state_version": command.expected_state_version,
+            },
+        )
+
+    async def complete_game(self, command: CompleteRoomGame) -> RoomMutationResult:
+        return await self._mutate(
+            command.room_id,
+            command.request_id,
+            "complete_game",
+            {
                 "game_id": command.game_id,
                 "expected_state_version": command.expected_state_version,
             },

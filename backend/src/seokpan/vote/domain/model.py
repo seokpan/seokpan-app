@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
@@ -260,13 +261,16 @@ class VoteTurnGame:
             raise VoteRuleViolation("TURN_NOT_RESOLVING")
         closure = self._closures[self._turn_no]
         selected = self._select_candidate(closure.candidates, selected_coordinate)
-        self._require_next_deadline(next_deadline_ms)
 
         try:
-            outcome = self.game.apply_move(team=closure.team, coordinate=selected)
+            resolved_game = deepcopy(self.game)
+            outcome = resolved_game.apply_move(team=closure.team, coordinate=selected)
         except GameRuleViolation as error:
             raise VoteRuleViolation(error.code) from error
+        if outcome.status is GameStatus.ACTIVE:
+            self._require_next_deadline(next_deadline_ms)
 
+        self.game = resolved_game
         self._consecutive_passes = 0
         self._turn_status = TurnStatus.MOVE_APPLIED
         resolution = TurnResolution(
@@ -285,34 +289,72 @@ class VoteTurnGame:
             self._advance_turn(next_deadline_ms)
         return resolution
 
+    def resolve_joint_loss(self, *, game_id: str, turn_no: int) -> TurnResolution:
+        """Confirm a consecutive zero-vote loss after its durable Result exists."""
+        self._require_game_id(game_id)
+        existing = self._resolutions.get(turn_no)
+        if existing is not None:
+            if existing.result is not TurnResultKind.JOINT_LOSS:
+                raise VoteRuleViolation("RESOLUTION_ALREADY_APPLIED")
+            return existing
+        self._require_current_turn(turn_no)
+        if self._turn_status is not TurnStatus.RESOLVING:
+            raise VoteRuleViolation("TURN_NOT_RESOLVING")
+        closure = self._closures[self._turn_no]
+        if closure.result is not TurnResultKind.JOINT_LOSS:
+            raise VoteRuleViolation("RESOLUTION_MISMATCH")
+
+        self.game.finish_joint_loss()
+        self._consecutive_passes = 2
+        self._turn_status = TurnStatus.PASSED
+        resolution = TurnResolution(
+            game_id=self.game_id,
+            turn_no=self._turn_no,
+            team=closure.team,
+            result=TurnResultKind.JOINT_LOSS,
+            status=TurnStatus.PASSED,
+            selected_coordinate=None,
+            applied_move=None,
+            end_reason=EndReason.JOINT_LOSS,
+        )
+        self._resolutions[self._turn_no] = resolution
+        return resolution
+
     def _close_as_pass(self, *, next_deadline_ms: int | None) -> TurnClosure:
         next_passes = self._consecutive_passes + 1
         if next_passes < 2:
             self._require_next_deadline(next_deadline_ms)
 
         team = self.current_team
-        self._turn_status = TurnStatus.PASSED
-        result = TurnResultKind.PASSED
-        if next_passes == 2:
-            self.game.finish_joint_loss()
-            result = TurnResultKind.JOINT_LOSS
+        result = TurnResultKind.JOINT_LOSS if next_passes == 2 else TurnResultKind.PASSED
+        self._turn_status = (
+            TurnStatus.RESOLVING if result is TurnResultKind.JOINT_LOSS else TurnStatus.PASSED
+        )
 
         closure = TurnClosure(
             game_id=self.game_id,
             turn_no=self._turn_no,
             team=team,
             result=result,
-            status=TurnStatus.PASSED,
+            status=self._turn_status,
             tally=(),
             candidates=(),
         )
         self._closures[self._turn_no] = closure
-        self._consecutive_passes = next_passes
         if result is TurnResultKind.PASSED:
+            self._consecutive_passes = next_passes
             assert next_deadline_ms is not None
             self.game.pass_turn()
             self._advance_turn(next_deadline_ms)
         return closure
+
+    @staticmethod
+    def select_candidate(
+        candidates: tuple[Coordinate, ...],
+        selected_coordinate: Coordinate | str | None,
+    ) -> Coordinate:
+        """Validate a provider-selected tie candidate with the Domain rule."""
+        return VoteTurnGame._select_candidate(candidates, selected_coordinate)
 
     def _require_voting_request(self, *, game_id: str, turn_no: int, now_ms: int) -> None:
         self._require_game_id(game_id)

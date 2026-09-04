@@ -266,6 +266,17 @@ class Room:
         self._advance_version()
         return roster
 
+    def complete_game(self, *, game_id: str) -> None:
+        """Return a completed Game's Room to its reusable waiting state."""
+        if self.status is not RoomStatus.PLAYING:
+            raise RoomRuleViolation("ROOM_NOT_PLAYING")
+        if self.game_id != game_id:
+            raise RoomRuleViolation("STALE_GAME")
+        self.status = RoomStatus.WAITING
+        self.game_id = None
+        self._reset_all_ready()
+        self._advance_version()
+
     def disconnect(
         self,
         *,

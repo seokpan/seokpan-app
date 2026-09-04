@@ -666,8 +666,14 @@ def test_first_zero_vote_pass_advances_and_second_consecutive_pass_is_joint_loss
     replayed_second = subject.close_voting(game_id="game-1", turn_no=2, now_ms=3_000)
     assert replayed_second == second
     assert second.result is TurnResultKind.JOINT_LOSS
-    assert second.status is TurnStatus.PASSED
+    assert second.status is TurnStatus.RESOLVING
     assert second.team is Stone.WHITE
+    assert subject.game.status is GameStatus.ACTIVE
+    assert subject.consecutive_passes == 1
+
+    resolution = subject.resolve_joint_loss(game_id="game-1", turn_no=2)
+    assert resolution.result is TurnResultKind.JOINT_LOSS
+    assert resolution.status is TurnStatus.PASSED
     assert subject.game.status is GameStatus.FINISHED
     assert subject.game.end_reason is EndReason.JOINT_LOSS
     assert subject.game.current_team is Stone.EMPTY

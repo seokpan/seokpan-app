@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from seokpan.game.domain import AppliedMove, Coordinate, GameStatus, Stone
+from seokpan.game.domain import AppliedMove, Coordinate, EndReason, GameStatus, Stone
 from seokpan.persistence.memory import InMemoryVoteRuntimeAdapter, ManualClock
 from seokpan.vote.application import (
     RESOLVER_LEASE_MS,
@@ -237,9 +237,36 @@ async def test_zero_vote_pass_advances_turn_without_move_and_two_passes_end_game
     )
     assert second.closure is not None
     assert second.closure.result is TurnResultKind.JOINT_LOSS
-    assert second.snapshot.game_status is GameStatus.FINISHED
+    assert second.snapshot.game_status is GameStatus.ACTIVE
     assert second.snapshot.move_no == 0
-    assert second.snapshot.consecutive_passes == 2
+    acquired = await adapter.acquire_resolver(
+        AcquireRuntimeResolver(
+            "room-1", "lease-joint", "game-1", 2, "resolver-joint", second.snapshot.state_version
+        )
+    )
+    applied = await adapter.apply_resolution(
+        ApplyRuntimeResolution(
+            room_id="room-1",
+            request_id="apply-joint",
+            game_id="game-1",
+            turn_no=2,
+            resolution_id="resolver-joint",
+            resolution=TurnResolution(
+                game_id="game-1",
+                turn_no=2,
+                team=Stone.WHITE,
+                result=TurnResultKind.JOINT_LOSS,
+                status=TurnStatus.PASSED,
+                selected_coordinate=None,
+                applied_move=None,
+                end_reason=EndReason.JOINT_LOSS,
+            ),
+            expected_state_version=acquired.snapshot.state_version,
+            persistence_confirmed=True,
+        )
+    )
+    assert applied.snapshot.game_status is GameStatus.FINISHED
+    assert applied.snapshot.consecutive_passes == 2
 
 
 def test_resolution_requires_explicit_persistence_confirmation() -> None:

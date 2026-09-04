@@ -9,7 +9,14 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from seokpan.game.domain import Coordinate, GameParticipantRole, GameResult, GameStatus, Stone
+from seokpan.game.domain import (
+    Coordinate,
+    GameParticipantRole,
+    GameParticipantSnapshot,
+    GameResult,
+    GameStatus,
+    Stone,
+)
 
 _GUEST_LABEL_PATTERN = re.compile(r"Guest-[0-9]{4}")
 
@@ -124,9 +131,22 @@ class FinalizeGameCommand:
             raise PersistenceRuleViolation("DUPLICATE_RATING_ADJUSTMENT")
 
 
+@dataclass(frozen=True, slots=True)
+class GamePersistenceSnapshot:
+    start: StartGameCommand
+    participants: tuple[GameParticipantSnapshot, ...]
+    moves: tuple[OfficialMoveRecord, ...]
+
+
 class GamePersistencePort(Protocol):
     async def start_game(self, command: StartGameCommand) -> PersistenceOutcome: ...
 
     async def append_move(self, command: OfficialMoveRecord) -> PersistenceOutcome: ...
 
     async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome: ...
+
+    async def load_game(self, game_id: str) -> GamePersistenceSnapshot | None: ...
+
+    async def get_move(self, game_id: str, turn_no: int) -> OfficialMoveRecord | None: ...
+
+    async def result_matches(self, command: FinalizeGameCommand) -> bool: ...

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,12 +12,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from seokpan.game.application import (
     FinalizeGameCommand,
     GameParticipantRecord,
+    GamePersistenceSnapshot,
     OfficialMoveRecord,
     PersistenceOutcome,
     PersistenceRuleViolation,
     StartGameCommand,
 )
-from seokpan.game.domain import EndReason, GameResult, GameStatus, MemberOutcome, Stone
+from seokpan.game.domain import (
+    Coordinate,
+    EndReason,
+    GameParticipantRole,
+    GameParticipantSnapshot,
+    GameResult,
+    GameStatus,
+    MemberOutcome,
+    Stone,
+)
 from seokpan.persistence.mariadb.models import (
     GameParticipantRow,
     GameResultRow,
@@ -109,6 +120,107 @@ class MariaDBGamePersistenceAdapter:
             return PersistenceOutcome.CREATED
 
         return await self._transaction(write, lambda: self._result_exists(command))
+
+    async def load_game(self, game_id: str) -> GamePersistenceSnapshot | None:
+        async with self._session_factory() as session:
+            game = await session.get(GameRow, game_id)
+            if game is None:
+                return None
+            participant_rows = (
+                (
+                    await session.execute(
+                        select(GameParticipantRow)
+                        .where(GameParticipantRow.game_id == game_id)
+                        .order_by(GameParticipantRow.participant_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            move_rows = (
+                (
+                    await session.execute(
+                        select(MoveRow).where(MoveRow.game_id == game_id).order_by(MoveRow.turn_no)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            histories = (
+                (
+                    await session.execute(
+                        select(RatingHistoryRow).where(RatingHistoryRow.game_id == game_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            history_ratings = {item.member_id: item.rating_before for item in histories}
+            member_ids = sorted(
+                item.member_id for item in participant_rows if item.member_id is not None
+            )
+            members = (
+                {}
+                if not member_ids
+                else {
+                    item.member_id: item
+                    for item in (
+                        (
+                            await session.execute(
+                                select(MemberRow).where(MemberRow.member_id.in_(member_ids))
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                }
+            )
+            participants: list[GameParticipantSnapshot] = []
+            records: list[GameParticipantRecord] = []
+            for item in participant_rows:
+                team = Stone(item.team)
+                records.append(
+                    GameParticipantRecord(
+                        participant_id=cast(str, item.participant_id),
+                        team=team,
+                        member_id=item.member_id,
+                        guest_label=item.guest_label,
+                    )
+                )
+                rating = None
+                if item.member_id is not None:
+                    member = members.get(item.member_id)
+                    if member is None:
+                        raise PersistenceRuleViolation("MEMBER_NOT_FOUND")
+                    rating = history_ratings.get(item.member_id, member.rating)
+                participants.append(
+                    GameParticipantSnapshot(
+                        participant_id=cast(str, item.participant_id),
+                        team=team,
+                        role=GameParticipantRole.PLAYER,
+                        member_id=item.member_id,
+                        rating=rating,
+                    )
+                )
+            return GamePersistenceSnapshot(
+                start=StartGameCommand(
+                    game_id=game.game_id,
+                    room_id=cast(str, game.room_id),
+                    voting_time_seconds=game.voting_time_seconds,
+                    started_at=game.started_at,
+                    participants=tuple(records),
+                ),
+                participants=tuple(participants),
+                moves=tuple(self._move_record(item) for item in move_rows),
+            )
+
+    async def get_move(self, game_id: str, turn_no: int) -> OfficialMoveRecord | None:
+        async with self._session_factory() as session:
+            row = await session.get(MoveRow, (game_id, turn_no))
+            return None if row is None else self._move_record(row)
+
+    async def result_matches(self, command: FinalizeGameCommand) -> bool:
+        return await self._result_exists(command)
 
     async def _transaction(
         self,
@@ -334,6 +446,19 @@ class MariaDBGamePersistenceAdapter:
             final_vote_count=command.final_vote_count,
             valid_voter_count=command.valid_voter_count,
             confirmed_at=command.confirmed_at,
+        )
+
+    @staticmethod
+    def _move_record(row: MoveRow) -> OfficialMoveRecord:
+        return OfficialMoveRecord(
+            game_id=row.game_id,
+            turn_no=row.turn_no,
+            move_no=row.move_no,
+            team=Stone(row.team),
+            coordinate=Coordinate(column=row.pos_x + 1, row=row.pos_y + 1),
+            final_vote_count=row.final_vote_count,
+            valid_voter_count=row.valid_voter_count,
+            confirmed_at=row.confirmed_at,
         )
 
     @staticmethod

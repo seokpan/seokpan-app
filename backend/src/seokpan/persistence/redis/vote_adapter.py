@@ -317,6 +317,7 @@ class RedisVoteRuntimeAdapter:
             ),
             occupied_cells=tuple(cls._cell(value) for value in _list(item["occupied_cells"])),
             resolver=cls._optional_resolver(item.get("resolver")),
+            valid_voter_count=_optional_integer(item, "valid_voter_count"),
             schema_version=_integer(item, "schema_version"),
         )
 

@@ -14,6 +14,7 @@ from seokpan.room.application.runtime import (
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
+    CompleteRoomGame,
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
@@ -210,6 +211,15 @@ class InMemoryRoomRuntimeAdapter:
                 start_roster=roster,
             ),
         )
+
+    async def complete_game(self, command: CompleteRoomGame) -> RoomMutationResult:
+        replay = self._replay(command)
+        if replay is not None:
+            return replay
+        state = self._require_room(command.room_id)
+        self._require_expected_version(state, command.expected_state_version)
+        state.room.complete_game(game_id=command.game_id)
+        return self._remember_result(command, state)
 
     async def connect(self, command: ConnectRoomParticipant) -> RoomMutationResult:
         replay = self._replay(command)
