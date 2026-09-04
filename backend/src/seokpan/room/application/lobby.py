@@ -26,6 +26,7 @@ from seokpan.room.application.runtime import (
     RoomRuntimePort,
     RoomRuntimeSnapshot,
     SetRoomReady,
+    StartRoomGame,
 )
 from seokpan.room.domain import (
     ActorType,
@@ -221,6 +222,25 @@ class RoomApplicationService(ParticipantSessionPort):
             )
         )
 
+    async def start_game(
+        self,
+        *,
+        session: SessionRecord,
+        request_id: str,
+        game_id: str,
+        expected_state_version: int,
+    ) -> RoomMutationResult:
+        participation = self._require_participation(session.session_digest)
+        return await self._runtime.start_game(
+            StartRoomGame(
+                room_id=participation.room_id,
+                request_id=request_id,
+                actor_id=participation.participant_id,
+                game_id=game_id,
+                expected_state_version=expected_state_version,
+            )
+        )
+
     async def leave_room(
         self,
         *,
@@ -365,6 +385,7 @@ class RoomApplicationService(ParticipantSessionPort):
             stale_connection=result.stale_connection,
             vote_removed=result.vote_removed,
             departure=result.departure,
+            start_roster=result.start_roster,
         )
 
 

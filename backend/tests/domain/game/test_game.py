@@ -97,6 +97,7 @@ def test_game_starts_with_empty_board_black_turn_and_zero_moves() -> None:
     assert game.moves == ()
     assert game.occupied_cells == ()
     assert game.stone_at("H8") is Stone.EMPTY
+    assert Game.black_forbidden_coordinates(game.occupied_cells) == ()
 
 
 def test_valid_moves_change_board_turn_and_move_number_once() -> None:
@@ -252,6 +253,7 @@ def test_black_forbidden_moves_are_derived_and_rejected_without_mutation(
     before = snapshot(game)
 
     assert game.black_forbidden_reason(candidate) is reason
+    assert Coordinate.parse(candidate) in Game.black_forbidden_coordinates(game.occupied_cells)
     assert snapshot(game) == before
     assert_rejected_without_mutation(
         game,

@@ -8,7 +8,7 @@ local function snapshot()
   local meta_values = redis.call(
     'HMGET', KEYS[1], 'schema_version', 'name', 'visibility',
     'max_participants', 'minimum_ready', 'vote_seconds', 'status',
-    'owner_id', 'state_version'
+    'owner_id', 'state_version', 'game_id'
   )
   local participant_values = redis.call('HGETALL', KEYS[2])
   local participants = {}
@@ -35,6 +35,7 @@ local function snapshot()
     status = meta_values[7],
     owner_id = meta_values[8] == '' and cjson.null or meta_values[8],
     state_version = tonumber(meta_values[9]),
+    game_id = (not meta_values[10] or meta_values[10] == '') and cjson.null or meta_values[10],
     participants = participants
   }
 end
@@ -160,7 +161,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=3,
+    version=4,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -182,7 +183,8 @@ if operation == 'create' then
     'status', 'WAITING',
     'owner_id', payload.owner_id,
     'state_version', 1,
-    'next_joined_order', 2
+    'next_joined_order', 2,
+    'game_id', ''
   )
   store_participant(payload.owner_id, {
     actor_type = 'MEMBER', joined_order = 1, connected = true, team = 'NONE'
@@ -292,6 +294,41 @@ if operation == 'change_vote_seconds' then
     advance_version()
   end
   return save({snapshot = snapshot()})
+end
+
+if operation == 'start_game' then
+  if redis.call('HGET', KEYS[1], 'status') ~= 'WAITING' then
+    return rejection('ROOM_NOT_WAITING')
+  end
+  if redis.call('HGET', KEYS[1], 'owner_id') ~= payload.actor_id then
+    return rejection('OWNER_REQUIRED')
+  end
+  local ready_ids = redis.call('SMEMBERS', KEYS[3])
+  local minimum_ready = tonumber(redis.call('HGET', KEYS[1], 'minimum_ready'))
+  if #ready_ids < minimum_ready then return rejection('MINIMUM_READY_NOT_MET') end
+  local has_black = false
+  local has_white = false
+  local values = redis.call('HGETALL', KEYS[2])
+  local roster = {}
+  for index = 1, #values, 2 do
+    local participant_id = values[index]
+    local value = cjson.decode(values[index + 1])
+    local ready = redis.call('SISMEMBER', KEYS[3], participant_id) == 1
+    if ready and value.team == 'BLACK' then has_black = true end
+    if ready and value.team == 'WHITE' then has_white = true end
+    table.insert(roster, {
+      participant_id = participant_id,
+      team = ready and value.team or 'NONE',
+      role = ready and 'PLAYER' or 'SPECTATOR',
+      joined_order = value.joined_order
+    })
+  end
+  if not has_black or not has_white then return rejection('BOTH_TEAMS_REQUIRED') end
+  table.sort(roster, function(left, right) return left.joined_order < right.joined_order end)
+  for _, item in ipairs(roster) do item.joined_order = nil end
+  redis.call('HSET', KEYS[1], 'status', 'PLAYING', 'game_id', payload.game_id)
+  advance_version()
+  return save({snapshot = snapshot(), start_roster = roster})
 end
 
 if operation == 'connect' then

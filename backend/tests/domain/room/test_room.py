@@ -326,14 +326,14 @@ def test_game_start_requires_minimum_ready_and_both_teams() -> None:
     assert_rejected_without_mutation(
         room,
         "MINIMUM_READY_NOT_MET",
-        lambda: room.start_game(actor_id="member-owner"),
+        lambda: room.start_game(actor_id="member-owner", game_id="game-1"),
     )
 
     join_ready_player(room, "member-2", Team.BLACK)
     assert_rejected_without_mutation(
         room,
         "BOTH_TEAMS_REQUIRED",
-        lambda: room.start_game(actor_id="member-owner"),
+        lambda: room.start_game(actor_id="member-owner", game_id="game-1"),
     )
 
 
@@ -345,7 +345,7 @@ def test_game_start_freezes_player_and_spectator_roster() -> None:
     room.join(participant_id="guest-spectator", actor_type=ActorType.GUEST)
     version_before = room.state_version
 
-    roster = room.start_game(actor_id="member-owner")
+    roster = room.start_game(actor_id="member-owner", game_id="game-1")
 
     assert room.status is RoomStatus.PLAYING
     assert roster.player_ids == ("member-owner", "member-2")
@@ -438,7 +438,7 @@ def test_playing_room_requests_system_invalid_only_when_room_must_close() -> Non
     room.join(participant_id="guest-player", actor_type=ActorType.GUEST)
     room.change_team(participant_id="guest-player", team=Team.WHITE)
     room.set_ready(participant_id="guest-player", ready=True)
-    room.start_game(actor_id="member-owner")
+    room.start_game(actor_id="member-owner", game_id="game-1")
 
     result = room.leave(participant_id="member-owner")
 
@@ -509,7 +509,7 @@ def test_waiting_only_commands_are_rejected_while_playing() -> None:
     room.change_team(participant_id="member-owner", team=Team.BLACK)
     room.set_ready(participant_id="member-owner", ready=True)
     join_ready_player(room, "member-2", Team.WHITE)
-    room.start_game(actor_id="member-owner")
+    room.start_game(actor_id="member-owner", game_id="game-1")
 
     assert_rejected_without_mutation(
         room,

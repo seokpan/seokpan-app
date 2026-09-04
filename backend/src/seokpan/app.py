@@ -2,19 +2,23 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 
+from seokpan.api.game import GameApiServices, game_router
 from seokpan.api.identity import IdentityApiServices, identity_router
 from seokpan.api.problems import install_problem_handlers
 from seokpan.api.room import RoomApiServices, room_router
+from seokpan.game.application import GameApplicationService
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
     AuthSessionService,
     MemberIdentityService,
 )
 from seokpan.persistence.memory import (
+    InMemoryGamePersistenceAdapter,
     InMemoryIdentityAdapter,
     InMemoryRoomRuntimeAdapter,
     InMemorySessionAdapter,
     InMemorySessionWorkflow,
+    InMemoryVoteRuntimeAdapter,
     ManualClock,
 )
 from seokpan.room.application import RoomApplicationService
@@ -31,6 +35,7 @@ from seokpan.settings import Settings
 class ApplicationServices:
     identity_api: IdentityApiServices
     room_api: RoomApiServices | None = None
+    game_api: GameApiServices | None = None
 
 
 def build_headless_services(settings: Settings) -> ApplicationServices:
@@ -56,7 +61,17 @@ def build_headless_services(settings: Settings) -> ApplicationServices:
         SecretsTokenSource(),
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
-    return ApplicationServices(identity_api, RoomApiServices(identity_api, room_service))
+    game_service = GameApplicationService(
+        rooms=room_service,
+        games=InMemoryGamePersistenceAdapter(),
+        votes=InMemoryVoteRuntimeAdapter(clock),
+        clock=clock,
+    )
+    return ApplicationServices(
+        identity_api,
+        RoomApiServices(identity_api, room_service),
+        GameApiServices(identity_api, game_service),
+    )
 
 
 def create_app(
@@ -77,6 +92,8 @@ def create_app(
     application.include_router(identity_router(resolved_services.identity_api))
     if resolved_services.room_api is not None:
         application.include_router(room_router(resolved_services.room_api))
+    if resolved_services.game_api is not None:
+        application.include_router(game_router(resolved_services.game_api))
     application.state.services = resolved_services
     return application
 

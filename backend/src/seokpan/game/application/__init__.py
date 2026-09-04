@@ -9,6 +9,7 @@ from seokpan.game.application.persistence import (
     PersistenceRuleViolation,
     StartGameCommand,
 )
+from seokpan.game.application.service import GameApplicationService, GameApplicationSnapshot
 
 __all__ = [
     "FinalizeGameCommand",
@@ -18,4 +19,6 @@ __all__ = [
     "PersistenceOutcome",
     "PersistenceRuleViolation",
     "StartGameCommand",
+    "GameApplicationService",
+    "GameApplicationSnapshot",
 ]

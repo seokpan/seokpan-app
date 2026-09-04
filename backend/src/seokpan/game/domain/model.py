@@ -159,6 +159,29 @@ class Game:
             )
         )
 
+    @classmethod
+    def black_forbidden_coordinates(
+        cls,
+        occupied_cells: tuple[BoardCell, ...],
+    ) -> tuple[Coordinate, ...]:
+        """Calculate current black forbidden positions from a public board snapshot."""
+        board: dict[Coordinate, Stone] = {}
+        for cell in occupied_cells:
+            if cell.stone is Stone.EMPTY or cell.coordinate in board:
+                raise GameRuleViolation("INVALID_BOARD_SNAPSHOT")
+            board[cell.coordinate] = cell.stone
+        forbidden: list[Coordinate] = []
+        for row in range(1, BOARD_SIZE + 1):
+            for column in range(1, BOARD_SIZE + 1):
+                coordinate = Coordinate(column=column, row=row)
+                if coordinate in board:
+                    continue
+                proposed = dict(board)
+                proposed[coordinate] = Stone.BLACK
+                if cls._black_forbidden_reason(proposed, coordinate) is not None:
+                    forbidden.append(coordinate)
+        return tuple(forbidden)
+
     def stone_at(self, coordinate: Coordinate | str) -> Stone:
         parsed = self._coordinate(coordinate)
         return self._board.get(parsed, Stone.EMPTY)
