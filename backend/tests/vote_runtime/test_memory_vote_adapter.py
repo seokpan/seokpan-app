@@ -138,6 +138,31 @@ async def test_vote_rejects_wrong_role_team_deadline_and_stale_version() -> None
 
 
 @pytest.mark.asyncio
+async def test_participant_disconnect_reports_and_removes_active_vote() -> None:
+    clock = ManualClock()
+    adapter, version = await initialized(clock)
+    await adapter.cast_vote(
+        CastRuntimeVote(
+            "room-1",
+            "vote-disconnect",
+            "game-1",
+            1,
+            "black-1",
+            Coordinate.parse("H8"),
+            version,
+        )
+    )
+
+    assert await adapter.participant_disconnected("room-1", "black-1") is True
+    snapshot = await adapter.get("room-1")
+    assert snapshot is not None
+    assert snapshot.votes == ()
+    participant = next(item for item in snapshot.participants if item.participant_id == "black-1")
+    assert participant.connected is False
+    assert await adapter.participant_disconnected("room-1", "black-1") is False
+
+
+@pytest.mark.asyncio
 async def test_close_resolver_lease_handoff_and_move_application() -> None:
     clock = ManualClock()
     adapter, version = await initialized(clock)

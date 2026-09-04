@@ -2,6 +2,7 @@
 
 from seokpan.persistence.memory.game_adapter import InMemoryGamePersistenceAdapter
 from seokpan.persistence.memory.identity_adapter import InMemoryIdentityAdapter
+from seokpan.persistence.memory.realtime_adapter import InMemoryRealtimeEventAdapter
 from seokpan.persistence.memory.resolution import (
     InMemoryDueTurnSource,
     InMemoryTieSelectionAudit,
@@ -17,6 +18,7 @@ __all__ = [
     "InMemoryIdentityAdapter",
     "InMemoryGamePersistenceAdapter",
     "InMemoryRoomRuntimeAdapter",
+    "InMemoryRealtimeEventAdapter",
     "InMemoryDueTurnSource",
     "InMemoryTieSelectionAudit",
     "InMemoryTieSelector",

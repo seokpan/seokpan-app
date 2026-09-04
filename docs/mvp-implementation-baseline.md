@@ -155,7 +155,7 @@ First Success Event 집합은 다음과 같다.
 ```text
 lobby.snapshot, lobby.rooms_changed
 room.snapshot, room.participant_joined, room.participant_left
-room.settings_changed, room.team_changed, room.ready_changed, room.owner_changed
+room.settings_changed, room.team_changed, room.ready_changed, room.owner_changed, room.closed
 game.started, vote.tally_changed, turn.resolving
 game.move_applied, turn.passed, game.finished
 connection.reconnect_required, snapshot.required

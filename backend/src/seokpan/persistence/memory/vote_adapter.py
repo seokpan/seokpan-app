@@ -85,6 +85,26 @@ class InMemoryVoteRuntimeAdapter:
         state = self._states.get(room_id)
         return None if state is None else self._snapshot(room_id, state)
 
+    async def participant_connected(self, room_id: str, participant_id: str) -> None:
+        state = self._states.get(room_id)
+        if state is None:
+            return
+        before = state.game.participants
+        state.game.reconnect(participant_id=participant_id)
+        if state.game.participants != before:
+            state.state_version += 1
+
+    async def participant_disconnected(self, room_id: str, participant_id: str) -> bool:
+        state = self._states.get(room_id)
+        if state is None:
+            return False
+        before = (state.game.participants, state.game.votes)
+        votes_before = state.game.votes
+        state.game.disconnect(participant_id=participant_id, now_ms=self._clock.now_ms)
+        if (state.game.participants, state.game.votes) != before:
+            state.state_version += 1
+        return state.game.votes != votes_before
+
     async def cast_vote(self, command: CastRuntimeVote) -> VoteMutationResult:
         replay = self._replay(command)
         if replay is not None:

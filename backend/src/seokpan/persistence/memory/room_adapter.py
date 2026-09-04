@@ -18,6 +18,7 @@ from seokpan.room.application.runtime import (
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
+    DueRoomDisconnect,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
     LeaveRoomRuntime,
@@ -61,11 +62,22 @@ class _RoomCommand(Protocol):
     def request_id(self) -> str: ...
 
 
+class _VoteConnectionMirror(Protocol):
+    async def participant_connected(self, room_id: str, participant_id: str) -> None: ...
+
+    async def participant_disconnected(self, room_id: str, participant_id: str) -> bool: ...
+
+
 class InMemoryRoomRuntimeAdapter:
     """A Fake for contract tests; passing it is not Redis Provider evidence."""
 
-    def __init__(self, clock: ManualClock) -> None:
+    def __init__(
+        self,
+        clock: ManualClock,
+        vote_connections: _VoteConnectionMirror | None = None,
+    ) -> None:
         self._clock = clock
+        self._vote_connections = vote_connections
         self._rooms: dict[str, _RoomState] = {}
         self._tombstones: dict[str, int] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
@@ -128,6 +140,34 @@ class InMemoryRoomRuntimeAdapter:
         if state is None:
             return None
         return state.encoded_password
+
+    async def due_disconnects(
+        self,
+        *,
+        now_ms: int,
+        limit: int,
+    ) -> tuple[DueRoomDisconnect, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_DUE_DISCONNECT_LIMIT")
+        due = (
+            DueRoomDisconnect(
+                room_id=room_id,
+                participant_id=connection.participant_id,
+                connection_generation=connection.generation,
+                expires_at_ms=connection.disconnect_expires_at_ms,
+            )
+            for room_id, state in self._rooms.items()
+            for connection in state.connections.values()
+            if not connection.connected
+            and connection.disconnect_expires_at_ms is not None
+            and connection.disconnect_expires_at_ms <= now_ms
+        )
+        return tuple(
+            sorted(
+                due,
+                key=lambda item: (item.expires_at_ms, item.room_id, item.participant_id),
+            )[:limit]
+        )
 
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult:
         replay = self._replay(command)
@@ -238,6 +278,11 @@ class InMemoryRoomRuntimeAdapter:
             disconnect_expires_at_ms=None,
         )
         state.room.reconnect(participant_id=command.participant_id)
+        if self._vote_connections is not None:
+            await self._vote_connections.participant_connected(
+                command.room_id,
+                command.participant_id,
+            )
         return self._remember(
             command,
             RoomMutationResult(
@@ -285,6 +330,14 @@ class InMemoryRoomRuntimeAdapter:
             command.active_vote_turn,
             command.participant_id,
         )
+        if self._vote_connections is not None:
+            vote_removed = (
+                await self._vote_connections.participant_disconnected(
+                    command.room_id,
+                    command.participant_id,
+                )
+                or vote_removed
+            )
         if departure.room_closed:
             return self._close(
                 command,

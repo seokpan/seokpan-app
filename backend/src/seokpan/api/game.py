@@ -115,7 +115,7 @@ def game_router(services: GameApiServices) -> APIRouter:
         except (RoomRuleViolation, VoteRuleViolation) as error:
             await _raise_stale(services, current, error)
             raise
-        return _response(snapshot)
+        return game_snapshot_response(snapshot)
 
     @router.get(
         "/games/{game_id}",
@@ -127,7 +127,9 @@ def game_router(services: GameApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
     ) -> GameSnapshotResponse:
         current = await require_current_session(services.identity, session_cookie, touch=True)
-        return _response(await services.games.get_game(session=current, game_id=game_id))
+        return game_snapshot_response(
+            await services.games.get_game(session=current, game_id=game_id)
+        )
 
     @router.put(
         "/games/{game_id}/turns/{turn_no}/vote",
@@ -155,7 +157,7 @@ def game_router(services: GameApiServices) -> APIRouter:
         except VoteRuleViolation as error:
             await _raise_stale(services, current, error)
             raise
-        return _response(snapshot)
+        return game_snapshot_response(snapshot)
 
     @router.delete(
         "/games/{game_id}/turns/{turn_no}/vote",
@@ -182,7 +184,7 @@ def game_router(services: GameApiServices) -> APIRouter:
         except VoteRuleViolation as error:
             await _raise_stale(services, current, error)
             raise
-        return _response(snapshot)
+        return game_snapshot_response(snapshot)
 
     return router
 
@@ -222,7 +224,7 @@ async def _raise_stale(
     ) from error
 
 
-def _response(value: GameApplicationSnapshot) -> GameSnapshotResponse:
+def game_snapshot_response(value: GameApplicationSnapshot) -> GameSnapshotResponse:
     runtime = value.game
     voters = {item.participant_id: item for item in runtime.participants}
     my_vote = next(
