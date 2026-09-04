@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -16,7 +17,13 @@ from seokpan.game.application.persistence import (
     PersistenceRuleViolation,
 )
 from seokpan.game.domain import EndReason, Game, GameResultService, GameStatus
-from seokpan.room.application import CompleteRoomGame, RoomRuntimePort, RoomRuntimeSnapshot
+from seokpan.room.application import (
+    CompleteRoomGame,
+    NullRealtimeEventAdapter,
+    RealtimeEventPort,
+    RoomRuntimePort,
+    RoomRuntimeSnapshot,
+)
 from seokpan.room.domain import RoomStatus
 from seokpan.vote.application import (
     AcquireRuntimeResolver,
@@ -32,6 +39,8 @@ from seokpan.vote.domain import (
     VoteRuleViolation,
     VoteTurnGame,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TurnFinalizationApproval(StrEnum):
@@ -119,6 +128,7 @@ class TurnResolutionRunner:
         rooms: RoomRuntimePort,
         clock: MillisecondClock,
         runner_id: str,
+        events: RealtimeEventPort | None = None,
     ) -> None:
         if not runner_id:
             raise ValueError("INVALID_RUNNER_ID")
@@ -131,6 +141,7 @@ class TurnResolutionRunner:
         self._rooms = rooms
         self._clock = clock
         self._runner_id = hashlib.sha256(runner_id.encode()).hexdigest()[:12]
+        self._events = events or NullRealtimeEventAdapter()
 
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
@@ -389,7 +400,7 @@ class TurnResolutionRunner:
             raise VoteRuleViolation("ROOM_NOT_FOUND")
         if room.status is RoomStatus.WAITING and room.game_id is None:
             return
-        await self._rooms.complete_game(
+        completed = await self._rooms.complete_game(
             CompleteRoomGame(
                 room_id=due_turn.room_id,
                 request_id=_stable_id("room-complete", due_turn),
@@ -397,6 +408,32 @@ class TurnResolutionRunner:
                 expected_state_version=room.state_version,
             )
         )
+        if completed.replayed or completed.snapshot is None:
+            return
+        try:
+            await self._events.room_changed(
+                event_type="snapshot.required",
+                room_id=due_turn.room_id,
+                state_version=completed.snapshot.state_version,
+                game_id=due_turn.game_id,
+                payload={"reason": "GAME_COMPLETED"},
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Game completion room event delivery failed: room_id=%s game_id=%s",
+                due_turn.room_id,
+                due_turn.game_id,
+            )
+        try:
+            await self._events.lobby_rooms_changed(
+                {"reason": "GAME_COMPLETED", "room_id": due_turn.room_id}
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Game completion lobby event delivery failed: room_id=%s game_id=%s",
+                due_turn.room_id,
+                due_turn.game_id,
+            )
 
     def _next_deadline(
         self,

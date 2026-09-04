@@ -263,6 +263,14 @@ class RoomConnection:
 
 
 @dataclass(frozen=True, slots=True)
+class DueRoomDisconnect:
+    room_id: str
+    participant_id: str
+    connection_generation: int
+    expires_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RoomRuntimeSnapshot:
     room_id: str
     config: RoomConfig
@@ -328,6 +336,15 @@ class RoomRuntimePort(Protocol):
     async def expire_disconnect(self, command: ExpireRoomDisconnect) -> RoomMutationResult: ...
 
     async def leave(self, command: LeaveRoomRuntime) -> RoomMutationResult: ...
+
+
+class DueRoomDisconnectSource(Protocol):
+    async def due_disconnects(
+        self,
+        *,
+        now_ms: int,
+        limit: int,
+    ) -> tuple[DueRoomDisconnect, ...]: ...
 
 
 class RoomPasswordPort(Protocol):

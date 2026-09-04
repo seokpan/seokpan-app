@@ -127,7 +127,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
     ) -> LobbyResponse:
         await require_current_session(services.identity, session_cookie, touch=True)
         snapshots = await services.rooms.list_rooms()
-        return LobbyResponse(rooms=[_lobby_room(item) for item in snapshots])
+        return LobbyResponse(rooms=[lobby_room_response(item) for item in snapshots])
 
     @router.post(
         "",
@@ -154,7 +154,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
             ),
             password=payload.password,
         )
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.get(
         "/{room_id}/snapshot",
@@ -168,7 +168,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         current = await require_current_session(services.identity, session_cookie, touch=True)
         _require_current_room(services.rooms, current, room_id)
         snapshot = await services.rooms.get(room_id)
-        return await _required_snapshot(services, snapshot)
+        return await room_snapshot_response(services, snapshot)
 
     @router.post(
         "/{room_id}/joins",
@@ -195,7 +195,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 password=payload.password,
             ),
         )
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.delete(
         "/{room_id}/participants/me",
@@ -222,7 +222,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         )
         if result.snapshot is None:
             return None
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.patch(
         "/{room_id}/settings",
@@ -248,7 +248,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 vote_seconds=payload.vote_seconds,
             ),
         )
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.put(
         "/{room_id}/participants/me/team",
@@ -274,7 +274,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 team=payload.team,
             ),
         )
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.put(
         "/{room_id}/participants/me/ready",
@@ -300,7 +300,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 ready=payload.ready,
             ),
         )
-        return await _required_snapshot(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     return router
 
@@ -353,7 +353,7 @@ async def _stale_guard(
         ) from error
 
 
-async def _required_snapshot(
+async def room_snapshot_response(
     services: RoomApiServices,
     snapshot: RoomRuntimeSnapshot | None,
     replayed: bool = False,
@@ -397,7 +397,7 @@ async def _required_snapshot(
     )
 
 
-def _lobby_room(snapshot: RoomRuntimeSnapshot) -> LobbyRoomResponse:
+def lobby_room_response(snapshot: RoomRuntimeSnapshot) -> LobbyRoomResponse:
     return LobbyRoomResponse(
         room_id=snapshot.room_id,
         name=snapshot.config.name,

@@ -1,9 +1,22 @@
 """Application contracts for Room runtime state."""
 
+from seokpan.room.application.disconnects import (
+    DisconnectExpiryResult,
+    DisconnectExpiryRunner,
+    DisconnectExpiryStatus,
+    RoomConnectionCoordinator,
+)
 from seokpan.room.application.lobby import (
     LobbyRoomRuntimePort,
     RoomApplicationService,
     RoomParticipation,
+)
+from seokpan.room.application.realtime import (
+    REALTIME_SCHEMA_VERSION,
+    NullRealtimeEventAdapter,
+    RealtimeEvent,
+    RealtimeEventPort,
+    RealtimeSubscription,
 )
 from seokpan.room.application.runtime import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
@@ -16,6 +29,8 @@ from seokpan.room.application.runtime import (
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
+    DueRoomDisconnect,
+    DueRoomDisconnectSource,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
     LeaveRoomRuntime,
@@ -30,21 +45,32 @@ from seokpan.room.application.runtime import (
 )
 
 __all__ = [
+    "REALTIME_SCHEMA_VERSION",
     "ROOM_CLOSED_TOMBSTONE_TTL_MS",
     "ROOM_DISCONNECT_LEASE_MS",
     "ROOM_REQUEST_DEDUPE_TTL_MS",
     "LobbyRoomRuntimePort",
+    "NullRealtimeEventAdapter",
+    "RealtimeEvent",
+    "RealtimeEventPort",
+    "RealtimeSubscription",
     "ChangeRoomTeam",
+    "DisconnectExpiryResult",
+    "DisconnectExpiryRunner",
+    "DisconnectExpiryStatus",
     "ChangeRoomIdentity",
     "ChangeRoomVoteSeconds",
     "CompleteRoomGame",
     "ConnectRoomParticipant",
     "CreateRoomRuntime",
     "DisconnectRoomParticipant",
+    "DueRoomDisconnect",
+    "DueRoomDisconnectSource",
     "ExpireRoomDisconnect",
     "JoinRoomRuntime",
     "LeaveRoomRuntime",
     "RoomConnection",
+    "RoomConnectionCoordinator",
     "RoomMutationResult",
     "RoomApplicationService",
     "RoomParticipation",

@@ -20,6 +20,7 @@ from seokpan.game.domain import EndReason, GameStatus, Stone
 from seokpan.persistence.memory import (
     InMemoryDueTurnSource,
     InMemoryGamePersistenceAdapter,
+    InMemoryRealtimeEventAdapter,
     InMemoryRoomRuntimeAdapter,
     InMemoryTieSelectionAudit,
     InMemoryTieSelector,
@@ -32,6 +33,7 @@ from seokpan.room.application import (
     CompleteRoomGame,
     CreateRoomRuntime,
     JoinRoomRuntime,
+    RealtimeEventPort,
     RoomMutationResult,
     SetRoomReady,
     StartRoomGame,
@@ -129,6 +131,7 @@ async def setup_runner(
     votes: InMemoryVoteRuntimeAdapter | None = None,
     rooms: InMemoryRoomRuntimeAdapter | None = None,
     games: InMemoryGamePersistenceAdapter | None = None,
+    events: RealtimeEventPort | None = None,
 ) -> tuple[
     TurnResolutionRunner,
     ManualClock,
@@ -203,6 +206,7 @@ async def setup_runner(
         rooms=room_store,
         clock=clock,
         runner_id="runner-a",
+        events=events,
     )
     return runner, clock, room_store, vote_store, game_store, audit
 
@@ -301,6 +305,33 @@ async def test_second_zero_vote_waits_for_result_then_resets_room() -> None:
     assert room.status is RoomStatus.WAITING
     assert room.game_id is None
     assert all(not participant.ready for participant in room.participants)
+
+
+@pytest.mark.asyncio
+async def test_game_completion_notifies_room_snapshot_and_lobby_availability() -> None:
+    events = InMemoryRealtimeEventAdapter()
+    runner, clock, _, _, _, _ = await setup_runner(events=events)
+    room_events = await events.subscribe_room(ROOM_ID)
+    lobby_events = await events.subscribe_lobby()
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+    clock.advance(5_000)
+
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 2))).status is (
+        TurnProcessingStatus.GAME_ENDED
+    )
+    room_event = await room_events.receive()
+    lobby_event = await lobby_events.receive()
+
+    assert room_event.event_type == "snapshot.required"
+    assert room_event.game_id == GAME_ID
+    assert room_event.payload == {"reason": "GAME_COMPLETED"}
+    assert lobby_event.event_type == "lobby.rooms_changed"
+    assert lobby_event.payload == {"reason": "GAME_COMPLETED", "room_id": ROOM_ID}
+    await room_events.close()
+    await lobby_events.close()
 
 
 @pytest.mark.asyncio
