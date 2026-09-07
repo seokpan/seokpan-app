@@ -81,7 +81,7 @@ class RedisRoomRuntimeAdapter:
         result = await self._scripts.execute(
             ROOM_READ,
             keys=self._read_keys(room_id),
-            args=(room_id,),
+            args=(room_id, ROOM_RUNTIME_SCHEMA_VERSION),
         )
         decoded = self._result(result)
         self._raise_rejection(decoded)
@@ -184,6 +184,7 @@ class RedisRoomRuntimeAdapter:
             "complete_game",
             {
                 "game_id": command.game_id,
+                "final_turn_no": command.final_turn_no,
                 "expected_state_version": command.expected_state_version,
             },
         )
@@ -260,7 +261,9 @@ class RedisRoomRuntimeAdapter:
                 ROOM_REQUEST_DEDUPE_TTL_MS,
                 ROOM_DISCONNECT_LEASE_MS,
                 ROOM_CLOSED_TOMBSTONE_TTL_MS,
-                VersionedJsonCodec.encode(payload),
+                VersionedJsonCodec.encode(
+                    {**payload, "schema_version": ROOM_RUNTIME_SCHEMA_VERSION}
+                ),
             ),
         )
         decoded = self._result(result)
@@ -304,6 +307,8 @@ class RedisRoomRuntimeAdapter:
         error = result.get("error")
         if not isinstance(error, str):
             raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        if error == "ROOM_SCHEMA_VERSION_MISMATCH":
+            raise RedisProviderError(error)
         raise RoomRuleViolation(error)
 
     @classmethod
@@ -324,6 +329,14 @@ class RedisRoomRuntimeAdapter:
         if value is None:
             return None
         snapshot = _mapping(value)
+        if _integer(snapshot, "schema_version") != ROOM_RUNTIME_SCHEMA_VERSION:
+            raise RedisProviderError("ROOM_SCHEMA_VERSION_MISMATCH")
+        last_game_id = _optional_string(snapshot, "last_game_id")
+        last_game_turn_no = _optional_integer(snapshot, "last_game_turn_no")
+        if (last_game_id is None) != (last_game_turn_no is None) or (
+            last_game_turn_no is not None and last_game_turn_no < 1
+        ):
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
         config_value = _mapping(snapshot["config"])
         participants_value = _list(snapshot["participants"])
         return RoomRuntimeSnapshot(
@@ -341,6 +354,8 @@ class RedisRoomRuntimeAdapter:
             participants=tuple(cls._participant(item) for item in participants_value),
             game_id=_optional_string(snapshot, "game_id"),
             schema_version=_integer(snapshot, "schema_version"),
+            last_game_id=last_game_id,
+            last_game_turn_no=last_game_turn_no,
         )
 
     @staticmethod

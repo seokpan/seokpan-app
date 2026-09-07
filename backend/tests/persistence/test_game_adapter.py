@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from seokpan.game.application import (
     PersistenceOutcome,
     PersistenceRuleViolation,
     StartGameCommand,
+    StoredGameResult,
 )
 from seokpan.game.domain import (
     Coordinate,
@@ -589,3 +591,195 @@ async def test_uncertain_commit_without_matching_row_returns_stable_error() -> N
     with pytest.raises(PersistenceRuleViolation, match="PERSISTENCE_COMMIT_UNCERTAIN") as error:
         await adapter.append_move(move_command())
     assert error.value.code == "PERSISTENCE_COMMIT_UNCERTAIN"
+
+
+def stored_result_session(command: FinalizeGameCommand) -> FakeSession:
+    game = game_row()
+    game.status = (
+        "SYSTEM_INVALID" if command.result.status is GameStatus.SYSTEM_INVALID else "COMPLETED"
+    )
+    game.ended_at = command.ended_at
+    participants = [
+        GameParticipantRow(
+            game_id=GAME_ID,
+            participant_id=participant_id,
+            team=team,
+            member_id=member_id,
+            is_guest=False,
+            guest_label=None,
+        )
+        for participant_id, team, member_id in [(BLACK_ID, "BLACK", 1), (WHITE_ID, "WHITE", 2)]
+    ]
+    histories = [
+        RatingHistoryRow(
+            game_id=GAME_ID,
+            member_id=item.member_id,
+            rating_before=item.rating_before,
+            rating_delta=item.rating_delta,
+            rating_after=item.rating_after,
+            recorded_at=command.ended_at,
+        )
+        for item in reversed(command.result.rating_adjustments)
+    ]
+    return FakeSession(
+        rows={
+            (GameRow, GAME_ID): game,
+            (GameResultRow, GAME_ID): MariaDBGamePersistenceAdapter._result_row(command),
+        },
+        execute_results=[participants, histories],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "winner"),
+    [
+        (EndReason.BLACK_WIN, Stone.BLACK),
+        (EndReason.WHITE_WIN, Stone.WHITE),
+        (EndReason.DRAW, Stone.EMPTY),
+        (EndReason.FORFEIT, Stone.BLACK),
+        (EndReason.FORFEIT, Stone.WHITE),
+        (EndReason.JOINT_LOSS, Stone.EMPTY),
+        (EndReason.SYSTEM_INVALID, Stone.EMPTY),
+    ],
+)
+async def test_load_result_returns_only_completed_game_history(
+    reason: EndReason,
+    winner: Stone,
+) -> None:
+    original = completed_result(system_invalid=reason is EndReason.SYSTEM_INVALID)
+    ratings = tuple(
+        replace(
+            item,
+            outcome=MemberOutcome.DRAW
+            if reason is EndReason.DRAW
+            else (MemberOutcome.WIN if item.team is winner else MemberOutcome.LOSS),
+        )
+        for item in original.result.rating_adjustments
+    )
+    command = replace(
+        original,
+        result=replace(
+            original.result,
+            end_reason=reason,
+            winner=winner,
+            rating_adjustments=ratings,
+        ),
+    )
+    session = stored_result_session(command)
+    result_row = session.rows[(GameResultRow, GAME_ID)]
+    assert isinstance(result_row, GameResultRow)
+    result_row.reflected_to_stats = True
+    result = await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_result(GAME_ID)
+    assert result == StoredGameResult(
+        GAME_ID,
+        ROOM_ID,
+        command.result.status,
+        reason,
+        winner,
+        NOW,
+        ratings,
+    )
+    assert result.stats_eligible is (reason is not EndReason.SYSTEM_INVALID)
+    assert session.execute_results == []
+    assert session.added == []
+    assert session.commit_count == session.flush_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_game", [False, True])
+async def test_load_result_missing_or_active_game_returns_none(existing_game: bool) -> None:
+    session = FakeSession(rows={(GameRow, GAME_ID): game_row()} if existing_game else {})
+    assert await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_result(GAME_ID) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "broken",
+    [
+        "orphan",
+        "room_id",
+        "missing_result",
+        "not_reflected",
+        "active",
+        "ended_at",
+        "time_mismatch",
+        "conclusion",
+        "missing_rating",
+        "extra_rating",
+        "duplicate_rating",
+        "duplicate_member",
+        "participant_id",
+        "team",
+        "invalid_rating",
+        "invalid_stats",
+    ],
+)
+async def test_load_result_rejects_incomplete_records(broken: str) -> None:
+    session = stored_result_session(completed_result())
+    game = session.rows[(GameRow, GAME_ID)]
+    result = session.rows[(GameResultRow, GAME_ID)]
+    assert isinstance(game, GameRow)
+    assert isinstance(result, GameResultRow)
+    result.reflected_to_stats = True
+    participants, histories = session.execute_results
+    if broken == "orphan":
+        del session.rows[(GameRow, GAME_ID)]
+    elif broken == "missing_result":
+        del session.rows[(GameResultRow, GAME_ID)]
+    elif broken == "room_id":
+        game.room_id = None
+    elif broken == "not_reflected":
+        result.reflected_to_stats = False
+    elif broken == "active":
+        game.status = "IN_PROGRESS"
+    elif broken == "ended_at":
+        game.ended_at = None
+    elif broken == "time_mismatch":
+        result.ended_at = NOW.replace(second=1)
+    elif broken == "conclusion":
+        result.winner = "NONE"
+    elif broken == "missing_rating":
+        histories.pop()
+    elif broken == "extra_rating":
+        histories.append(RatingHistoryRow(member_id=3))
+    elif broken == "duplicate_rating":
+        histories.append(histories[0])
+    elif broken == "duplicate_member":
+        participants.append(participants[0])
+    elif broken in {"participant_id", "team"}:
+        setattr(participants[0], broken, None if broken == "participant_id" else "EMPTY")
+    elif broken == "invalid_stats":
+        game.status = "SYSTEM_INVALID"
+        result.end_reason = "SYSTEM_INVALID"
+        result.winner = "NONE"
+    else:
+        history = histories[0]
+        assert isinstance(history, RatingHistoryRow)
+        history.rating_after = -1
+    with pytest.raises(PersistenceRuleViolation, match="GAME_RESULT_INCOMPLETE"):
+        await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_result(GAME_ID)
+    assert session.added == []
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_load_result_guest_has_no_rating_history() -> None:
+    command = completed_result()
+    command = replace(
+        command,
+        result=replace(
+            command.result,
+            rating_adjustments=command.result.rating_adjustments[:1],
+        ),
+    )
+    session = stored_result_session(command)
+    result = session.rows[(GameResultRow, GAME_ID)]
+    assert isinstance(result, GameResultRow)
+    result.reflected_to_stats = True
+    white = session.execute_results[0][1]
+    assert isinstance(white, GameParticipantRow)
+    white.member_id, white.is_guest, white.guest_label = None, True, "Guest-0001"
+    stored = await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_result(GAME_ID)
+    assert stored is not None
+    assert tuple(item.member_id for item in stored.rating_adjustments) == (1,)

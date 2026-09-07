@@ -61,7 +61,10 @@ class RedisVoteRuntimeAdapter:
                 "participants": [self._voter_value(item) for item in command.participants],
                 "deadline_ms": command.deadline_ms,
                 "expected_state_version": command.expected_state_version,
+                "previous_game_id": command.previous_game_id,
+                "previous_turn_no": command.previous_turn_no,
             },
+            previous_turn_no=command.previous_turn_no,
         )
 
     async def get(self, room_id: str) -> VoteRuntimeSnapshot | None:
@@ -77,7 +80,15 @@ class RedisVoteRuntimeAdapter:
         result = await self._scripts.execute(
             VOTE_READ,
             keys=self._read_keys(room_id, turn_no),
-            args=(VersionedJsonCodec.encode({"room_id": room_id}),),
+            args=(
+                VersionedJsonCodec.encode(
+                    {
+                        "room_id": room_id,
+                        "game_id": _string(game, "game_id"),
+                        "turn_no": turn_no,
+                    }
+                ),
+            ),
         )
         decoded = self._result(result)
         self._raise_rejection(decoded)
@@ -173,6 +184,8 @@ class RedisVoteRuntimeAdapter:
         operation: str,
         turn_no: int,
         payload: Mapping[str, object],
+        *,
+        previous_turn_no: int | None = None,
     ) -> VoteMutationResult:
         complete_payload = {
             **payload,
@@ -181,7 +194,16 @@ class RedisVoteRuntimeAdapter:
         }
         result = await self._scripts.execute(
             VOTE_MUTATION,
-            keys=self._mutation_keys(room_id, turn_no),
+            keys=self._mutation_keys(room_id, turn_no)
+            + (
+                ()
+                if previous_turn_no is None
+                else (
+                    RedisKeyspace.room_votes(room_id, previous_turn_no),
+                    RedisKeyspace.room_vote_tally(room_id, previous_turn_no),
+                    RedisKeyspace.room_resolver(room_id, previous_turn_no),
+                )
+            ),
             args=(
                 operation,
                 request_id,
@@ -278,6 +300,8 @@ class RedisVoteRuntimeAdapter:
         error = result.get("error")
         if not isinstance(error, str):
             raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        if error == "REDIS_SNAPSHOT_CHANGED":
+            raise RedisProviderError(error)
         raise VoteRuleViolation(error)
 
     @classmethod

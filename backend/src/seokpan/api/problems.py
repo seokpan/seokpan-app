@@ -206,7 +206,12 @@ def _room_status(code: str) -> tuple[int, str]:
         "STATE_VERSION_CONFLICT",
     }:
         return 409, "Room state conflict"
-    if code in {"MEMBER_REQUIRED_TO_CREATE_ROOM", "OWNER_REQUIRED", "SESSION_NOT_IN_ROOM"}:
+    if code in {
+        "MEMBER_REQUIRED_TO_CREATE_ROOM",
+        "OWNER_REQUIRED",
+        "SESSION_NOT_IN_ROOM",
+        "GAME_NOT_IN_CURRENT_ROOM",
+    }:
         return 403, "Room operation is not allowed"
     if code == "ROOM_PASSWORD_INVALID":
         return 401, "Room password is invalid"
@@ -214,6 +219,8 @@ def _room_status(code: str) -> tuple[int, str]:
 
 
 def _game_status(code: str) -> tuple[int, str]:
+    if code in {"GAME_RESULT_INCOMPLETE", "GAME_RESULT_HISTORY_MISMATCH", "GAME_HISTORY_INVALID"}:
+        return 503, "Game result unavailable"
     if code in {"GAME_NOT_FOUND", "GAME_RUNTIME_NOT_FOUND"}:
         return 404, "Game not found"
     if code in {
@@ -227,6 +234,7 @@ def _game_status(code: str) -> tuple[int, str]:
         return 403, "Game operation is not allowed"
     if code in {
         "GAME_RUNTIME_ALREADY_EXISTS",
+        "GAME_NOT_FINISHED",
         "GAME_START_CONFLICT",
         "REQUEST_ID_CONFLICT",
         "RESOLUTION_ALREADY_APPLIED",

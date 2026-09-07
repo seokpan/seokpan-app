@@ -53,7 +53,9 @@ class EmulatedVoteRedisClient:
         snapshot = await self.store.get(room_id)
         if snapshot is None:
             return None
-        return VersionedJsonCodec.encode({"turn_no": snapshot.turn_no}).encode()
+        return VersionedJsonCodec.encode(
+            {"game_id": snapshot.game_id, "turn_no": snapshot.turn_no}
+        ).encode()
 
     async def evalsha(
         self,
@@ -108,6 +110,16 @@ class EmulatedVoteRedisClient:
                     participants=tuple(_voter(item) for item in _list(payload["participants"])),
                     deadline_ms=int(str(payload["deadline_ms"])),
                     expected_state_version=expected,
+                    previous_game_id=(
+                        None
+                        if payload.get("previous_game_id") is None
+                        else str(payload["previous_game_id"])
+                    ),
+                    previous_turn_no=(
+                        None
+                        if payload.get("previous_turn_no") is None
+                        else int(str(payload["previous_turn_no"]))
+                    ),
                 )
             )
         turn_no = int(str(payload["turn_no"]))

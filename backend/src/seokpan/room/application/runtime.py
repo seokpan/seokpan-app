@@ -18,7 +18,7 @@ from seokpan.room.domain import (
     Team,
 )
 
-ROOM_RUNTIME_SCHEMA_VERSION = 2
+ROOM_RUNTIME_SCHEMA_VERSION = 3
 ROOM_DISCONNECT_LEASE_MS = 30 * 1000
 ROOM_CLOSED_TOMBSTONE_TTL_MS = 10 * 60 * 1000
 ROOM_REQUEST_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000
@@ -167,11 +167,14 @@ class CompleteRoomGame:
     request_id: str
     game_id: str
     expected_state_version: int
+    final_turn_no: int
 
     def __post_init__(self) -> None:
         _validate_request(self.room_id, self.request_id)
         _validate_identifier(self.game_id, code="INVALID_GAME_ID")
         _validate_state_version(self.expected_state_version)
+        if self.final_turn_no < 1:
+            raise RoomRuleViolation("INVALID_TURN_NUMBER")
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +283,8 @@ class RoomRuntimeSnapshot:
     participants: tuple[RoomRuntimeParticipant, ...]
     game_id: str | None = None
     schema_version: int = ROOM_RUNTIME_SCHEMA_VERSION
+    last_game_id: str | None = None
+    last_game_turn_no: int | None = None
 
     @property
     def password_required(self) -> bool:

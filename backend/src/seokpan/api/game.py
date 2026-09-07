@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -18,7 +19,8 @@ from seokpan.api.identity import (
 )
 from seokpan.api.problems import ApiProblem, game_problem_responses
 from seokpan.game.application import GameApplicationService, GameApplicationSnapshot
-from seokpan.game.domain import Game, GameStatus, Stone
+from seokpan.game.application.service import GameResultSnapshot
+from seokpan.game.domain import EndReason, Game, GameStatus, MemberOutcome, Stone
 from seokpan.identity.application import SessionRecord
 from seokpan.room.domain import ParticipantRole, RoomRuleViolation
 from seokpan.vote.domain import TurnStatus, VoteRuleViolation
@@ -63,6 +65,32 @@ class VoteTallyResponse(BaseModel):
 
     coordinate: str
     count: int
+
+
+class PersonalRatingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: MemberOutcome
+    rating_before: int
+    rating_delta: int
+    rating_after: int
+
+
+class GameResultResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    game_id: str
+    room_id: str
+    turn_no: int
+    move_no: int
+    game_status: GameStatus
+    end_reason: EndReason
+    winner: Stone
+    board: list[BoardCellResponse]
+    winning_line: list[str] | None
+    ended_at: datetime
+    stats_eligible: bool
+    my_rating: PersonalRatingResponse | None
 
 
 class GameSnapshotResponse(BaseModel):
@@ -159,6 +187,20 @@ def game_router(services: GameApiServices) -> APIRouter:
             raise
         return game_snapshot_response(snapshot)
 
+    @router.get(
+        "/games/{game_id}/result",
+        response_model=GameResultResponse,
+        responses=game_problem_responses(401, 403, 404, 409, 503),
+    )
+    async def get_result(
+        game_id: str,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    ) -> GameResultResponse:
+        current = await require_current_session(services.identity, session_cookie, touch=True)
+        return game_result_response(
+            await services.games.get_result(session=current, game_id=game_id)
+        )
+
     @router.delete(
         "/games/{game_id}/turns/{turn_no}/vote",
         response_model=GameSnapshotResponse,
@@ -187,6 +229,34 @@ def game_router(services: GameApiServices) -> APIRouter:
         return game_snapshot_response(snapshot)
 
     return router
+
+
+def game_result_response(snapshot: GameResultSnapshot) -> GameResultResponse:
+    stored, board, rating = snapshot.result, snapshot.board, snapshot.my_rating
+    return GameResultResponse(
+        game_id=stored.game_id,
+        room_id=stored.room_id,
+        turn_no=snapshot.turn_no,
+        move_no=board.move_no,
+        game_status=stored.status,
+        end_reason=stored.end_reason,
+        winner=stored.winner,
+        board=[
+            BoardCellResponse(coordinate=item.coordinate.canonical, stone=item.stone)
+            for item in board.occupied_cells
+        ],
+        winning_line=[item.canonical for item in board.winning_line] or None,
+        ended_at=stored.ended_at,
+        stats_eligible=stored.stats_eligible,
+        my_rating=None
+        if rating is None
+        else PersonalRatingResponse(
+            outcome=rating.outcome,
+            rating_before=rating.rating_before,
+            rating_delta=rating.rating_delta,
+            rating_after=rating.rating_after,
+        ),
+    )
 
 
 async def _mutation_session(

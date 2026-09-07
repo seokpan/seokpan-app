@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from seokpan.game.domain import Game
+from seokpan.game.domain import Game, GameStatus
 from seokpan.persistence.memory.session_adapter import ManualClock
-from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS
+from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS, RoomRuntimeSnapshot
+from seokpan.room.domain import RoomStatus
 from seokpan.vote.application import (
     RESOLVER_LEASE_MS,
     AcquireRuntimeResolver,
@@ -58,17 +60,45 @@ class _CachedResult:
 class InMemoryVoteRuntimeAdapter:
     """A Fake for contract tests; passing it is not Redis Provider evidence."""
 
-    def __init__(self, clock: ManualClock) -> None:
+    def __init__(
+        self,
+        clock: ManualClock,
+        *,
+        room_lookup: Callable[[str], Awaitable[RoomRuntimeSnapshot | None]] | None = None,
+    ) -> None:
         self._clock = clock
+        self._room_lookup = room_lookup
         self._states: dict[str, _VoteState] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
 
     async def initialize(self, command: InitializeVoteRuntime) -> VoteMutationResult:
+        if self._room_lookup is not None:
+            room = await self._room_lookup(command.room_id)
+            if room is None:
+                raise VoteRuleViolation("ROOM_NOT_FOUND")
+            if (
+                room.status is not RoomStatus.PLAYING
+                or room.game_id != command.game_id
+                or room.last_game_id != command.previous_game_id
+                or room.last_game_turn_no != command.previous_turn_no
+            ):
+                raise VoteRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
         replay = self._replay(command)
         if replay is not None:
             return replay
-        if command.room_id in self._states:
-            raise VoteRuleViolation("GAME_RUNTIME_ALREADY_EXISTS")
+        previous = self._states.get(command.room_id)
+        if previous is not None:
+            if previous.game.game.status is GameStatus.ACTIVE:
+                raise VoteRuleViolation("GAME_RUNTIME_ALREADY_EXISTS")
+            if (
+                previous.game.game_id != command.previous_game_id
+                or previous.game.turn_no != command.previous_turn_no
+            ):
+                raise VoteRuleViolation("STALE_GAME")
+        elif command.previous_game_id is not None:
+            raise VoteRuleViolation("GAME_RUNTIME_NOT_FOUND")
+        if command.expected_state_version != 1:
+            raise VoteRuleViolation("STATE_VERSION_CONFLICT")
         state = _VoteState(
             game=VoteTurnGame(
                 game_id=command.game_id,
@@ -280,6 +310,9 @@ class InMemoryVoteRuntimeAdapter:
         if cached.fingerprint != self._fingerprint(command):
             raise VoteRuleViolation("REQUEST_ID_CONFLICT")
         result = cached.result
+        current = self._states.get(command.room_id)
+        if current is None or current.game.game_id != result.snapshot.game_id:
+            raise VoteRuleViolation("STALE_GAME")
         return VoteMutationResult(
             snapshot=result.snapshot,
             replayed=True,

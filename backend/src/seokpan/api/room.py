@@ -95,6 +95,7 @@ class RoomSnapshotResponse(BaseModel):
     owner_id: str | None
     state_version: int
     participants: list[RoomParticipantResponse]
+    last_game_id: str | None = None
     replayed: bool = False
 
 
@@ -393,6 +394,7 @@ async def room_snapshot_response(
         owner_id=snapshot.owner_id,
         state_version=snapshot.state_version,
         participants=participants,
+        last_game_id=snapshot.last_game_id,
         replayed=replayed,
     )
 

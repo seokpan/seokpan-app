@@ -17,6 +17,7 @@ from seokpan.game.application import (
     PersistenceOutcome,
     PersistenceRuleViolation,
     StartGameCommand,
+    StoredGameResult,
 )
 from seokpan.game.domain import (
     Coordinate,
@@ -26,6 +27,7 @@ from seokpan.game.domain import (
     GameResult,
     GameStatus,
     MemberOutcome,
+    RatingAdjustment,
     Stone,
 )
 from seokpan.persistence.mariadb.models import (
@@ -120,6 +122,120 @@ class MariaDBGamePersistenceAdapter:
             return PersistenceOutcome.CREATED
 
         return await self._transaction(write, lambda: self._result_exists(command))
+
+    async def load_result(self, game_id: str) -> StoredGameResult | None:
+        async with self._session_factory() as session:
+            game = await session.get(GameRow, game_id)
+            result = await session.get(GameResultRow, game_id)
+            if result is None:
+                if game is not None and game.status != "IN_PROGRESS":
+                    raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+                return None
+            if (
+                game is None
+                or game.room_id is None
+                or game.ended_at is None
+                or game.ended_at != result.ended_at
+                or not result.reflected_to_stats
+            ):
+                raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+            conclusion = {
+                ("COMPLETED", "NORMAL_WIN", "BLACK"): (
+                    GameStatus.FINISHED,
+                    EndReason.BLACK_WIN,
+                    Stone.BLACK,
+                ),
+                ("COMPLETED", "NORMAL_WIN", "WHITE"): (
+                    GameStatus.FINISHED,
+                    EndReason.WHITE_WIN,
+                    Stone.WHITE,
+                ),
+                ("COMPLETED", "DRAW", "DRAW"): (GameStatus.FINISHED, EndReason.DRAW, Stone.EMPTY),
+                ("COMPLETED", "FORFEIT", "BLACK"): (
+                    GameStatus.FINISHED,
+                    EndReason.FORFEIT,
+                    Stone.BLACK,
+                ),
+                ("COMPLETED", "FORFEIT", "WHITE"): (
+                    GameStatus.FINISHED,
+                    EndReason.FORFEIT,
+                    Stone.WHITE,
+                ),
+                ("COMPLETED", "MUTUAL_FORFEIT", "NONE"): (
+                    GameStatus.FINISHED,
+                    EndReason.JOINT_LOSS,
+                    Stone.EMPTY,
+                ),
+                ("SYSTEM_INVALID", "SYSTEM_INVALID", "NONE"): (
+                    GameStatus.SYSTEM_INVALID,
+                    EndReason.SYSTEM_INVALID,
+                    Stone.EMPTY,
+                ),
+            }.get((game.status, result.end_reason, result.winner))
+            if conclusion is None:
+                raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+            stored = StoredGameResult(game_id, game.room_id, *conclusion, game.ended_at, ())
+            participant_rows = (
+                (
+                    await session.execute(
+                        select(GameParticipantRow).where(GameParticipantRow.game_id == game_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            histories = (
+                (
+                    await session.execute(
+                        select(RatingHistoryRow).where(RatingHistoryRow.game_id == game_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return self._stored_ratings(stored, participant_rows, histories)
+
+    @staticmethod
+    def _stored_ratings(
+        result: StoredGameResult,
+        participants: Sequence[GameParticipantRow],
+        histories: Sequence[RatingHistoryRow],
+    ) -> StoredGameResult:
+        # Read only this game's history, never the Member's current rating.
+        members = {item.member_id: item for item in participants if item.member_id is not None}
+        expected = set(members) if result.stats_eligible else set()
+        if (
+            len(members) != sum(item.member_id is not None for item in participants)
+            or {item.member_id for item in histories} != expected
+            or len(histories) != len(expected)
+        ):
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        adjustments: list[RatingAdjustment] = []
+        for history in sorted(histories, key=lambda item: item.member_id):
+            participant = members[history.member_id]
+            if participant.participant_id is None or participant.team not in {"BLACK", "WHITE"}:
+                raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+            team = Stone(participant.team)
+            adjustments.append(
+                RatingAdjustment(
+                    participant.participant_id,
+                    history.member_id,
+                    team,
+                    result.outcome_for(team),
+                    history.rating_before,
+                    history.rating_delta,
+                    history.rating_after,
+                )
+            )
+        return StoredGameResult(
+            result.game_id,
+            result.room_id,
+            result.status,
+            result.end_reason,
+            result.winner,
+            result.ended_at,
+            tuple(adjustments),
+        )
 
     async def load_game(self, game_id: str) -> GamePersistenceSnapshot | None:
         async with self._session_factory() as session:

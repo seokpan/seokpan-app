@@ -408,7 +408,12 @@ class TurnResolutionRunner:
         room = await self._rooms.get(due_turn.room_id)
         if room is None:
             raise VoteRuleViolation("ROOM_NOT_FOUND")
-        if room.status is RoomStatus.WAITING and room.game_id is None:
+        if (
+            room.status is RoomStatus.WAITING
+            and room.game_id is None
+            and room.last_game_id == due_turn.game_id
+            and room.last_game_turn_no == due_turn.turn_no
+        ):
             return
         completed = await self._rooms.complete_game(
             CompleteRoomGame(
@@ -416,6 +421,7 @@ class TurnResolutionRunner:
                 request_id=_stable_id("room-complete", due_turn),
                 game_id=due_turn.game_id,
                 expected_state_version=room.state_version,
+                final_turn_no=due_turn.turn_no,
             )
         )
         if completed.replayed or completed.snapshot is None:

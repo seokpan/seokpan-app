@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -47,7 +48,7 @@ from seokpan.vote.application import (
     InitializeVoteRuntime,
     VoteMutationResult,
 )
-from seokpan.vote.domain import Voter
+from seokpan.vote.domain import Voter, VoteRuleViolation
 
 ROOM_ID = "11111111-1111-4111-8111-111111111111"
 GAME_ID = "22222222-2222-4222-8222-222222222222"
@@ -400,6 +401,40 @@ async def test_retry_reuses_persisted_move_after_resolver_lease_expiry() -> None
 
 
 @pytest.mark.asyncio
+async def test_retry_after_pass_reuses_move_with_different_turn_number() -> None:
+    provider_clock = ManualClock()
+    failing_votes = FailOnceAfterPersistenceVoteAdapter(provider_clock)
+    failing_votes.fail_apply_once = False
+    events = InMemoryRealtimeEventAdapter()
+    runner, clock, _, votes, games, _ = await setup_runner(votes=failing_votes, events=events)
+    clock.advance(5_000)
+    provider_clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(ROOM_ID, "white-vote", GAME_ID, 2, WHITE_ID, "H8", snapshot.state_version)
+    )
+    failing_votes.fail_apply_once = True
+    clock.advance(5_000)
+    provider_clock.advance(5_000)
+    due = DueTurn(ROOM_ID, GAME_ID, 2)
+    assert (await runner.process(due)).status is TurnProcessingStatus.RETRY_REQUIRED
+    stored = games.moves[(GAME_ID, 1)]
+    assert (stored.turn_no, stored.move_no) == (2, 1)
+    clock.advance(1)
+    assert (await runner.process(due)).status is TurnProcessingStatus.MOVE
+    assert games.moves == {(GAME_ID, 1): stored}
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert (current.turn_no, current.move_no, current.consecutive_passes) == (3, 1, 0)
+    assert (await runner.process(due)).status is TurnProcessingStatus.STALE
+    assert games.results == {}
+
+
+@pytest.mark.asyncio
 async def test_uncertain_result_commit_is_confirmed_before_runtime_and_room_advance() -> None:
     games = UncertainResultPersistenceAdapter()
     runner, clock, rooms, votes, _, _ = await setup_runner(games=games)
@@ -619,3 +654,46 @@ async def test_finished_runtime_retry_only_completes_room_after_room_failure() -
     assert room.status is RoomStatus.WAITING
     assert room.game_id is None
     assert all(not participant.ready for participant in room.participants)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["room_missing", "replayed", "no_snapshot", "event_failure"])
+async def test_room_completion_keeps_state_safe_at_recovery_boundaries(
+    boundary: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = Mock(spec=RealtimeEventPort)
+    events.room_changed = AsyncMock()
+    events.lobby_rooms_changed = AsyncMock()
+    runner, _, rooms, _, games, _ = await setup_runner(events=events)
+    due = DueTurn(ROOM_ID, GAME_ID, 13)
+    if boundary == "room_missing":
+        monkeypatch.setattr(rooms, "get", AsyncMock(return_value=None))
+        with pytest.raises(VoteRuleViolation, match="ROOM_NOT_FOUND"):
+            await runner._complete_room(due)
+    else:
+        if boundary in {"replayed", "no_snapshot"}:
+            snapshot = await rooms.get(ROOM_ID)
+            monkeypatch.setattr(
+                rooms,
+                "complete_game",
+                AsyncMock(
+                    return_value=RoomMutationResult(
+                        snapshot=snapshot if boundary == "replayed" else None,
+                        replayed=boundary == "replayed",
+                    )
+                ),
+            )
+        else:
+            events.room_changed.side_effect = RuntimeError("simulated event failure")
+            events.lobby_rooms_changed.side_effect = RuntimeError("simulated event failure")
+        await runner._complete_room(due)
+    if boundary == "event_failure":
+        room = await rooms.get(ROOM_ID)
+        assert room is not None and room.status is RoomStatus.WAITING
+        assert (room.last_game_id, room.last_game_turn_no) == (GAME_ID, 13)
+    else:
+        events.room_changed.assert_not_called()
+        events.lobby_rooms_changed.assert_not_called()
+    # Completion notification does not write persistent results or ratings.
+    assert games.results == {}
