@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from seokpan.app import build_headless_services, create_app
+from seokpan.game.application import DueTurn, PersistenceRuleViolation, TurnProcessingStatus
 from seokpan.settings import Settings
 
 ORIGIN = "http://localhost:5173"
@@ -215,6 +217,72 @@ def test_start_get_and_vote_headless_flow(application: FastAPI) -> None:
     assert removed.json()["vote_aggregation"] == []
 
 
+def test_headless_runner_finishes_member_game_and_updates_identity(application: FastAPI) -> None:
+    services = application.state.services
+    clock = services.headless_clock
+    runner = services.turn_resolution
+    due_turns = services.headless_due_turns
+    assert clock is not None and runner is not None and due_turns is not None
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as white,
+    ):
+        owner_csrf = _member(owner, "31")
+        white_csrf = _member(white, "32")
+        room = _ready_room(owner, owner_csrf, white, white_csrf)
+        response = owner.post(
+            f"/api/v1/rooms/{room['room_id']}/games",
+            headers={"Origin": ORIGIN, "X-CSRF-Token": owner_csrf},
+            json={"request_id": str(uuid4()), "expected_state_version": room["state_version"]},
+        )
+        assert response.status_code == 201, response.text
+        game_id = response.json()["game_id"]
+        pending = owner.get(f"/api/v1/games/{game_id}/result")
+        assert pending.status_code == 409
+        assert pending.json()["code"] == "GAME_NOT_FINISHED"
+        assert owner.get(f"/api/v1/games/{uuid4()}/result").status_code == 404
+        assert owner.portal is not None
+        for turn_no, expected in (
+            (1, TurnProcessingStatus.PASS),
+            (2, TurnProcessingStatus.GAME_ENDED),
+        ):
+            due_turns.values = (DueTurn(str(room["room_id"]), game_id, turn_no),)
+            clock.advance(15_000)
+            assert owner.portal.call(runner.run_once)[0].status is expected
+        current = owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert current.status_code == 200
+        assert current.json()["status"] == "WAITING"
+        assert current.json()["last_game_id"] == game_id
+        result = owner.get(f"/api/v1/games/{game_id}/result")
+        assert result.status_code == 200, result.text
+        assert result.json()["turn_no"] == 2
+        assert result.json()["move_no"] == 0
+        assert result.json()["board"] == []
+        assert result.json()["winning_line"] is None
+        assert result.json()["my_rating"] == {
+            "outcome": "LOSS",
+            "rating_before": 1000,
+            "rating_delta": -16,
+            "rating_after": 984,
+        }
+        for private in (
+            "member_id",
+            "participant_id",
+            "rating_adjustments",
+            "current_team",
+            "turn_status",
+            "deadline_ms",
+        ):
+            assert private not in result.text
+        assert all(not p["ready"] for p in current.json()["participants"])
+        # Retrying the completed turn must not deduct rating twice.
+        assert owner.portal.call(runner.run_once)[0].status is TurnProcessingStatus.GAME_ENDED
+        for member_id in (1, 2):
+            member = owner.portal.call(services.identity_api.members.find_member, member_id)
+            assert member is not None
+            assert member.rating == 984
+
+
 def test_game_access_vote_eligibility_and_stale_version(application: FastAPI) -> None:
     with (
         TestClient(application, base_url=ORIGIN) as owner,
@@ -365,9 +433,37 @@ def test_openapi_contains_game_routes_without_provider_internals(application: Fa
     expected = {
         "/api/v1/rooms/{room_id}/games",
         "/api/v1/games/{game_id}",
+        "/api/v1/games/{game_id}/result",
         "/api/v1/games/{game_id}/turns/{turn_no}/vote",
     }
     assert expected <= set(schema["paths"])
     response_schema = str(schema["components"]["schemas"]["GameSnapshotResponse"])
     for internal in ("session_digest", "csrf", "redis", "resolver"):
         assert internal not in response_schema.lower()
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "GAME_RESULT_INCOMPLETE",
+        "GAME_RESULT_HISTORY_MISMATCH",
+        "GAME_HISTORY_INVALID",
+    ],
+)
+def test_result_corruption_is_reported_as_unavailable(
+    application: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+) -> None:
+    monkeypatch.setattr(
+        application.state.services.game_api.games,
+        "get_result",
+        AsyncMock(side_effect=PersistenceRuleViolation(code)),
+    )
+    with TestClient(application, base_url=ORIGIN) as client:
+        _member(client, "90")
+        response = client.get(f"/api/v1/games/{uuid4()}/result")
+    assert response.status_code == 503
+    assert response.json()["code"] == code
+    assert response.headers["content-type"] == "application/problem+json"
+    assert "board" not in response.json()

@@ -47,6 +47,11 @@ CSRF·Cookie 원문, Connection 내부값은 포함하지 않는다.
 
 ## 현재 검증 경계
 
+Room Snapshot의 `last_game_id`는 마지막 종료 결과의 조회 참조이며, 첫 경기 종료 전에는
+null이다. 종료 Event를 놓쳤거나 재접속했다면 이 값으로
+`GET /api/v1/games/{game_id}/result`를 조회한다. 결과 공개 범위는
+[Game Persistence의 완료 결과 조회](game-persistence.md#완료-결과-조회)를 따른다.
+
 Application Factory의 Headless 구성은 In-memory Room Runtime과 참가 인덱스를 사용한다. 이
 구성은 HTTP·Domain 흐름을 검증하기 위한 Fake이며 실제 Redis의 Room 목록 인덱스, Session과
 참가 상태의 동시 변경, 여러 Backend Replica 간 경합 처리를 완료했다는 뜻이 아니다. 해당

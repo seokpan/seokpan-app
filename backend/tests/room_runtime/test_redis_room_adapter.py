@@ -6,9 +6,10 @@ import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from seokpan.persistence.memory import ManualClock
-from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError
+from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
 from seokpan.persistence.redis.room_adapter import RedisRoomRuntimeAdapter
-from seokpan.persistence.redis.room_scripts import ROOM_MUTATION
+from seokpan.persistence.redis.room_scripts import ROOM_MUTATION, ROOM_READ
+from seokpan.room.application.runtime import ROOM_RUNTIME_SCHEMA_VERSION
 
 from .conftest import EmulatedRoomRedisClient, create_room
 
@@ -71,3 +72,51 @@ async def test_provider_error_is_sanitized() -> None:
 
     assert str(caught.value) == "REDIS_PROVIDER_UNAVAILABLE"
     assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_schema_guard_is_sent_and_precedes_any_lua_state_write() -> None:
+    client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))
+    adapter = RedisRoomRuntimeAdapter(client)
+    await adapter.create(create_room())
+    _, numkeys, values = client.evalsha_calls[-1]
+    payload = VersionedJsonCodec.decode(str(values[numkeys + 6]))
+    assert payload["schema_version"] == ROOM_RUNTIME_SCHEMA_VERSION == 3
+    await adapter.get("room-1")
+    _, numkeys, values = client.evalsha_calls[-1]
+    assert values[numkeys:] == ("room-1", 3)
+    # Static wiring check, not proof of execution by a Redis server.
+    assert ROOM_MUTATION.source.index("return rejection('ROOM_SCHEMA_VERSION_MISMATCH')") < (
+        ROOM_MUTATION.source.index("local expired =")
+    )
+    assert "ROOM_SCHEMA_VERSION_MISMATCH" in ROOM_READ.source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["old_version", "missing_turn", "missing_game", "zero_turn"])
+async def test_result_reference_decoder_rejects_old_or_incomplete_room_state(bad: str) -> None:
+    client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))
+    created = await RedisRoomRuntimeAdapter(client).create(create_room())
+    payload = client._snapshot(created.snapshot)
+    assert payload is not None
+    expected = "REDIS_RESPONSE_INVALID"
+    if bad == "old_version":
+        payload["schema_version"] = 2
+        expected = "ROOM_SCHEMA_VERSION_MISMATCH"
+    elif bad == "missing_turn":
+        payload["last_game_id"] = "game-1"
+    elif bad == "missing_game":
+        payload["last_game_turn_no"] = 5
+    else:
+        payload.update(last_game_id="game-1", last_game_turn_no=0)
+    with pytest.raises(RedisProviderError, match=expected):
+        RedisRoomRuntimeAdapter._optional_snapshot(payload)
+
+
+def test_lua_schema_rejection_is_a_provider_error_not_user_input_error() -> None:
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        RedisRoomRuntimeAdapter._raise_rejection({"ok": False, "error": None})
+    with pytest.raises(RedisProviderError, match="ROOM_SCHEMA_VERSION_MISMATCH"):
+        RedisRoomRuntimeAdapter._raise_rejection(
+            {"ok": False, "error": "ROOM_SCHEMA_VERSION_MISMATCH"}
+        )

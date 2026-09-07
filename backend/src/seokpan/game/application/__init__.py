@@ -9,6 +9,7 @@ from seokpan.game.application.persistence import (
     PersistenceOutcome,
     PersistenceRuleViolation,
     StartGameCommand,
+    StoredGameResult,
 )
 from seokpan.game.application.resolution import (
     DueTurn,
@@ -33,6 +34,7 @@ __all__ = [
     "PersistenceOutcome",
     "PersistenceRuleViolation",
     "StartGameCommand",
+    "StoredGameResult",
     "GameApplicationService",
     "GameApplicationSnapshot",
     "DueTurn",

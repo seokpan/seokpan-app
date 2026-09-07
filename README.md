@@ -38,7 +38,7 @@ Backend는 CPython·FastAPI Modular Monolith와 Ports/Adapters 경계를 사용�
 
 Application의 HTTP·WebSocket, 상태 전이, MariaDB·Redis 책임, 재접속과 오류 처리 기준은 [`docs/mvp-implementation-baseline.md`](docs/mvp-implementation-baseline.md)에서 관리합니다.
 
-구현 순서는 구현 기준 → Scaffold → Pure Domain·Fake Adapter → Headless First Success → 실제 Provider → Frontend → Container·Jenkins·GitOps 통합입니다. Fake 또는 Windows Test의 성공을 실제 Provider·Linux Container·Kubernetes 통합 완료로 표시하지 않습니다.
+구현 순서는 구현 기준 → Scaffold → Pure Domain·Fake Adapter → A-07 Headless First Success → A-08 Frontend First Success → A-09 Container·Jenkins·Harbor → A-10 실제 DB·Redis·GitOps 통합 및 MVP 검증입니다. 단계 번호는 [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3), 공용 순서는 [Docs PR #46](https://github.com/seokpan/seokpan-docs/pull/46)을 따릅니다. 준비된 Provider의 개별 시험은 병렬로 진행할 수 있지만 Fake 또는 Windows Test의 성공을 실제 Provider·Linux Container·Kubernetes 통합 완료로 표시하지 않습니다.
 
 ## Repository Boundary
 

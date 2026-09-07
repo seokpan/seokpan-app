@@ -191,6 +191,7 @@ class EmulatedRoomRedisClient:
                     request_id,
                     str(payload["game_id"]),
                     int(str(payload["expected_state_version"])),
+                    int(str(payload["final_turn_no"])),
                 )
             )
         if operation == "connect":
@@ -291,6 +292,8 @@ class EmulatedRoomRedisClient:
             return None
         return {
             "schema_version": snapshot.schema_version,
+            "last_game_id": snapshot.last_game_id,
+            "last_game_turn_no": snapshot.last_game_turn_no,
             "room_id": snapshot.room_id,
             "config": {
                 "name": snapshot.config.name,
