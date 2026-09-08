@@ -5,7 +5,9 @@ export function captureCommandFocus() {
   const key = source instanceof HTMLElement ? source.dataset.commandFocus : undefined;
   if (!key) return null;
   let moved = false;
-  const onFocus = (event: FocusEvent) => { if (event.target !== document.body && event.target !== source) moved = true; };
+  const onFocus = (event: FocusEvent) => {
+    if (event.target !== document.body && event.target !== source) moved = true;
+  };
   document.addEventListener("focusin", onFocus);
   const cancel = () => document.removeEventListener("focusin", onFocus);
   return {
@@ -13,8 +15,9 @@ export function captureCommandFocus() {
     restore() {
       cancel();
       if (moved || document.activeElement !== document.body) return;
-      const target = Array.from(document.querySelectorAll<HTMLElement>("[data-command-focus]"))
-        .find(element => element.dataset.commandFocus === key);
+      const target = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-command-focus]"),
+      ).find((element) => element.dataset.commandFocus === key);
       if (target && !target.matches(":disabled")) target.focus({ preventScroll: true });
     },
   };

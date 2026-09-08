@@ -3,6 +3,7 @@ from collections.abc import Iterable
 import pytest
 
 from seokpan.game.domain import (
+    BoardCell,
     Coordinate,
     EndReason,
     ForbiddenReason,
@@ -11,6 +12,22 @@ from seokpan.game.domain import (
     GameStatus,
     Stone,
 )
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_forbidden_snapshot_rejects_empty_or_duplicate_cells(duplicate: bool) -> None:
+    coordinate = Coordinate.parse("H8")
+    cells = (
+        (
+            BoardCell(coordinate=coordinate, stone=Stone.BLACK),
+            BoardCell(coordinate=coordinate, stone=Stone.WHITE),
+        )
+        if duplicate
+        else (BoardCell(coordinate=coordinate, stone=Stone.EMPTY),)
+    )
+    with pytest.raises(GameRuleViolation, match="INVALID_BOARD_SNAPSHOT") as error:
+        Game.black_forbidden_coordinates(cells)
+    assert error.value.code == "INVALID_BOARD_SNAPSHOT"
 
 
 def snapshot(game: Game) -> tuple[object, ...]:
