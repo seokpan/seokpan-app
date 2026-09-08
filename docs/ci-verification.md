@@ -14,7 +14,23 @@
 | Lint | ESLint 10.10.0, @eslint/js 10.0.1, typescript-eslint 8.70.0, globals 17.12.0 | JavaScript·TypeScript 권장 규칙. Node/browser 전역은 파일 역할별로 구분 |
 | Coverage | @vitest/coverage-v8 4.1.11 | 기존 Vitest 4.1.11과 같은 버전. 제품 의존성은 바꾸지 않음 |
 
-[Prettier 설치·검사](https://prettier.io/docs/install), [typescript-eslint 설정](https://typescript-eslint.io/getting-started/), [Vitest coverage](https://vitest.dev/guide/coverage.html)를 대조했다. npm 배포 메타데이터에서 Node/TypeScript/ESLint 호환 범위와 Vitest 정확 버전 peer 요구를 확인했다. 기존 Lock package의 버전 변경은 없고 새로운 검사 도구의 직접/간접 항목만 추가했다.
+[Prettier 설치·검사](https://prettier.io/docs/install), [typescript-eslint 설정](https://typescript-eslint.io/getting-started/), [Vitest coverage](https://vitest.dev/guide/coverage.html)를 대조했다. npm 배포 메타데이터에서 Node/TypeScript/ESLint 호환 범위와 Vitest 정확 버전 peer 요구를 확인했다. 검사 도구 도입 당시에는 기존 Lock 버전을 유지했다. 이후 보안 재검증에서 확인된 `js-yaml` 한 항목만 `4.3.1 → 4.3.2`로 보완했다. 아래 보안 유지 절에 근거와 재검토 조건을 기록한다.
+
+### js-yaml 보안 보완과 이후 유지
+
+기존 main에도 있던 `openapi-typescript 7.13.0 → @redocly/openapi-core 1.34.19 → js-yaml 4.3.1`에서 [GHSA-2883-xcg3-v3hh](https://github.com/advisories/GHSA-2883-xcg3-v3hh)가 보고됐다. YAML merge 처리의 CPU 소모 문제이며 [수정 버전은 4.3.2](https://github.com/nodeca/js-yaml/releases/tag/4.3.2)다. Audit의 HIGH 2건은 해당 취약점과 의존하는 Redocly 항목의 집계다. 개발 도구 의존성이므로 검사에서 제외하지 않는다.
+
+`frontend/package.json`의 `overrides`는 **`@redocly/openapi-core@1.34.19` 아래 `js-yaml: 4.3.2`**에만 적용한다. 직접 의존성과 Node/npm 버전은 유지하며 Lock의 해당 버전·배포 URL·integrity만 변경했다. [npm의 부모 버전별 override](https://docs.npmjs.com/cli/v12/configuring-npm/package-json#overrides)를 사용해 검증하지 않은 미래 Redocly에 같은 강제 변경을 자동 적용하지 않는다. 전역 설치나 `node_modules` 수동 편집으로 해결한 것이 아니다.
+
+| 이후 상황 | 유지·검출 방법과 필요한 조치 |
+| --- | --- |
+| 같은 소스를 다시 설치 | package.json과 Lock을 함께 보존하고 고정 npm의 `npm ci`를 사용한다. 이번 fresh 설치에서 `npm ls js-yaml @redocly/openapi-core openapi-typescript`로 4.3.2 적용을 확인했다. Linux에서도 같은 Lock을 새로 설치해 확인해야 한다. |
+| 현재 Lock에 새로운 취약점 공개 | `verify:ci`는 실행할 때마다 마지막 단계에서 별도 `npm audit`를 수행한다. Audit 비정상 종료는 전체 검사·최종 집계 실패이며 예전 성공 결과로 대신하지 않는다. Audit 실패 처리는 `frontend/scripts/frontend-ci.test.mjs`와 실제 실패 Run으로 확인했다. |
+| Redocly 또는 OpenAPI 도구 갱신 | 부모 버전이 바뀌면 이번 override가 적용되지 않을 수 있다. 새 Lock과 `npm ls`로 실제 js-yaml 경로·버전을 확인하고 Audit·OpenAPI 타입·전체 회귀 검사를 다시 수행한다. 자동 `audit fix --force`나 Audit 기준 완화로 통과시키지 않는다. |
+| 상위 도구가 안전한 js-yaml을 직접 요구 | 별도 의존성 변경에서 override 제거를 검토한다. 제거 후 재설치·Lock/설치 트리·Audit·OpenAPI·회귀 검사까지 통과해야 제거한다. 4.3.2를 영구히 안전한 버전으로 간주하지 않는다. |
+| 설치만 성공하거나 Audit 서비스 접근 실패 | `npm ci`의 설치 성공을 보안 통과로 사용하지 않는다. 별도 Audit 완료와 정상 종료를 확인해야 한다. 통신 오류도 성공으로 바꾸지 않고 원인을 해소한 새 Run에서 검증한다. |
+
+이는 현재 알려진 취약점을 수정하고 **검사를 실행할 때 재발을 검출하는 방식**이지 지속 감시 완료가 아니다. App main `6b5a50e`의 기존 Jenkinsfile에도 PR 검사에 별도 `npm audit`가 있다. 다만 새 검사·실행별 보고서 명령의 Jenkins 연결과 #58의 main 재검증·Image Pipeline은 아직 남아 있다. #40/#58 인계에서는 개발 의존성을 포함한 Audit 실행·실패 종료 코드 보존·실패 시 후속 Image Build/Push/GitOps 단계 중단을 확인해야 한다. 로컬 `npm run verify`나 Dockerfile의 `npm ci && npm run build`만 실행하는 것은 이 보안 검사를 대신하지 않는다. 작업·빌드가 없는 기간의 정기 검사나 알림은 별도 운영 합의가 필요하며 이번에 자동화·타인 Jenkinsfile을 변경하지 않았다. 알려지지 않은 취약점까지 검출할 수 있다는 보장도 아니다([npm Audit](https://docs.npmjs.com/cli/v12/commands/npm-audit), [npm ci](https://docs.npmjs.com/cli/v12/commands/npm-ci)).
 
 Prettier 최초 적용은 기존 파일의 기계적 포맷 정리를 포함한다. 생성된 `src/api/schema.d.ts`는 기존 OpenAPI 생성 결과와 비교해야 하므로 포맷 대상에서 제외하고, package-lock.json도 npm이 관리한다. 문서·Dockerfile·nginx.conf·Jenkinsfile은 이번 Format 명령 대상이 아니다. Lint는 포맷 취향을 중복 검사하지 않으며 자동 `--fix`를 실행하지 않는다.
 
@@ -155,7 +171,9 @@ Windows의 .venv나 node_modules를 Linux로 복사해 재사용하지 않는다
 
 ## Windows 실행 결과 — 2026-09-09
 
-기반 main은 `6b5a50e6a5b4d98273643f442bd9269a6b51674c`이며, 아래 결과는 #60 미커밋 작업 트리의 로컬 검증이다. 실행 ID는 `a09-aggregate-20260909-01`, 소스 SHA-256은 `ff6c0558908b3c78c82c97e8b2710fc90ae25682e01c8145e30c27f1729b5fb5`다. 이후 Commit이나 소스가 바뀌면 새 ID로 실행해야 하며 과거 manifest를 고쳐 재사용하지 않는다.
+기반 main은 `6b5a50e6a5b4d98273643f442bd9269a6b51674c`다. 아래는 #60 Commit `219a2fd3a41c6f2a108abc2afc065c872a8364df` 위에 js-yaml 보완을 적용한 미커밋 작업 트리의 최신 결과다. 실행 ID는 `a09-security-20260909-01`, 소스 SHA-256은 `5ca80e13e32904d8b82761fb2717871a4680fa399b00ee7d5895584a14c34761`, dirty true다. Commit이나 소스가 바뀌면 새 ID로 실행하며 과거 manifest를 고쳐 재사용하지 않는다.
+
+이전 `a09-aggregate-20260909-01` 성공 이후 Commit 직후의 `a09-commit-219a2fd-20260909-01`에서 Audit HIGH 2건·최종 exit 1이 발생했다. 해당 실행의 Backend/Frontend 기능은 통과했지만 Browser는 미실행이며 원격 반영을 중단했다. 새 보안 보완 Run은 설치부터 여섯 단계 모두 다시 실행한 결과다. 이전 Audit 0개 응답이나 실패 Run은 삭제하지 않으며 현재 결과와 구분한다.
 
 | 검사 | 결과 |
 | --- | --- |
@@ -170,7 +188,7 @@ Windows의 .venv나 node_modules를 Linux로 복사해 재사용하지 않는다
 | UI Browser / Memory 전체 Browser | 36 PASS / 2회·총 6판 PASS, worker 1·retry 0 |
 | 최종 집계 | 6 Stage passed, exit 0, 19개 보고서 해시·실행/소스 일치 |
 
-별도 Python 도구 시험은 90 PASS다. `backend/tests/tooling/`과 `frontend/scripts/*.test.mjs`에서 경로 이탈·잘못된 버전·명령 시작 실패·검사 실패·시간 초과·보고서 누락/불일치·집계 중 소스 변경 등을 검증한다. 실행기 Test Double과 실제 프로세스 시험을 구분하며, 실제 Windows 하위 프로세스 timeout에서는 해당 부모/자식만 종료되고 대조 프로세스는 유지됐다. Linux 신호/정리는 아직 직접 실행하지 않았다.
+Backend 전체 912개에는 Python 도구 시험 90개가 포함돼 있으며 모두 PASS다. `backend/tests/tooling/`과 `frontend/scripts/*.test.mjs`에서 경로 이탈·잘못된 버전·명령 시작 실패·검사 실패·시간 초과·보고서 누락/불일치·집계 중 소스 변경 등을 검증한다. 실행기 Test Double과 실제 프로세스 시험을 구분하며, 실제 Windows 하위 프로세스 timeout에서는 해당 부모/자식만 종료되고 대조 프로세스는 유지됐다. Linux 신호/정리는 아직 직접 실행하지 않았다.
 
 PR 전 재검토에서 제한된 Windows 실행 권한으로 도구 시험을 다시 실행했을 때 Python 89 PASS/1 FAIL, Node 78 PASS/1 FAIL이 발생했다. 두 실패 모두 `taskkill` 종료 단계였다. 동일 소스를 시험 프로세스 종료가 허용된 실행에서 다시 검증해 Python 90 PASS·Node 79 PASS, 건너뜀 0개를 확인했다. 최초 실패를 숨기거나 제한된 환경에서도 정리가 성공한다고 주장하지 않는다. 실행환경에는 자신이 시작한 하위 프로세스를 종료할 권한이 필요하며 이 결과가 Linux 실행 권한·정리를 보증하지 않는다.
 
@@ -182,4 +200,4 @@ PR 전 재검토에서 제한된 Windows 실행 권한으로 도구 시험을 �
 
 Raw 결과는 각 `test-results/<run-id>/`에 보존하며 Git에는 넣지 않는다. 최종 성공 Run 후 5174/5175/8001 반환을 확인했다. 실제 사용자 5173/8000·개인 Browser 프로필을 재사용하지 않았다. 반복 전환 중 기존 Vite `ECONNABORTED` 및 NO_COLOR/FORCE_COLOR 경고를 관측했으며 기능/page-error 단언과 결과 JSON/JUnit은 통과했다. 경고를 숨기거나 원인이 완전히 규명됐다고 주장하지 않는다.
 
-변경 범위 대조에서 기존 Frontend 파일 62개는 고정 Prettier 포맷을 수렴시킨 결과와 일치했다. 그 밖의 제품 코드 보완은 Board 키보드 변수 초기값 정리, Room 응답 필드 명시, 채팅 정규식의 국소 Lint 예외다. GamePanel 시험 조회 최적화와 Mock 타입 정리도 포함하며 기존 시간 제한과 기능 단언은 유지한다. 기존 Lock 항목 버전 변경 0개·새 검사 도구 관련 항목 112개를 확인했다. 이 대조는 실제 회귀 시험을 대신하지 않는다.
+변경 범위 대조에서 기존 Frontend 파일 62개는 고정 Prettier 포맷을 수렴시킨 결과와 일치했다. 그 밖의 제품 코드 보완은 Board 키보드 변수 초기값 정리, Room 응답 필드 명시, 채팅 정규식의 국소 Lint 예외다. GamePanel 시험 조회 최적화와 Mock 타입 정리도 포함하며 기존 시간 제한과 기능 단언은 유지한다. 최초 도구 도입은 기존 Lock 버전 변경 0개·새 항목 112개였으며, 후속 보안 보완을 포함한 최종 차이는 기존 js-yaml 1개 패치 변경·112개 추가다. 이 대조는 실제 회귀 시험을 대신하지 않는다.
