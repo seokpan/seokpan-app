@@ -35,6 +35,7 @@ pipeline {
         SSL_CERT_FILE  = '/etc/buildkit/certs/ca.crt'
         REGISTRY_HOST  = 'harbor.seokpan.soldesk.store'
         HARBOR_PROJECT = 'seokpan'
+        HOME           = '/tmp'
     }
 
     options {
