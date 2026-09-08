@@ -89,6 +89,7 @@ pipeline {
             steps {
                 dir('frontend') {
                     container('node') {
+                        sh 'corepack enable npm'
                         sh 'npm ci'
                         sh 'npm run typecheck'
                         sh 'npm test'
@@ -121,6 +122,7 @@ pipeline {
             steps {
                 dir('frontend') {
                     container('node') {
+                        sh 'corepack enable npm'
                         sh 'npm run build'
                     }
                     container('buildkit') {
