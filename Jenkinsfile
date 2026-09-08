@@ -32,10 +32,14 @@ pipeline {
 
     environment {
         DOCKER_CONFIG  = '/home/user/.docker'
-        SSL_CERT_FILE  = '/etc/buildkit/certs/ca.crt'
         REGISTRY_HOST  = 'harbor.seokpan.soldesk.store'
         HARBOR_PROJECT = 'seokpan'
         HOME           = '/tmp'
+        // SSL_CERT_FILE은 여기서 전역 지정하지 않음. buildkit 컨테이너는 Harbor 내부 CA를
+        // 신뢰해야 하지만, python/node 컨테이너에 이 값이 새어 들어가면 uv/npm이 PyPI/npm
+        // registry 같은 퍼블릭 CA 사이트를 "UnknownIssuer"로 거부하게 됨(실제 재현된 장애).
+        // 그래서 buildkit을 쓰는 Stage에서만 withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt'])
+        // 로 국소 적용한다.
     }
 
     options {
@@ -98,13 +102,15 @@ pipeline {
             steps {
                 dir('backend') {
                     container('buildkit') {
-                        sh '''
-                            buildctl-daemonless.sh build \
-                              --frontend dockerfile.v0 \
-                              --local context=. \
-                              --local dockerfile=. \
-                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:pr-verify,push=false
-                        '''
+                        withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                            sh '''
+                                buildctl-daemonless.sh build \
+                                  --frontend dockerfile.v0 \
+                                  --local context=. \
+                                  --local dockerfile=. \
+                                  --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:pr-verify,push=false
+                            '''
+                        }
                     }
                 }
             }
@@ -118,13 +124,15 @@ pipeline {
                         sh 'npm run build'
                     }
                     container('buildkit') {
-                        sh '''
-                            buildctl-daemonless.sh build \
-                              --frontend dockerfile.v0 \
-                              --local context=. \
-                              --local dockerfile=. \
-                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:pr-verify,push=false
-                        '''
+                        withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                            sh '''
+                                buildctl-daemonless.sh build \
+                                  --frontend dockerfile.v0 \
+                                  --local context=. \
+                                  --local dockerfile=. \
+                                  --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:pr-verify,push=false
+                            '''
+                        }
                     }
                 }
             }
@@ -175,24 +183,26 @@ pipeline {
             when { branch 'main' }
             steps {
                 container('buildkit') {
-                    script {
-                        ['backend', 'frontend'].each { svc ->
-                            sh """
-                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                                  | grep '"auth"' \\
-                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                    withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                        script {
+                            ['backend', 'frontend'].each { svc ->
+                                sh """
+                                    AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                      | grep '"auth"' \\
+                                      | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                                HTTP_STATUS=\$(wget -q -O /tmp/${svc}-final.json --server-response \\
-                                  --header="Authorization: Basic \${AUTH_B64}" \\
-                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
-                                  2>&1 | awk '/^  HTTP/{print \$2}' | tail -1)
+                                    HTTP_STATUS=\$(wget -q -O /tmp/${svc}-final.json --server-response \\
+                                      --header="Authorization: Basic \${AUTH_B64}" \\
+                                      "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
+                                      2>&1 | awk '/^  HTTP/{print \$2}' | tail -1)
 
-                                echo "${svc} final tag 조회 HTTP status: \${HTTP_STATUS}"
-                                if [ "\${HTTP_STATUS}" = "200" ]; then
-                                  echo "이미 존재하는 Tag(\${FINAL_TAG})입니다. 동일 Tag 재Push는 금지되어 있습니다."
-                                  exit 1
-                                fi
-                            """
+                                    echo "${svc} final tag 조회 HTTP status: \${HTTP_STATUS}"
+                                    if [ "\${HTTP_STATUS}" = "200" ]; then
+                                      echo "이미 존재하는 Tag(\${FINAL_TAG})입니다. 동일 Tag 재Push는 금지되어 있습니다."
+                                      exit 1
+                                    fi
+                                """
+                            }
                         }
                     }
                 }
@@ -227,13 +237,15 @@ pipeline {
             steps {
                 dir('backend') {
                     container('buildkit') {
-                        sh '''
-                            buildctl-daemonless.sh build \
-                              --frontend dockerfile.v0 \
-                              --local context=. \
-                              --local dockerfile=. \
-                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:${CANDIDATE_TAG},push=true
-                        '''
+                        withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                            sh '''
+                                buildctl-daemonless.sh build \
+                                  --frontend dockerfile.v0 \
+                                  --local context=. \
+                                  --local dockerfile=. \
+                                  --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:${CANDIDATE_TAG},push=true
+                            '''
+                        }
                     }
                 }
             }
@@ -244,13 +256,15 @@ pipeline {
             steps {
                 dir('frontend') {
                     container('buildkit') {
-                        sh '''
-                            buildctl-daemonless.sh build \
-                              --frontend dockerfile.v0 \
-                              --local context=. \
-                              --local dockerfile=. \
-                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:${CANDIDATE_TAG},push=true
-                        '''
+                        withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                            sh '''
+                                buildctl-daemonless.sh build \
+                                  --frontend dockerfile.v0 \
+                                  --local context=. \
+                                  --local dockerfile=. \
+                                  --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:${CANDIDATE_TAG},push=true
+                            '''
+                        }
                     }
                 }
             }
@@ -278,19 +292,21 @@ pipeline {
             when { branch 'main' }
             steps {
                 container('buildkit') {
-                    script {
-                        ['backend', 'frontend'].each { svc ->
-                            sh """
-                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                                  | grep '"auth"' \\
-                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                    withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                        script {
+                            ['backend', 'frontend'].each { svc ->
+                                sh """
+                                    AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                      | grep '"auth"' \\
+                                      | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                                wget -q -O - --method=POST \\
-                                  --header="Authorization: Basic \${AUTH_B64}" \\
-                                  --header="Content-Type: application/json" \\
-                                  --body-data="{\\"name\\":\\"\${FINAL_TAG}\\"}" \\
-                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${CANDIDATE_TAG}/tags"
-                            """
+                                    wget -q -O - --method=POST \\
+                                      --header="Authorization: Basic \${AUTH_B64}" \\
+                                      --header="Content-Type: application/json" \\
+                                      --body-data="{\\"name\\":\\"\${FINAL_TAG}\\"}" \\
+                                      "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${CANDIDATE_TAG}/tags"
+                                """
+                            }
                         }
                     }
                 }
@@ -305,18 +321,20 @@ pipeline {
             when { branch 'main' }
             steps {
                 container('buildkit') {
-                    script {
-                        ['backend', 'frontend'].each { svc ->
-                            sh """
-                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                                  | grep '"auth"' \\
-                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                    withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
+                        script {
+                            ['backend', 'frontend'].each { svc ->
+                                sh """
+                                    AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                      | grep '"auth"' \\
+                                      | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                                wget -q -O - \\
-                                  --header="Authorization: Basic \${AUTH_B64}" \\
-                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
-                                  | grep -o '"digest"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1
-                            """
+                                    wget -q -O - \\
+                                      --header="Authorization: Basic \${AUTH_B64}" \\
+                                      "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
+                                      | grep -o '"digest"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1
+                                """
+                            }
                         }
                     }
                 }
