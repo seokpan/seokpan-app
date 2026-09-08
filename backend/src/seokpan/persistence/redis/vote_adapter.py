@@ -76,6 +76,8 @@ class RedisVoteRuntimeAdapter:
         if raw_game is None:
             return None
         game = VersionedJsonCodec.decode(raw_game)
+        if _integer(game, "schema_version") != VOTE_RUNTIME_SCHEMA_VERSION:
+            raise RedisProviderError("VOTE_SCHEMA_VERSION_MISMATCH")
         turn_no = _integer(game, "turn_no")
         result = await self._scripts.execute(
             VOTE_READ,
@@ -300,7 +302,7 @@ class RedisVoteRuntimeAdapter:
         error = result.get("error")
         if not isinstance(error, str):
             raise RedisProviderError("REDIS_RESPONSE_INVALID")
-        if error == "REDIS_SNAPSHOT_CHANGED":
+        if error in {"REDIS_SNAPSHOT_CHANGED", "VOTE_SCHEMA_VERSION_MISMATCH"}:
             raise RedisProviderError(error)
         raise VoteRuleViolation(error)
 
@@ -322,7 +324,11 @@ class RedisVoteRuntimeAdapter:
         if value is None:
             return None
         item = _mapping(value)
-        return VoteRuntimeSnapshot(
+        if _integer(item, "schema_version") != VOTE_RUNTIME_SCHEMA_VERSION:
+            raise RedisProviderError("VOTE_SCHEMA_VERSION_MISMATCH")
+        if "last_move" not in item:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        snapshot = VoteRuntimeSnapshot(
             room_id=_string(item, "room_id"),
             game_id=_string(item, "game_id"),
             state_version=_integer(item, "state_version"),
@@ -341,10 +347,45 @@ class RedisVoteRuntimeAdapter:
                 Coordinate.parse(_scalar_string(value)) for value in _list(item["candidates"])
             ),
             occupied_cells=tuple(cls._cell(value) for value in _list(item["occupied_cells"])),
+            last_move=cls._last_move(item.get("last_move")),
             resolver=cls._optional_resolver(item.get("resolver")),
             valid_voter_count=_optional_integer(item, "valid_voter_count"),
             schema_version=_integer(item, "schema_version"),
         )
+        move = snapshot.last_move
+        if (snapshot.move_no == 0 and move is not None) or (
+            snapshot.move_no > 0
+            and (
+                move is None
+                or move.move_no != snapshot.move_no
+                or not any(
+                    cell.coordinate == move.coordinate and cell.stone is move.team
+                    for cell in snapshot.occupied_cells
+                )
+            )
+        ):
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        return snapshot
+
+    @staticmethod
+    def _last_move(value: object) -> AppliedMove | None:
+        if value is None:
+            return None
+        item = _mapping(value)
+        number, team, coordinate = (
+            _integer(item, "move_no"),
+            _string(item, "team"),
+            _string(item, "coordinate"),
+        )
+        if not 1 <= number <= 225 or team not in {"BLACK", "WHITE"}:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        try:
+            parsed = Coordinate.parse(coordinate)
+        except ValueError as error:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID") from error
+        if parsed.canonical != coordinate:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+        return AppliedMove(number, Stone(team), parsed)
 
     @staticmethod
     def _voter(value: object) -> Voter:

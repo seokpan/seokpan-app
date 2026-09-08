@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
-SESSION_SCHEMA_VERSION = 1
+SESSION_SCHEMA_VERSION = 2
 SESSION_IDLE_TTL_MS = 2 * 60 * 60 * 1000
 SESSION_ABSOLUTE_TTL_MS = 24 * 60 * 60 * 1000
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -39,16 +40,23 @@ def validate_digest(value: str, *, code: str = "INVALID_SESSION_DIGEST") -> None
         raise SessionRuleViolation(code)
 
 
+def validate_csrf_pair(token: str, digest: str) -> None:
+    if not token or not hmac.compare_digest(digest_opaque_token(token), digest):
+        raise SessionRuleViolation("INVALID_CSRF_TOKEN")
+
+
 @dataclass(frozen=True, slots=True)
 class CreateSession:
     session_digest: str
     actor_type: SessionActorType
     actor_id: str
     csrf_digest: str
+    csrf_token: str = field(kw_only=True, repr=False)
 
     def __post_init__(self) -> None:
         validate_digest(self.session_digest)
         validate_digest(self.csrf_digest, code="INVALID_CSRF_DIGEST")
+        validate_csrf_pair(self.csrf_token, self.csrf_digest)
         if not self.actor_id:
             raise SessionRuleViolation("INVALID_SESSION_ACTOR")
         if self.actor_type is SessionActorType.MEMBER and not self.actor_id.isdecimal():
@@ -65,12 +73,14 @@ class SessionRecord:
     last_activity_at_ms: int
     absolute_expires_at_ms: int
     schema_version: int = SESSION_SCHEMA_VERSION
+    csrf_token: str = field(kw_only=True, repr=False)
 
     def __post_init__(self) -> None:
         validate_digest(self.session_digest)
         validate_digest(self.csrf_digest, code="INVALID_CSRF_DIGEST")
         if self.schema_version != SESSION_SCHEMA_VERSION:
             raise SessionRuleViolation("UNSUPPORTED_SESSION_SCHEMA")
+        validate_csrf_pair(self.csrf_token, self.csrf_digest)
         if not self.actor_id:
             raise SessionRuleViolation("INVALID_SESSION_ACTOR")
         if self.actor_type is SessionActorType.MEMBER and not self.actor_id.isdecimal():

@@ -307,6 +307,13 @@ class Room:
         self._participants[participant_id] = replace(participant, connected=True)
         self._advance_version()
 
+    def kick(self, *, actor_id: str, target_id: str) -> DepartureResult:
+        self._require_waiting()
+        self._require_owner(actor_id)
+        if actor_id == target_id:
+            raise RoomRuleViolation("CANNOT_KICK_SELF")
+        return self.leave(participant_id=target_id)
+
     def leave(self, *, participant_id: str) -> DepartureResult:
         self._require_not_closed()
         participant = self.participant(participant_id)

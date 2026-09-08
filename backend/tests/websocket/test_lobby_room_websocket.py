@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from functools import partial
 from typing import cast
@@ -29,6 +30,243 @@ from seokpan.room.domain import RoomConfig
 from seokpan.settings import Settings
 
 ORIGIN = "http://localhost:5173"
+
+
+def test_kick_terminal_notice_closes_only_target_socket(
+    headless: tuple[FastAPI, ApplicationServices],
+) -> None:
+    application, _services = headless
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as guest,
+    ):
+        owner_csrf = _member(owner, "kickws")
+        guest_csrf = _guest(guest)
+        room = _create_room(owner, owner_csrf)
+        room_id = str(room["room_id"])
+        _join(guest, guest_csrf, room_id, int(room["state_version"]))
+        participant_id = guest.get("/api/v1/session").json()["participant_id"]
+        with owner.websocket_connect(
+            f"/ws/v1/rooms/{room_id}", headers=_ws_headers(owner)
+        ) as owner_ws:
+            owner_ws.receive_json()
+            # Two identities, one ASGI loop (the same arrangement as one server).
+            with owner.websocket_connect(
+                f"/ws/v1/rooms/{room_id}", headers=_ws_headers(guest)
+            ) as target_ws:
+                initial = target_ws.receive_json()["payload"]["room"]
+                response = owner.post(
+                    f"/api/v1/rooms/{room_id}/participants/{participant_id}/kick",
+                    headers={"Origin": ORIGIN, "X-CSRF-Token": owner_csrf},
+                    json={
+                        "request_id": str(uuid4()),
+                        "expected_state_version": initial["state_version"],
+                    },
+                )
+                assert response.status_code == 200, response.text
+                notice = target_ws.receive_json()
+                assert notice["event_type"] == "room.participant_left"
+                assert notice["payload"]["reason"] == "KICKED"
+                assert notice["payload"]["participant_id"] == participant_id
+                assert "session_digest" not in str(notice)
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    target_ws.receive_json()
+                assert closed.value.code == 1000
+                owner_notice = owner_ws.receive_json()
+                assert owner_notice["event_type"] == "room.participant_left"
+                # The owner's connection remains usable after the terminal target notice.
+                _room_mutation(
+                    owner,
+                    owner_csrf,
+                    f"/api/v1/rooms/{room_id}/participants/me/team",
+                    response.json()["state_version"],
+                    team="BLACK",
+                )
+                assert owner_ws.receive_json()["event_type"] == "room.team_changed"
+            assert guest.get("/api/v1/session").json()["room_id"] is None
+
+
+def test_member_in_room_cannot_downgrade_to_guest(
+    headless: tuple[FastAPI, ApplicationServices],
+) -> None:
+    application, _services = headless
+    with TestClient(application, base_url=ORIGIN) as client:
+        csrf = _member(client, "downgrade")
+        room = _create_room(client, csrf)
+        cookie = client.cookies.get("seokpan_session")
+        with client.websocket_connect(
+            f"/ws/v1/rooms/{room['room_id']}", headers=_ws_headers(client)
+        ) as socket:
+            before = socket.receive_json()["payload"]["room"]
+            response = client.post(
+                "/api/v1/sessions/guest", headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}
+            )
+            assert response.status_code == 409
+            assert response.json()["code"] == "ACTIVE_ROOM_IDENTITY_CHANGE_NOT_ALLOWED"
+            assert client.cookies.get("seokpan_session") == cookie
+            after = client.get(f"/api/v1/rooms/{room['room_id']}/snapshot").json()
+            assert after == before
+            # The same Socket still receives a valid subsequent state change.
+            _room_mutation(
+                client,
+                csrf,
+                f"/api/v1/rooms/{room['room_id']}/participants/me/team",
+                int(after["state_version"]),
+                team="BLACK",
+            )
+            assert _next_room_event(socket)["event_type"] == "room.team_changed"
+
+
+@pytest.mark.parametrize("path", ["/ws/v1/lobby", "/ws/v1/rooms/unopened"])
+def test_upgrade_storage_failure_is_not_missing_authentication(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    application, services = headless
+
+    async def failure(_digest: str) -> SessionRecord | None:
+        raise RuntimeError("storage unavailable")
+
+    with TestClient(application, base_url=ORIGIN) as client:
+        _guest(client)
+        monkeypatch.setattr(services.identity_api.sessions, "current", failure)
+        with (
+            pytest.raises(WebSocketDisconnect) as closed,
+            client.websocket_connect(path, headers=_ws_headers(client)),
+        ):
+            pytest.fail("must not accept an unverifiable session")
+        assert closed.value.code == 1011
+
+
+@pytest.mark.parametrize("expiry_ms", [7_200_000, 86_400_000])
+def test_open_lobby_expires_without_events(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+    expiry_ms: int,
+) -> None:
+    application, services = headless
+    assert services.headless_clock is not None
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 0.01)
+    with TestClient(application, base_url=ORIGIN) as client:
+        _guest(client)
+        with client.websocket_connect("/ws/v1/lobby", headers=_ws_headers(client)) as socket:
+            socket.receive_json()
+            services.headless_clock.advance(expiry_ms)
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            assert closed.value.code == 4401
+
+
+def test_lobby_event_is_not_delivered_after_session_expiry(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, services = headless
+    assert services.headless_clock is not None and services.realtime_api is not None
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 60)
+    with TestClient(application, base_url=ORIGIN) as client:
+        _guest(client)
+        with client.websocket_connect("/ws/v1/lobby", headers=_ws_headers(client)) as socket:
+            socket.receive_json()
+            services.headless_clock.advance(7_200_000)
+            assert client.portal is not None
+            client.portal.call(services.realtime_api.events.lobby_rooms_changed, {"reason": "TEST"})
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            assert closed.value.code == 4401
+
+
+def test_open_lobby_closes_after_logout(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, _services = headless
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 0.01)
+    with TestClient(application, base_url=ORIGIN) as client:
+        csrf = _guest(client)
+        with client.websocket_connect("/ws/v1/lobby", headers=_ws_headers(client)) as socket:
+            socket.receive_json()
+            assert (
+                client.delete(
+                    "/api/v1/session", headers={"Origin": ORIGIN, "X-CSRF-Token": csrf}
+                ).status_code
+                == 204
+            )
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            assert closed.value.code == 4401
+
+
+@pytest.mark.parametrize("failure", ["exception", "timeout"])
+def test_session_store_failure_keeps_room_participation(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    application, services = headless
+    assert services.realtime_api is not None
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr("seokpan.api.stream_access.SESSION_CHECK_TIMEOUT_SECONDS", 0.03)
+
+    async def unavailable(_digest: str) -> SessionRecord | None:
+        if failure == "timeout":
+            await asyncio.Event().wait()
+        raise RuntimeError("do-not-log-secret")
+
+    with TestClient(application, base_url=ORIGIN) as client:
+        csrf = _member(client, "failure")
+        room = _create_room(client, csrf)
+        room_id = str(room["room_id"])
+        with client.websocket_connect(
+            f"/ws/v1/rooms/{room_id}", headers=_ws_headers(client)
+        ) as socket:
+            first = socket.receive_json()["payload"]["room"]
+            monkeypatch.setattr(services.identity_api.sessions, "find", unavailable)
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            assert closed.value.code == 1011
+        assert client.portal is not None
+        current = client.portal.call(services.realtime_api.rooms.rooms.get, room_id)
+        assert current is not None
+        assert current.state_version == first["state_version"]
+        assert current.owner_id == first["owner_id"]
+        assert current.participants[0].connected
+
+
+def test_expired_guest_socket_starts_disconnect_lease(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, services = headless
+    assert services.realtime_api is not None
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 0.01)
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as guest,
+    ):
+        room = _create_room(owner, _member(owner, "exguest"))
+        guest_csrf = _guest(guest)
+        _join(guest, guest_csrf, str(room["room_id"]), int(room["state_version"]))
+        digest = digest_opaque_token(str(guest.cookies.get("seokpan_session")))
+        original_find = services.identity_api.sessions.find
+
+        async def expired(value: str) -> SessionRecord | None:
+            return None if value == digest else await original_find(value)
+
+        with guest.websocket_connect(
+            f"/ws/v1/rooms/{room['room_id']}", headers=_ws_headers(guest)
+        ) as socket:
+            first = socket.receive_json()["payload"]["room"]
+            monkeypatch.setattr(services.identity_api.sessions, "find", expired)
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+            assert closed.value.code == 4401
+        current = owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot").json()
+        assert current["owner_id"] == first["owner_id"]
+        assert len(current["participants"]) == 2
+        assert not current["participants"][1]["connected"]
+        assert current["state_version"] == first["state_version"] + 1
 
 
 class _FailingRealtimeEvents(InMemoryRealtimeEventAdapter):
@@ -62,6 +300,7 @@ def _session(token: str, actor_type: SessionActorType, actor_id: str) -> Session
         actor_type=actor_type,
         actor_id=actor_id,
         csrf_digest=digest_opaque_token(f"csrf-{token}"),
+        csrf_token=f"csrf-{token}",
         created_at_ms=0,
         last_activity_at_ms=0,
         absolute_expires_at_ms=86_400_000,
@@ -640,10 +879,14 @@ def test_planned_shutdown_does_not_record_participant_disconnect(
         assert current.json()["participants"][0]["connected"] is True
 
 
+@pytest.mark.parametrize("expired", [False, True])
 def test_game_vote_is_removed_when_room_socket_disconnects(
     headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+    expired: bool,
 ) -> None:
-    application, _services = headless
+    application, services = headless
+    monkeypatch.setattr("seokpan.api.realtime.SESSION_CHECK_INTERVAL_SECONDS", 0.01)
     with (
         TestClient(application, base_url=ORIGIN) as owner,
         TestClient(application, base_url=ORIGIN) as member,
@@ -689,6 +932,18 @@ def test_game_vote_is_removed_when_room_socket_disconnects(
             first = socket.receive_json()
             assert first["event_type"] == "room.snapshot"
             assert first["payload"]["game"] is not None
+
+            if expired:
+                digest = digest_opaque_token(str(owner.cookies.get("seokpan_session")))
+                original_find = services.identity_api.sessions.find
+
+                async def expired_owner(value: str) -> SessionRecord | None:
+                    return None if value == digest else await original_find(value)
+
+                monkeypatch.setattr(services.identity_api.sessions, "find", expired_owner)
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    socket.receive_json()
+                assert closed.value.code == 4401
 
         current = member.get(f"/api/v1/games/{game['game_id']}")
         assert current.status_code == 200

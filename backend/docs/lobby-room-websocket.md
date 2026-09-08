@@ -2,6 +2,13 @@
 
 ## 역할
 
+[접속자 집계 연결](presence.md)은 `/ws/v1/presence`를 별도로 사용합니다. 해당 연결의
+ping/pong은 접속 확인용이며 아래 Lobby/Room의 수신 전용·상태 복구 규칙을 변경하지 않습니다.
+
+A-08 로컬 구현에서 추가한 [채팅 수신 경로](chat-delivery.md)는 이 문서의 상태 스트림과
+별개입니다. 채팅의 종료·재접속은 Room 연결 세대나 Ready/Vote를 변경하지 않으며,
+채팅 메시지를 아래 Snapshot/stream version 복구에 섞지 않습니다.
+
 Lobby와 Room WebSocket은 기존 `/api/v1` HTTP 명령이 바꾼 상태를 전달하고, 연결 직후 현재 상태로 수렴시키는 통로입니다. WebSocket으로 상태 변경 명령을 받거나 Redis Key를 직접 다루지 않습니다.
 
 ```text
@@ -14,13 +21,71 @@ HTTP 명령 성공
 
 현재 구현은 In-memory Event Adapter를 사용하는 Headless 단계입니다. 실제 Redis Pub/Sub, 여러 Backend Replica 사이의 Socket 소유권, Gateway WSS 동작을 검증한 결과가 아닙니다.
 
+### A-08 열린 연결의 인증 재검사
+
+[App #56](https://github.com/seokpan/seokpan-app/issues/56)의 로컬 구현에서 Upgrade 이후의
+Session 재검사를 추가했습니다. 첫 Snapshot과 일반 Event 전송 전에 확인하고, Event가 없어도
+1초 대기마다 다시 확인합니다. 한 번의 인증 조회 대기는 2초로 제한합니다. 이는 현재 구현의
+대기 설정이며 네트워크·Event Loop 지연을 포함한 실환경 만료 차단 시간을 보장하는 수치는 아닙니다.
+
+- `find/get`만 호출하므로 검사 자체는 Idle/Absolute TTL을 연장하지 않습니다.
+- 실제 Session 만료/폐기는 4401로 닫습니다. 아직 Room에 참여 중이면 기존 Participant/Generation
+  단절 처리로 이어져 Vote 제거·방장 승계·Ready·30초 유예 규칙을 적용합니다. 로그아웃/명시적
+  퇴장으로 이미 참여가 끝난 경우에는 일반 퇴장/방 종료 알림과 종료를 유지하며 중복 단절 처리하지 않습니다.
+- 정상 Guest→Member 전환은 서버의 Room 참가 매핑으로 새 Session을 확인합니다. Cookie가
+  바뀌었다는 이유만으로 같은 참가자의 Socket을 끊거나 이전 Token을 다시 유효하게 만들지 않습니다.
+- 인증 조회 오류·시간 초과·서로 맞지 않는 신원은 1011로 닫고 개인 단절을 기록하지 않습니다.
+  연결 교체/서버 종료가 조회 중 발생했으면 그 종료 처리를 우선하며 대기 중 Game Event를 보내지 않습니다.
+- 수신 대기 Task는 종료 시 취소·정리합니다. Frontend도 이미 오류로 조작이 막힌 상태에서 받은
+  4401을 무시하지 않고 신원을 다시 확인합니다.
+
+검증은 로컬 Headless/Fake 기준입니다. 실제 Redis의 전환 중 읽기·폐기 전달·조회 빈도/지연·
+다중 Backend·Gateway WSS·플랫폼 장애 시 게임 전체 보호는 A-10의 별도 통합 검증입니다.
+
 ## 연결과 첫 Snapshot
+
+### 강퇴·참가 종료 알림
+
+- 강퇴는 기존 HTTP 명령 경로를 사용한다. Room 알림은 기존 `room.participant_left`이며
+  Payload에 대상 `participant_id`, `reason: KICKED`, `room_state_version`을 포함한다.
+  Session Token·Digest·Credential은 보내지 않는다. Room Stream Schema는 v1 그대로다.
+- 대상의 참가 연결이 제거된 뒤에도 이 종료 알림은 해당 Socket에 전달할 수 있다.
+  대상 Socket만 1000으로 종료하며 다른 참가자의 Socket은 유지한다. 중복 Disconnect로
+  방장 승계·게임 종료를 다시 처리하지 않는다.
+- Frontend는 자기 Participant ID에 대한 알림일 때만 강퇴 안내 후 세션을 재조회한다.
+  방장 등 나머지 참가자는 변경된 방 상태만 다시 확인한다. 진행 중인 Snapshot 요청은
+  대상의 종료 알림에서 취소하여 늦은 응답으로 방 화면을 복원하지 않는다.
+- 전달 실패·Socket 단절·인증 재검사와 겹쳐 구체 사유를 받지 못했다면 강퇴라고 추측하지 않는다.
+  기존 참여 종료/접근 재확인 경로에서 세션 조회 결과를 따라 로비로 돌아간다. 모든 상황에서
+  강퇴 문구가 전달된다고 보장하는 구조가 아니며 로그인 자체는 폐기하지 않는다.
+
+### 연결 규칙
 
 - `/ws/v1/lobby`와 `/ws/v1/rooms/{room_id}`는 `seokpan_session` Cookie와 허용된 `Origin`을 검사합니다.
 - URL Query의 인증 Token은 받지 않습니다.
 - Lobby의 첫 Application 메시지는 `lobby.snapshot`, Room은 `room.snapshot`입니다.
 - Room Snapshot에는 현재 Room과, 진행 중인 경우 접속자 기준 Game·Vote Snapshot이 포함됩니다.
+- Game의 `last_move`는 마지막 공식 착수의 번호·팀·좌표이며 착수 전에는 null입니다. HTTP 복구와 첫 WebSocket Snapshot이 같은 변환 함수를 사용합니다. 투표 후보나 Board 배열 순서로 대체하지 않습니다([상세](game-persistence.md)).
 - Room에 참가하지 않은 Session은 해당 Room WebSocket에 연결할 수 없습니다.
+
+App [#56](https://github.com/seokpan/seokpan-app/issues/56)의 복구용 HTTP는
+`GET /api/v1/lobby/snapshot`과 `GET /api/v1/rooms/{room_id}/state`입니다.
+전자는 `rooms`·`stream_version`, 후자는 `room`·`game`·`stream_version`을 반환합니다.
+기존 목록·Room Snapshot·Game 개별 조회도 그대로 유지합니다. 새 응답은 `no-store`이며
+일반 인증 조회와 같이 Session Idle 갱신을 수행하지만 Room 연결을 끊거나 다시 등록하지 않습니다.
+
+HTTP 복구와 첫 Socket Snapshot은 같은 읽기 검사를 사용합니다. 자료와 메시지 순서가
+조회 전후에 달라졌으면 최대 3회 다시 확인하며, 계속 바뀌면 HTTP는
+`503 SNAPSHOT_CHANGED`, Socket은 1011로 종료해 복구를 재시도하게 합니다.
+메시지는 상태 저장 뒤 발행되므로 자료가 알림보다 앞설 수 있습니다. 이 번호는 별도의
+DB/Redis Transaction 완료 번호가 아니며, 이후 알림과 Resource Version을 함께 확인해야 합니다.
+실제 Redis·다중 Backend에서 같은 보장이 성립하는지는 A-10 검증 대상입니다.
+
+Room은 연결 등록 후의 상태를 첫 Snapshot으로 보내므로 재접속한 참가자의 `connected`와
+`can_vote`를 이전 단절 상태로 보내지 않습니다. 첫 Snapshot을 읽는 동안 대기열에 쌓였던
+메시지 중 그 Snapshot 순서 이하의 메시지는 건너뜁니다. 이후 메시지의 중복 처리와 화면의
+늦은 HTTP 응답 거부는 Frontend에서 추가 검증합니다. 관전자 연결은 PLAYER 투표 상태를
+변경하지 않으며 이 조건은 Memory와 Redis의 연결 처리에 동일하게 적용합니다.
 
 Envelope의 `state_version`은 HTTP 변경 검사에 쓰는 Resource Version이 아니라 Lobby 또는 Room Stream의 메시지 순서입니다. Lobby와 각 Room이 서로 독립된 Stream Version을 발급하며, 연결 직후 Snapshot은 현재 Stream Version을 사용하되 번호를 새로 증가시키지 않습니다. Room과 Game/Vote의 Resource Version은 Snapshot 객체와 Event Payload의 `room_state_version`·`game_state_version`에 유지합니다.
 

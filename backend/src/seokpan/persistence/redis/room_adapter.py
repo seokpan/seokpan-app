@@ -31,6 +31,7 @@ from seokpan.room.application.runtime import (
     DisconnectRoomParticipant,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
+    KickRoomParticipant,
     LeaveRoomRuntime,
     RoomMutationResult,
     RoomRuntimeParticipant,
@@ -227,6 +228,18 @@ class RedisRoomRuntimeAdapter:
                 "active_vote_turn": command.active_vote_turn,
             },
             active_vote_turn=command.active_vote_turn,
+        )
+
+    async def kick(self, command: KickRoomParticipant) -> RoomMutationResult:
+        return await self._mutate(
+            command.room_id,
+            command.request_id,
+            "kick",
+            {
+                "actor_id": command.actor_id,
+                "target_id": command.target_id,
+                "expected_state_version": command.expected_state_version,
+            },
         )
 
     async def leave(self, command: LeaveRoomRuntime) -> RoomMutationResult:

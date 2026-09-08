@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from seokpan.identity.application import (
     CreateSession,
@@ -25,6 +26,7 @@ from seokpan.room.application.runtime import (
     DisconnectRoomParticipant,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
+    KickRoomParticipant,
     LeaveRoomRuntime,
     RoomMutationResult,
     RoomPasswordPort,
@@ -61,6 +63,13 @@ class RoomParticipation:
     actor_id: str
 
 
+@dataclass(slots=True, weakref_slot=True)
+class ParticipationWatch:
+    """Process-local invalidation for readers; not shared Provider state."""
+
+    unchanged: bool = True
+
+
 class RoomApplicationService(ParticipantSessionPort):
     """Coordinate Session participation with provider-neutral Room state."""
 
@@ -77,6 +86,9 @@ class RoomApplicationService(ParticipantSessionPort):
         self._votes = votes
         self._by_session: dict[str, RoomParticipation] = {}
         self._by_participant: dict[str, RoomParticipation] = {}
+        self._participation_watches: WeakValueDictionary[str, ParticipationWatch] = (
+            WeakValueDictionary()
+        )
         self._allocated_ids: dict[tuple[str, str, str], tuple[str, str]] = {}
         self._results: dict[tuple[str, str, str], tuple[str, RoomMutationResult]] = {}
 
@@ -84,8 +96,7 @@ class RoomApplicationService(ParticipantSessionPort):
         return tuple(
             room
             for room in await self._runtime.list_rooms()
-            if room.status is RoomStatus.WAITING
-            and len(room.participants) < room.config.max_participants
+            if room.status is not RoomStatus.CLOSED
         )
 
     async def get(self, room_id: str) -> RoomRuntimeSnapshot | None:
@@ -93,6 +104,18 @@ class RoomApplicationService(ParticipantSessionPort):
 
     def participation(self, session_digest: str) -> RoomParticipation | None:
         return self._by_session.get(session_digest)
+
+    def watch_participation(self, session_digest: str) -> ParticipationWatch:
+        watch = self._participation_watches.get(session_digest)
+        if watch is None:
+            watch = ParticipationWatch()
+            self._participation_watches[session_digest] = watch
+        return watch
+
+    def _invalidate_participation_watch(self, session_digest: str) -> None:
+        watch = self._participation_watches.pop(session_digest, None)
+        if watch is not None:
+            watch.unchanged = False
 
     def current_room(self, session_digest: str) -> tuple[str, str] | None:
         participation = self.participation(session_digest)
@@ -312,6 +335,40 @@ class RoomApplicationService(ParticipantSessionPort):
             await self._lobby_changed("GAME_STARTED", participation.room_id)
         return result
 
+    async def kick_participant(
+        self,
+        *,
+        session: SessionRecord,
+        target_id: str,
+        request_id: str,
+        expected_state_version: int,
+    ) -> RoomMutationResult:
+        actor = self._require_participation(session.session_digest)
+        result = await self._runtime.kick(
+            KickRoomParticipant(
+                room_id=actor.room_id,
+                request_id=request_id,
+                actor_id=actor.participant_id,
+                target_id=target_id,
+                expected_state_version=expected_state_version,
+            )
+        )
+        if result.replayed:
+            return result
+        # Resolve the binding after the mutation: Guest login may have rotated
+        # its session while the provider was processing this command.
+        target = self._by_participant.get(target_id)
+        if target is not None and target.room_id == actor.room_id:
+            self._unbind(target)
+        await self._room_changed(
+            "room.participant_left",
+            result,
+            room_id=actor.room_id,
+            payload={"participant_id": target_id, "reason": "KICKED"},
+        )
+        await self._lobby_changed("PARTICIPANT_LEFT", actor.room_id)
+        return result
+
     async def leave_room(
         self,
         *,
@@ -525,6 +582,8 @@ class RoomApplicationService(ParticipantSessionPort):
         participation = self._by_session.get(previous.session_digest)
         if participation is None:
             return
+        if replacement.actor_type is not SessionActorType.MEMBER:
+            raise RoomRuleViolation("ACTIVE_ROOM_IDENTITY_CHANGE_NOT_ALLOWED")
         if (
             previous.actor_type is SessionActorType.MEMBER
             and replacement.actor_type is SessionActorType.MEMBER
@@ -535,9 +594,13 @@ class RoomApplicationService(ParticipantSessionPort):
         if snapshot is None:
             self._unbind(participation)
             return
+        if self._by_participant.get(participation.participant_id) != participation:
+            # Participation can end during a session rotation. Login may still
+            # succeed, but must not restore the removed Room binding.
+            if self._by_participant.get(participation.participant_id) is None:
+                return
+            raise SessionTransitionUnavailable
         if previous.actor_type is SessionActorType.GUEST:
-            if replacement.actor_type is not SessionActorType.MEMBER:
-                raise RoomRuleViolation("ACTIVE_ROOM_IDENTITY_CHANGE_NOT_ALLOWED")
             try:
                 await self._runtime.change_identity(
                     ChangeRoomIdentity(
@@ -549,7 +612,13 @@ class RoomApplicationService(ParticipantSessionPort):
                     )
                 )
             except RoomRuleViolation as error:
+                if self._by_participant.get(participation.participant_id) is None:
+                    return
                 raise SessionTransitionUnavailable from error
+        if self._by_participant.get(participation.participant_id) != participation:
+            if self._by_participant.get(participation.participant_id) is None:
+                return
+            raise SessionTransitionUnavailable
         updated = RoomParticipation(
             session_digest=replacement.session_digest,
             room_id=participation.room_id,
@@ -558,6 +627,7 @@ class RoomApplicationService(ParticipantSessionPort):
             actor_id=replacement.actor_id,
         )
         self._unbind(participation)
+        self._invalidate_participation_watch(updated.session_digest)
         self._by_session[updated.session_digest] = updated
         self._by_participant[updated.participant_id] = updated
         refreshed = await self._runtime.get(updated.room_id)
@@ -587,6 +657,7 @@ class RoomApplicationService(ParticipantSessionPort):
             raise SessionTransitionUnavailable from error
 
     def _bind(self, session: SessionRecord, room_id: str, participant_id: str) -> None:
+        self._invalidate_participation_watch(session.session_digest)
         participation = RoomParticipation(
             session_digest=session.session_digest,
             room_id=room_id,
@@ -598,8 +669,11 @@ class RoomApplicationService(ParticipantSessionPort):
         self._by_participant[participant_id] = participation
 
     def _unbind(self, participation: RoomParticipation) -> None:
-        self._by_session.pop(participation.session_digest, None)
-        self._by_participant.pop(participation.participant_id, None)
+        if self._by_session.get(participation.session_digest) == participation:
+            self._invalidate_participation_watch(participation.session_digest)
+            self._by_session.pop(participation.session_digest, None)
+        if self._by_participant.get(participation.participant_id) == participation:
+            self._by_participant.pop(participation.participant_id, None)
 
     def _unbind_room(self, room_id: str) -> None:
         for participation in tuple(self._by_participant.values()):

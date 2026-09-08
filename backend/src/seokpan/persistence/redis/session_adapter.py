@@ -22,6 +22,7 @@ from seokpan.persistence.redis.common import (
     RedisKeyspace,
     RedisProviderError,
     VersionedJsonCodec,
+    VersionedLuaScript,
 )
 from seokpan.persistence.redis.session_scripts import (
     CREATE_SESSION,
@@ -52,6 +53,7 @@ class RedisSessionAdapter:
                 SESSION_SCHEMA_VERSION,
                 SESSION_IDLE_TTL_MS,
                 SESSION_ABSOLUTE_TTL_MS,
+                command.csrf_token,
             ),
         )
         return self._session_result(result, command.session_digest)
@@ -68,11 +70,14 @@ class RedisSessionAdapter:
 
     async def touch(self, session_digest: str) -> SessionRecord | None:
         validate_digest(session_digest)
-        result = await self._scripts.execute(
+        result = await self._execute_verified(
             TOUCH_SESSION,
+            session_digest=session_digest,
             keys=(RedisKeyspace.session(session_digest),),
             args=(session_digest, SESSION_IDLE_TTL_MS),
         )
+        if result is None:
+            return None
         decoded = self._result(result)
         self._raise_rejection(decoded)
         session = decoded.get("session")
@@ -87,8 +92,9 @@ class RedisSessionAdapter:
         replacement: CreateSession,
     ) -> SessionRecord:
         validate_digest(previous_session_digest)
-        result = await self._scripts.execute(
+        result = await self._execute_verified(
             ROTATE_SESSION,
+            session_digest=previous_session_digest,
             keys=(
                 RedisKeyspace.session(previous_session_digest),
                 RedisKeyspace.session(replacement.session_digest),
@@ -103,17 +109,23 @@ class RedisSessionAdapter:
                 SESSION_SCHEMA_VERSION,
                 SESSION_IDLE_TTL_MS,
                 SESSION_ABSOLUTE_TTL_MS,
+                replacement.csrf_token,
             ),
         )
+        if result is None:
+            raise SessionRuleViolation("SESSION_NOT_FOUND")
         return self._session_result(result, replacement.session_digest)
 
     async def revoke(self, session_digest: str) -> bool:
         validate_digest(session_digest)
-        result = await self._scripts.execute(
+        result = await self._execute_verified(
             REVOKE_SESSION,
+            session_digest=session_digest,
             keys=(RedisKeyspace.session(session_digest),),
             args=(session_digest,),
         )
+        if result is None:
+            return False
         decoded = self._result(result)
         self._raise_rejection(decoded)
         revoked = decoded.get("revoked")
@@ -128,8 +140,9 @@ class RedisSessionAdapter:
         previous: SessionRecord,
     ) -> SessionRecord:
         validate_digest(failed_replacement_digest)
-        result = await self._scripts.execute(
+        result = await self._execute_verified(
             RESTORE_SESSION,
+            session_digest=failed_replacement_digest,
             keys=(
                 RedisKeyspace.session(failed_replacement_digest),
                 RedisKeyspace.session(previous.session_digest),
@@ -146,9 +159,41 @@ class RedisSessionAdapter:
                 previous.last_activity_at_ms,
                 previous.absolute_expires_at_ms,
                 SESSION_IDLE_TTL_MS,
+                previous.csrf_token,
             ),
         )
+        if result is None:
+            raise SessionRuleViolation("SESSION_NOT_FOUND")
         return self._session_result(result, previous.session_digest)
+
+    async def _execute_verified(
+        self,
+        script: VersionedLuaScript,
+        *,
+        session_digest: str,
+        keys: tuple[str, ...],
+        args: tuple[object, ...],
+    ) -> object | None:
+        """Validate bytes, then require the same bytes before any Lua write.
+
+        Only a confirmed no-write conflict may be retried. Transport failures
+        are never replayed here because the previous write outcome is unknown.
+        """
+        for _ in range(3):
+            try:
+                raw = await self._client.get(RedisKeyspace.session(session_digest))
+            except RedisError as error:
+                raise RedisProviderError() from error
+            if raw is None:
+                return None
+            self._record(VersionedJsonCodec.decode(raw), session_digest)
+            result = await self._scripts.execute(script, keys=keys, args=(*args, raw))
+            decoded = self._result(result)
+            if decoded["ok"] is False and decoded.get("error") == "SESSION_STATE_CHANGED":
+                continue
+            self._raise_rejection(decoded)
+            return result
+        raise RedisProviderError("SESSION_STATE_CHANGED")
 
     @classmethod
     def _session_result(cls, result: object, session_digest: str) -> SessionRecord:
@@ -188,6 +233,7 @@ class RedisSessionAdapter:
                 actor_type=SessionActorType(_required_string(value, "actor_type")),
                 actor_id=_required_string(value, "actor_id"),
                 csrf_digest=_required_string(value, "csrf_digest"),
+                csrf_token=_required_string(value, "csrf_token"),
                 created_at_ms=_required_integer(value, "created_at_ms"),
                 last_activity_at_ms=_required_integer(value, "last_activity_at_ms"),
                 absolute_expires_at_ms=_required_integer(value, "absolute_expires_at_ms"),

@@ -1,0 +1,17 @@
+.panel { min-width: 0; background: white; border: 1px solid #dce3ed; border-radius: .75rem; padding: 1rem; }
+.panel h2 { font-size: 1.15rem; margin: 0 0 .7rem; }
+.hint { font-size: .8rem; line-height: 1.5; color: #52617a; margin: .5rem 0; }
+.log { height: 16rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border-block: 1px solid #e0e5ee; padding: .6rem 0; }
+.empty { color: #52617a; font-size: .9rem; padding: 1rem .25rem; }
+.message { margin: .6rem .2rem; line-height: 1.6; font-size: .9rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.message time { color: #52617a; font-size: .75rem; }
+.message strong { color: #007681; }
+.newMessages { height: 2.5rem; display: flex; justify-content: center; align-items: center; }
+.newMessages button { color: #00636d; background: #e5f2f4; border: 1px solid #93bbc0; border-radius: 1rem; padding: .3rem .7rem; }
+.panel label { display: block; font-size: .85rem; margin-bottom: .4rem; }
+.composer { display: flex; gap: .5rem; align-items: stretch; }
+.composer textarea { min-width: 0; flex: 1; resize: none; font: inherit; border: 1px solid #a1afc4; border-radius: .4rem; padding: .5rem; }
+.composer button { flex: 0 0 auto; width: auto; margin: 0; padding: .6rem .8rem; }
+.feedback { min-height: 3.6em; font-size: .85rem; line-height: 1.5; margin: .4rem 0 0; overflow-wrap: anywhere; }
+.lobbyLayout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); align-items: start; gap: 1.25rem; }
+@media (max-width: 900px) { .lobbyLayout { grid-template-columns: minmax(0, 1fr); } }

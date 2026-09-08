@@ -12,6 +12,87 @@ from seokpan.settings import Settings
 ORIGIN = "http://localhost:5173"
 
 
+@pytest.mark.parametrize("is_guest", [True, False])
+def test_kick_preserves_login_and_old_request_does_not_kick_rejoined_user(
+    application: FastAPI, is_guest: bool
+) -> None:
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as target,
+    ):
+        owner_csrf = _register_and_login(owner, "kickowner")
+        target_csrf = _guest(target) if is_guest else _register_and_login(target, "kicked")
+        room = _create_room(owner, owner_csrf)
+        joined = _join_room(target, target_csrf, str(room["room_id"]), int(room["state_version"]))
+        before = target.get("/api/v1/session").json()
+        cookie = target.cookies.get("seokpan_session")
+        path = f"/api/v1/rooms/{room['room_id']}/participants/{before['participant_id']}/kick"
+        headers = {"Origin": ORIGIN, "X-CSRF-Token": owner_csrf}
+        body = {"request_id": str(uuid4()), "expected_state_version": joined["state_version"]}
+        response = owner.post(path, headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        current = target.get("/api/v1/session").json()
+        assert current["room_id"] is None and current["participant_id"] is None
+        assert current["actor_id"] == before["actor_id"]
+        assert current["actor_type"] == before["actor_type"]
+        assert target.cookies.get("seokpan_session") == cookie
+        assert target.get(f"/api/v1/rooms/{room['room_id']}/state").status_code == 403
+        assert owner.get("/api/v1/session").json()["room_id"] == room["room_id"]
+        rejoined = _join_room(
+            target, target_csrf, str(room["room_id"]), response.json()["state_version"]
+        )
+        new_participant = target.get("/api/v1/session").json()["participant_id"]
+        assert new_participant != before["participant_id"]
+        replay = owner.post(path, headers=headers, json=body)
+        assert replay.status_code == 200 and replay.json()["replayed"]
+        assert target.get("/api/v1/session").json()["participant_id"] == new_participant
+        assert owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot").json() == rejoined
+
+
+@pytest.mark.parametrize("failure", ["csrf", "origin", "non-owner", "self", "stale", "outside"])
+def test_kick_rejects_unsafe_requests_without_removing_participants(
+    application: FastAPI, failure: str
+) -> None:
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as other,
+    ):
+        csrf = _register_and_login(owner, "kickguard")
+        other_csrf = _guest(other)
+        room = _create_room(owner, csrf)
+        joined = _join_room(other, other_csrf, str(room["room_id"]), int(room["state_version"]))
+        target_id = other.get("/api/v1/session").json()["participant_id"]
+        owner_id = room["owner_id"]
+        headers = {"Origin": ORIGIN, "X-CSRF-Token": csrf}
+        version = joined["state_version"]
+        client = owner
+        room_id = room["room_id"]
+        expected = 403
+        if failure == "csrf":
+            headers.pop("X-CSRF-Token")
+        elif failure == "origin":
+            headers["Origin"] = "https://untrusted.invalid"
+        elif failure == "non-owner":
+            client, headers, target_id = (
+                other,
+                {"Origin": ORIGIN, "X-CSRF-Token": other_csrf},
+                owner_id,
+            )
+        elif failure == "self":
+            target_id, expected = owner_id, 422
+        elif failure == "stale":
+            version, expected = 1, 409
+        elif failure == "outside":
+            room_id = str(uuid4())
+        response = client.post(
+            f"/api/v1/rooms/{room_id}/participants/{target_id}/kick",
+            headers=headers,
+            json={"request_id": str(uuid4()), "expected_state_version": version},
+        )
+        assert response.status_code == expected, response.text
+        assert owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot").json() == joined
+
+
 @pytest.fixture
 def application() -> FastAPI:
     settings = Settings(environment="test", allowed_origins=(ORIGIN,))
@@ -180,6 +261,10 @@ def test_room_capacity_is_rechecked_when_joining(application: FastAPI) -> None:
         first_csrf = _guest(first_guest)
         room = _join_room(first_guest, first_csrf, str(room["room_id"]), int(room["state_version"]))
         second_csrf = _guest(second_guest)
+        listed = second_guest.get("/api/v1/rooms").json()["rooms"]
+        assert len(listed) == 1
+        assert listed[0]["status"] == "WAITING"
+        assert listed[0]["participant_count"] == listed[0]["max_participants"] == 2
         full = second_guest.post(
             f"/api/v1/rooms/{room['room_id']}/joins",
             headers={"Origin": ORIGIN, "X-CSRF-Token": second_csrf},

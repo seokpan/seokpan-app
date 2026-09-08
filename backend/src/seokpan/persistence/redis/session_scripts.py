@@ -29,11 +29,24 @@ end
 local function response(ok, session, error_code)
   return cjson.encode({ok = ok, session = session, error = error_code})
 end
+
+local function valid_session(session)
+  return type(session) == 'table' and session.schema_version == 2
+    and type(session.csrf_token) == 'string' and #session.csrf_token > 0
+    and type(session.csrf_digest) == 'string' and #session.csrf_digest == 64
+    and type(session.actor_id) == 'string'
+    and (session.actor_type == 'MEMBER' or session.actor_type == 'GUEST')
+    and type(session.created_at_ms) == 'number'
+    and type(session.last_activity_at_ms) == 'number'
+    and type(session.absolute_expires_at_ms) == 'number'
+    and session.created_at_ms <= session.last_activity_at_ms
+    and session.last_activity_at_ms < session.absolute_expires_at_ms
+end
 """
 
 CREATE_SESSION = VersionedLuaScript(
     name="session-create",
-    version=1,
+    version=2,
     source=_COMMON
     + """
 local session_key = KEYS[1]
@@ -45,6 +58,7 @@ local csrf_digest = ARGV[4]
 local schema_version = tonumber(ARGV[5])
 local idle_ttl_ms = tonumber(ARGV[6])
 local absolute_ttl_ms = tonumber(ARGV[7])
+local csrf_token = ARGV[8]
 
 if redis.call('EXISTS', session_key) == 1 then
   return response(false, cjson.null, 'SESSION_ALREADY_EXISTS')
@@ -58,6 +72,7 @@ local session = {
   actor_type = actor_type,
   actor_id = actor_id,
   csrf_digest = csrf_digest,
+  csrf_token = csrf_token,
   created_at_ms = current_ms,
   last_activity_at_ms = current_ms,
   absolute_expires_at_ms = absolute_expires_at_ms
@@ -75,7 +90,7 @@ return response(true, session, cjson.null)
 
 TOUCH_SESSION = VersionedLuaScript(
     name="session-touch",
-    version=1,
+    version=3,
     source=_COMMON
     + """
 local session_key = KEYS[1]
@@ -85,8 +100,14 @@ local raw = redis.call('GET', session_key)
 if not raw then
   return response(true, cjson.null, cjson.null)
 end
+if raw ~= ARGV[3] then
+  return response(false, cjson.null, 'SESSION_STATE_CHANGED')
+end
 
 local session = cjson.decode(raw)
+if not valid_session(session) then
+  return response(false, cjson.null, 'UNSUPPORTED_SESSION_SCHEMA')
+end
 local current_ms = now_ms()
 if current_ms >= session.absolute_expires_at_ms then
   redis.call('DEL', session_key)
@@ -113,7 +134,7 @@ return response(true, session, cjson.null)
 
 ROTATE_SESSION = VersionedLuaScript(
     name="session-rotate",
-    version=1,
+    version=3,
     source=_COMMON
     + """
 local previous_key = KEYS[1]
@@ -127,6 +148,7 @@ local csrf_digest = ARGV[5]
 local schema_version = tonumber(ARGV[6])
 local idle_ttl_ms = tonumber(ARGV[7])
 local absolute_ttl_ms = tonumber(ARGV[8])
+local csrf_token = ARGV[9]
 
 if previous_key == replacement_key then
   return response(false, cjson.null, 'SESSION_ROTATION_REQUIRES_NEW_DIGEST')
@@ -135,13 +157,22 @@ local previous_raw = redis.call('GET', previous_key)
 if not previous_raw then
   return response(false, cjson.null, 'SESSION_NOT_FOUND')
 end
+if previous_raw ~= ARGV[10] then
+  return response(false, cjson.null, 'SESSION_STATE_CHANGED')
+end
 if redis.call('EXISTS', replacement_key) == 1 then
   return response(false, cjson.null, 'SESSION_ALREADY_EXISTS')
 end
 
 local previous = cjson.decode(previous_raw)
+if not valid_session(previous) then
+  return response(false, cjson.null, 'UNSUPPORTED_SESSION_SCHEMA')
+end
 local previous_index_key = member_index(previous.actor_type, previous.actor_id)
 local current_ms = now_ms()
+if current_ms >= previous.absolute_expires_at_ms then
+  return response(false, cjson.null, 'SESSION_NOT_FOUND')
+end
 redis.call('DEL', previous_key)
 if previous_index_key then
   redis.call('ZREM', previous_index_key, previous_digest)
@@ -155,6 +186,7 @@ local replacement = {
   actor_type = actor_type,
   actor_id = actor_id,
   csrf_digest = csrf_digest,
+  csrf_token = csrf_token,
   created_at_ms = current_ms,
   last_activity_at_ms = current_ms,
   absolute_expires_at_ms = absolute_expires_at_ms
@@ -170,7 +202,7 @@ return response(true, replacement, cjson.null)
 
 RESTORE_SESSION = VersionedLuaScript(
     name="session-restore-after-failed-rotation",
-    version=1,
+    version=3,
     source=_COMMON
     + """
 local failed_key = KEYS[1]
@@ -186,10 +218,14 @@ local previous_created_at_ms = tonumber(ARGV[7])
 local previous_last_activity_at_ms = tonumber(ARGV[8])
 local previous_absolute_expires_at_ms = tonumber(ARGV[9])
 local idle_ttl_ms = tonumber(ARGV[10])
+local previous_csrf_token = ARGV[11]
 
 local failed_raw = redis.call('GET', failed_key)
 if not failed_raw then
   return response(false, cjson.null, 'SESSION_NOT_FOUND')
+end
+if failed_raw ~= ARGV[12] then
+  return response(false, cjson.null, 'SESSION_STATE_CHANGED')
 end
 if redis.call('EXISTS', previous_key) == 1 then
   return response(false, cjson.null, 'SESSION_ALREADY_EXISTS')
@@ -201,6 +237,9 @@ local idle_expires_at_ms = math.min(
   previous_absolute_expires_at_ms
 )
 local failed = cjson.decode(failed_raw)
+if not valid_session(failed) or previous_schema_version ~= 2 then
+  return response(false, cjson.null, 'UNSUPPORTED_SESSION_SCHEMA')
+end
 local failed_index_key = member_index(failed.actor_type, failed.actor_id)
 redis.call('DEL', failed_key)
 if failed_index_key then
@@ -216,6 +255,7 @@ local previous = {
   actor_type = previous_actor_type,
   actor_id = previous_actor_id,
   csrf_digest = previous_csrf_digest,
+  csrf_token = previous_csrf_token,
   created_at_ms = previous_created_at_ms,
   last_activity_at_ms = previous_last_activity_at_ms,
   absolute_expires_at_ms = previous_absolute_expires_at_ms
@@ -231,7 +271,7 @@ return response(true, previous, cjson.null)
 
 REVOKE_SESSION = VersionedLuaScript(
     name="session-revoke",
-    version=1,
+    version=3,
     source=_COMMON
     + """
 local session_key = KEYS[1]
@@ -239,6 +279,9 @@ local digest = ARGV[1]
 local raw = redis.call('GET', session_key)
 if not raw then
   return cjson.encode({ok = true, revoked = false, error = cjson.null})
+end
+if raw ~= ARGV[2] then
+  return response(false, cjson.null, 'SESSION_STATE_CHANGED')
 end
 local session = cjson.decode(raw)
 local current_ms = now_ms()

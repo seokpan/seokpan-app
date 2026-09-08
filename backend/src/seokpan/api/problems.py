@@ -271,4 +271,9 @@ def _response(
         body["current_version"] = current_version
     if snapshot_url is not None:
         body["snapshot_url"] = snapshot_url
-    return JSONResponse(body, status_code=status, media_type="application/problem+json")
+    return JSONResponse(
+        body,
+        status_code=status,
+        media_type="application/problem+json",
+        headers={"Cache-Control": "no-store"},
+    )

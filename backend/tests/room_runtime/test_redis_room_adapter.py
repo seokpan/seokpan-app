@@ -14,6 +14,27 @@ from seokpan.room.application.runtime import ROOM_RUNTIME_SCHEMA_VERSION
 from .conftest import EmulatedRoomRedisClient, create_room
 
 
+def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
+    # Source review only. The emulator does not execute this Lua in Redis.
+    kick = ROOM_MUTATION.source.split("if operation == 'kick' then", 1)[1].split(
+        "if operation == 'leave' then", 1
+    )[0]
+    first_write = kick.index("redis.call('HDEL'")
+    for code in ("ROOM_NOT_WAITING", "OWNER_REQUIRED", "CANNOT_KICK_SELF", "PARTICIPANT_NOT_FOUND"):
+        assert kick.index(f"rejection('{code}')") < first_write
+    assert "HDEL', KEYS[2], payload.target_id" in kick
+    assert "SREM', KEYS[3], payload.target_id" in kick
+    assert "HDEL', KEYS[4], payload.target_id" in kick
+    assert "advance_version()" in kick
+    assert "remove_vote(" not in kick and "update_game_player(" not in kick
+    assert ROOM_MUTATION.version == 8
+    missing = ROOM_MUTATION.source.split(
+        "if not current_participant and operation ~= 'kick' then", 1
+    )[1].split("if operation ~= 'disconnect'", 1)[0]
+    assert "operation == 'disconnect' or operation == 'expire_disconnect'" in missing
+    assert "rejection('CONNECTION_NOT_FOUND')" in missing
+
+
 @pytest.mark.asyncio
 async def test_mutation_declares_one_hash_slot_and_separated_room_keys() -> None:
     client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))

@@ -44,6 +44,7 @@ async def test_vote_close_resolver_and_move_flow(vote_harness: VoteRuntimeHarnes
     first = await vote_harness.adapter.cast_vote(
         CastRuntimeVote("room-1", "vote-1", "game-1", 1, "black-1", Coordinate.parse("H8"), version)
     )
+    assert first.snapshot.last_move is None
     second = await vote_harness.adapter.cast_vote(
         CastRuntimeVote(
             "room-1",
@@ -114,12 +115,27 @@ async def test_vote_close_resolver_and_move_flow(vote_harness: VoteRuntimeHarnes
     assert applied.resolution == resolution
     assert applied.snapshot.turn_no == 2
     assert applied.snapshot.move_no == 1
+    assert applied.snapshot.last_move == resolution.applied_move
     assert applied.snapshot.occupied_cells[0].coordinate == Coordinate.parse("H8")
     assert await vote_harness.adapter.get("room-1") == applied.snapshot
     replayed_resolution = await vote_harness.adapter.apply_resolution(resolve_command)
     assert replayed_resolution.replayed is True
     assert replayed_resolution.resolution == resolution
     assert replayed_resolution.snapshot == applied.snapshot
+    vote_harness.clock.advance(7_000)
+    passed = await vote_harness.adapter.close_turn(
+        CloseRuntimeTurn(
+            "room-1",
+            "pass-after-move",
+            "game-1",
+            2,
+            applied.snapshot.state_version,
+            next_deadline_ms=9_000,
+        )
+    )
+    assert passed.snapshot.turn_no == 3
+    assert passed.snapshot.last_move == applied.snapshot.last_move
+    assert passed.snapshot.move_no == 1
 
 
 @pytest.mark.asyncio
@@ -167,6 +183,7 @@ async def test_zero_vote_pass_and_joint_loss_keep_move_number(
     )
     assert first.snapshot.turn_no == 2
     assert first.snapshot.move_no == 0
+    assert first.snapshot.last_move is None
     vote_harness.clock.advance(1_000)
     second = await vote_harness.adapter.close_turn(
         CloseRuntimeTurn("room-1", "close-2", "game-1", 2, first.snapshot.state_version)

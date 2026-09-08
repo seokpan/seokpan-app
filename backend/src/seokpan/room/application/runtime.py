@@ -231,6 +231,21 @@ class ExpireRoomDisconnect:
 
 
 @dataclass(frozen=True, slots=True)
+class KickRoomParticipant:
+    room_id: str
+    request_id: str
+    actor_id: str
+    target_id: str
+    expected_state_version: int
+
+    def __post_init__(self) -> None:
+        _validate_request(self.room_id, self.request_id)
+        _validate_identifier(self.actor_id, code="INVALID_PARTICIPANT_ID")
+        _validate_identifier(self.target_id, code="INVALID_PARTICIPANT_ID")
+        _validate_state_version(self.expected_state_version)
+
+
+@dataclass(frozen=True, slots=True)
 class LeaveRoomRuntime:
     room_id: str
     request_id: str
@@ -341,6 +356,8 @@ class RoomRuntimePort(Protocol):
     async def expire_disconnect(self, command: ExpireRoomDisconnect) -> RoomMutationResult: ...
 
     async def leave(self, command: LeaveRoomRuntime) -> RoomMutationResult: ...
+
+    async def kick(self, command: KickRoomParticipant) -> RoomMutationResult: ...
 
 
 class DueRoomDisconnectSource(Protocol):

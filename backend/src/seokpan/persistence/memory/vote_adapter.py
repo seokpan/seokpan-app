@@ -8,8 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from seokpan.clock import MillisecondClock
 from seokpan.game.domain import Game, GameStatus
-from seokpan.persistence.memory.session_adapter import ManualClock
 from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS, RoomRuntimeSnapshot
 from seokpan.room.domain import RoomStatus
 from seokpan.vote.application import (
@@ -62,7 +62,7 @@ class InMemoryVoteRuntimeAdapter:
 
     def __init__(
         self,
-        clock: ManualClock,
+        clock: MillisecondClock,
         *,
         room_lookup: Callable[[str], Awaitable[RoomRuntimeSnapshot | None]] | None = None,
     ) -> None:
@@ -117,7 +117,10 @@ class InMemoryVoteRuntimeAdapter:
 
     async def participant_connected(self, room_id: str, participant_id: str) -> None:
         state = self._states.get(room_id)
-        if state is None:
+        if state is None or not any(
+            item.participant_id == participant_id and item.role.value == "PLAYER"
+            for item in state.game.participants
+        ):
             return
         before = state.game.participants
         state.game.reconnect(participant_id=participant_id)
@@ -126,7 +129,10 @@ class InMemoryVoteRuntimeAdapter:
 
     async def participant_disconnected(self, room_id: str, participant_id: str) -> bool:
         state = self._states.get(room_id)
-        if state is None:
+        if state is None or not any(
+            item.participant_id == participant_id and item.role.value == "PLAYER"
+            for item in state.game.participants
+        ):
             return False
         before = (state.game.participants, state.game.votes)
         votes_before = state.game.votes
@@ -298,6 +304,7 @@ class InMemoryVoteRuntimeAdapter:
             tally=tally,
             candidates=candidates,
             occupied_cells=state.game.game.occupied_cells,
+            last_move=state.game.game.moves[-1] if state.game.game.moves else None,
             resolver=state.resolver,
             valid_voter_count=state.valid_voter_count,
         )

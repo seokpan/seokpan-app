@@ -24,6 +24,55 @@ from .conftest import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": 1},
+        {"csrf_token": None},
+        {"csrf_token": "wrong"},
+    ],
+)
+async def test_incompatible_session_is_rejected_without_migration(
+    change: dict[str, object],
+) -> None:
+    class ChangedPayloadClient(EmulatedRedisClient):
+        async def get(self, key: str) -> bytes | None:
+            raw = await super().get(key)
+            assert raw is not None
+            data = VersionedJsonCodec.decode(raw)
+            data.update(change)
+            return VersionedJsonCodec.encode(data).encode()
+
+    client = ChangedPayloadClient(ManualClock())
+    adapter = RedisSessionAdapter(client)
+    await adapter.create(guest_command())
+    calls = len(client.evalsha_calls)
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        await adapter.get(digest("a"))
+    assert len(client.evalsha_calls) == calls
+
+
+def test_lua_fields_and_version_guards_precede_existing_session_mutations() -> None:
+    from seokpan.persistence.redis.session_scripts import (
+        RESTORE_SESSION,
+        ROTATE_SESSION,
+        TOUCH_SESSION,
+    )
+
+    assert CREATE_SESSION.version == 2
+    assert TOUCH_SESSION.version == ROTATE_SESSION.version == RESTORE_SESSION.version == 3
+    assert "csrf_token = csrf_token" in CREATE_SESSION.source
+    assert "csrf_token = csrf_token" in ROTATE_SESSION.source
+    assert "csrf_token = previous_csrf_token" in RESTORE_SESSION.source
+    for script, guard, write in (
+        (TOUCH_SESSION, "if not valid_session(session)", "session.last_activity_at_ms ="),
+        (ROTATE_SESSION, "if not valid_session(previous)", "redis.call('DEL', previous_key)"),
+        (RESTORE_SESSION, "if not valid_session(failed)", "redis.call('DEL', failed_key)"),
+    ):
+        assert script.source.index(guard) < script.source.index(write)
+
+
+@pytest.mark.asyncio
 async def test_redis_adapter_uses_official_key_family_and_declared_member_index(
     emulated_redis_client: EmulatedRedisClient,
 ) -> None:

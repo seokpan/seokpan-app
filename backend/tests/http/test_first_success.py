@@ -102,6 +102,9 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                     if p["participant_id"] == black_id
                 )
                 assert participant["team"] == "BLACK"
+                assert participant["connected"] is True
+                assert restored["payload"]["game"]["can_vote"] is True
+                assert restored["payload"]["game"]["my_vote"] is None
                 assert restored["payload"]["room"]["owner_id"] != black_id
                 game = black.get(f"/api/v1/games/{game_id}").json()
                 assert game["my_vote"] is None and game["vote_aggregation"] == []
@@ -146,6 +149,17 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                         game = black.get(f"/api/v1/games/{game_id}").json()
                         assert game["turn_no"] == turn + 1
                         assert game["move_no"] == turn - 1
+                        assert game["last_move"] == (
+                            None
+                            if turn == 1
+                            else {"move_no": 1, "team": "WHITE", "coordinate": "O15"}
+                        )
+                    if turn == 4:
+                        assert black.get(f"/api/v1/games/{game_id}").json()["last_move"] == {
+                            "move_no": 2,
+                            "team": "BLACK",
+                            "coordinate": "A1",
+                        }
                 versions = [e["state_version"] for e in all_events]
                 assert versions == sorted(set(versions))
                 assert [e["event_type"] for e in all_events].count("game.finished") == 1
@@ -220,6 +234,12 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                     assert repeated_start.json()["replayed"] is True
                     assert fresh["game_id"] != game_id and fresh["game_status"] == "ACTIVE"
                     assert fresh["move_no"] == 0 and fresh["turn_no"] == 1 and fresh["board"] == []
+                    assert fresh["last_move"] is None
+                    assert black_result["last_move"] == {
+                        "move_no": 6,
+                        "team": "BLACK",
+                        "coordinate": "E1",
+                    }
                     assert fresh["vote_aggregation"] == []
                     assert black.get(f"/api/v1/games/{game_id}/result").json() == black_result
                     assert black.portal.call(persistence.load_game, game_id) == history

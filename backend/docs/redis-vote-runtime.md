@@ -29,13 +29,24 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 - Game/Vote `state_version`은 `room:{room_id}:game`에 보관하며 Room Meta의 `state_version`과 서로 독립적으로 증가한다.
 - 단절·퇴장은 Room Lua가 같은 Vote·Tally Key에서 마감 전 표와 집계를 함께 제거한다.
 - 단절·퇴장으로 PLAYER 연결 상태나 Vote가 바뀌면 Room Lua가 Game/Vote Version도 같은 실행에서 한 번 증가시킨다.
-- 이 연동의 Room Mutation Script는 v7, Vote Mutation·Read Script는 v4이며 관련 Key를 같은 Room Hash Slot에서 갱신한다.
+- 이 연동의 Room Mutation Script는 v8, Vote Mutation·Read Script는 v5이며 관련 Key를 같은 Room Hash Slot에서 갱신한다. Room v8의 WAITING 강퇴는 Game/Vote를 변경하지 않는다.
 - 마감은 Redis 서버 시각을 기준으로 Vote를 고정하고 한 번만 `RESOLVING` 또는 Pass로 전이한다.
 - 첫 0표 Pass는 `turn_no`와 연속 Pass 횟수만 진행하고 `move_no`를 유지한다. 두 번째 연속 0표는 `JOINT_LOSS` 후보로 `RESOLVING`에 머물며, 공식 Result 저장이 확인된 뒤에만 Redis 종료 상태로 반영한다.
-- 두 번째 0표의 대기 상태와 마감 시점 유효 투표자 수를 보존하는 Vote Runtime Schema는 v2다. 데이터 Schema 번호와 Lua Script 번호는 별도로 관리한다.
+- Vote Runtime Schema는 v3다. v2의 두 번째 0표 대기 상태·마감 시점 유효 투표자 수를 유지하며, 마지막 공식 착수 `last_move`를 추가한다. 데이터 Schema 번호와 Lua Script 번호는 별도로 관리한다.
 - 공식 Move가 확정되면 연속 Pass 횟수를 0으로 초기화한다.
 
 ## Resolver와 장애 수렴
+
+### 마지막 공식 착수 표시
+
+- Game JSON의 `last_move`는 `move_no`, `team`, `coordinate`를 가진 객체다. 새 Game은 null이다.
+- 저장이 확인된 `ApplyRuntimeResolution`에서 Board/Move 번호와 함께 갱신한다. 투표 등록·교체·취소·단절·Pass에는 바꾸지 않는다. 중복 요청은 기존 결과를 재사용한다.
+- 읽기/변경 응답 모두 같은 값을 제공한다. Adapter는 마지막 Move 번호와 Board의 좌표·돌 색을 대조하며 불일치를 `REDIS_RESPONSE_INVALID`로 거부한다. 좌표순 Board 배열에서 마지막 돌을 추정하지 않는다.
+- v2 자료·이전 버전 요청 캐시는 v3 성공 응답으로 사용하지 않는다. 조회/변경/초기화 경계에서 `VOTE_SCHEMA_VERSION_MISMATCH`로 차단하며 자동 변환·삭제하지 않는다. Room 코드의 참가자 연결/Version 갱신은 기존 Game JSON의 다른 필드를 보존한다.
+- 현재 로컬 구현/시험 단계다. A-10 적용 전 진행 중 Game·구버전 프로세스·요청 캐시 존재 여부와 보존/전환 절차를 확인해야 한다. 구·신 Vote 코드 혼용은 허용하지 않는다. 본 변경은 실제 Redis 전환 승인이나 수행 기록이 아니다.
+- Memory와 Redis 호출 에뮬레이터의 규격 시험, Lua 정적 검사까지 구분해 기록한다. 실제 Redis Lua·동시성·장애 복구 검증은 별도다.
+
+### Resolver 처리
 
 - 마감 결과에 후보가 있으면 `resolution_id`로 5초 Resolver Lease를 획득한다.
 - Lease 보유자는 제한적으로 갱신할 수 있고, 만료 뒤 다른 Backend가 새 `resolution_id`로 인계받을 수 있다.

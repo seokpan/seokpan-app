@@ -80,7 +80,7 @@ Guest는 RatingHistory가 없으며 Member는 해당 Game의 이력이 정확히
 종료 상태·저장 기록·종료 Turn 정보가 불완전하면 503을 반환한다.
 
 응답은 `game_id`, `room_id`, `turn_no`, `move_no`, `game_status`, `end_reason`, `winner`,
-`board`, `winning_line`, `ended_at`, `stats_eligible`, `my_rating`이다. 정상 승리 외에는
+`board`, `last_move`, `winning_line`, `ended_at`, `stats_eligible`, `my_rating`이다. 정상 승리 외에는
 `winning_line`이 null이다. `my_rating`은 해당 Game의 Member PLAYER 식별자와 현재 요청자
 식별자가 모두 맞을 때 `outcome`, `rating_before`, `rating_delta`, `rating_after`만 제공한다.
 Guest·해당 판 SPECTATOR에게는 null이며 다른 Member의 식별자·Rating은 공개하지 않는다.
@@ -92,6 +92,21 @@ HTTP/WebSocket·내부 Runner를 연결해 정상 승리·종료 재처리·결�
 이전 결과 보존을 검증한다. 종료 후 상태 재조회 안내도 진행 중 Game 주소가 아닌 Result 주소를 사용한다.
 
 ## Provider Gate
+
+### A-08 마지막 착수 조회 보완
+
+게임/결과 HTTP 응답 및 Room HTTP·WebSocket Snapshot의 Game에 `last_move`를 추가한다.
+값은 `{move_no, team, coordinate}`이며 착수 전에는 null이다. 진행 중에는 Vote Runtime에서,
+결과에서는 검증된 공식 Move 재생 결과의 마지막 Move에서 읽는다. 매 투표마다 DB 이력을
+추가 조회하지 않으며 MariaDB Table/Alembic Revision 변경도 없다.
+
+Pass는 마지막 착수와 Move 번호를 바꾸지 않는다. 새 Game은 null로 시작한다.
+Board는 좌표순 배열이므로 마지막 항목을 마지막 착수로 해석하지 않는다.
+Frontend는 좌표·돌 색·Move 번호를 검증한 뒤 표시한다. 필드를 제공하지 않는 이전
+시험 서버에서는 표시를 생략하며 추정하지 않는다. 이 임시 표시 호환성을 Redis v2/v3
+혼용 허용으로 해석하지 않는다([Vote 자료 전환 경계](redis-vote-runtime.md)).
+
+### 실제 Provider 검증
 
 현재 Test는 Fake/Scripted AsyncSession과 MySQL용 SQLAlchemy Model을 사용한다. SQLite
 성공을 MariaDB 호환 증거로 사용하지 않는다. 다음 항목이 확인되기 전에는 실제 DB 연결,

@@ -39,10 +39,33 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 - 이전 방장이 재접속해도 방장으로 자동 복귀하지 않는다.
 - 승계할 Member가 없으면 Room Runtime Key를 제거하고 10분 Tombstone을 남긴다.
 - WAITING 종료는 Game 기록을 만들지 않고, PLAYING 종료만 후속 흐름에 `SYSTEM_INVALID`를 전달한다.
-- Game Result 저장과 종료 Vote Runtime 반영 뒤에는 Room Mutation Script v7의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거, `last_game_id`·`last_game_turn_no` 보관과 모든 Ready 해제를 한 번에 반영한다.
+- Game Result 저장과 종료 Vote Runtime 반영 뒤에는 Room Mutation Script v8의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거, `last_game_id`·`last_game_turn_no` 보관과 모든 Ready 해제를 한 번에 반영한다.
 - Room 종료에는 뒤따를 공개 Snapshot이 없으므로 삭제 직전 `state_version`을 따로 증가시키지 않는다. Key 삭제·Tombstone 생성·`room_closed` 종료 결과를 한 원자 처리로 반환하며, 후속 HTTP/WebSocket 계층은 이 종료 결과로 Room 종료와 Lobby 이동을 알린다.
 
 단절·퇴장 명령은 현재 Turn 번호가 주어진 경우 해당 참가자의 마감 전 Vote와 집계를 같은 Hash Slot에서 함께 제거한다. 진행 중 PLAYER의 공개 연결 상태나 Vote가 바뀌면 Game/Vote JSON과 그 Resource Version도 같은 Lua 실행에서 한 번 갱신한다. Room Resource Version과 Game/Vote Resource Version은 별도로 유지하므로 Ready·설정처럼 Game과 무관한 Room 변경은 Game/Vote Version을 바꾸지 않는다.
+
+## 대기방 강퇴
+
+D01 20쪽의 대기방 강퇴는 `KickRoomParticipant(room_id, request_id, actor_id, target_id,
+expected_state_version)`로 처리한다. 현재 방장만 WAITING 상태에서 자신이 아닌 참가자를
+내보낼 수 있다. Member와 Guest 모두 대상이 될 수 있으며, 연결이 끊겨 재접속 유예 중인
+참가자도 포함한다. PLAYING에서는 강퇴하지 않는다.
+
+- Domain의 `Room.kick`과 Memory/Redis Adapter가 동일한 규칙을 검사한다. 방 상태 버전이
+  다르면 먼저 거절하므로 게임 시작·방장 승계 이전 화면의 명령으로 새 상태를 변경하지 않는다.
+- 대상의 참가자·Ready·Connection만 제거하고 방 상태 버전을 한 번 증가시킨다. 방장,
+  다른 참가자의 Ready, Game/Vote와 저장된 결과는 변경하지 않는다. Game 기록을 만들지 않는다.
+- 같은 요청은 기존 결과만 반환한다. 이후 새로운 참가 ID로 입장한 사람에게 과거 강퇴를
+  다시 적용하지 않는다. 방 참여 종료를 계정 정지·로그아웃·영구 입장 금지로 확대하지 않는다.
+- 강퇴 뒤 늦게 실행된 Disconnect/Expiry에는 `CONNECTION_NOT_FOUND`를 반환한다.
+  기존 만료 작업은 이를 이미 정리된 연결로 취급한다. 재접속 명령으로 참가자를 복원하지 않는다.
+- Room Mutation v7→v8이며 저장 자료는 Schema v3 그대로다. 새 필드·Key·Migration은 없다.
+  Script Cache miss 시 기존 로더로 정확한 v8 소스를 적재한다. 실제 Redis 변경은 수행하지 않았다.
+
+Domain·Runtime Adapter에서 [HTTP/Application](lobby-room-http.md)과
+[대상자 알림](lobby-room-websocket.md)까지 연결했다. Guest 로그인 전환과의 경합,
+대상 로그인 유지·로비 복귀, 기존 요청 재실행, 방장 연결 유지는 Headless/Fake로 검증한다.
+실제 Redis Session/Room 간 부분 실패·다중 Backend 검증은 별도이며 로컬 성공으로 대체하지 않는다.
 
 ## 멱등성과 오류
 

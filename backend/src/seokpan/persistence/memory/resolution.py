@@ -7,7 +7,9 @@ from seokpan.game.application import (
     TieSelectionRecord,
     TurnFinalizationApproval,
 )
-from seokpan.vote.application import VoteRuntimeSnapshot
+from seokpan.room.application.lobby import LobbyRoomRuntimePort
+from seokpan.room.domain import RoomStatus
+from seokpan.vote.application import VoteRuntimePort, VoteRuntimeSnapshot
 
 
 class InMemoryDueTurnSource:
@@ -17,6 +19,30 @@ class InMemoryDueTurnSource:
     async def due_turns(self, *, now_ms: int, limit: int) -> tuple[DueTurn, ...]:
         del now_ms
         return self.values[:limit]
+
+
+class MemoryRoomTurnSource:
+    """Development discovery only; no production Redis index or scheduling claim."""
+
+    def __init__(self, rooms: LobbyRoomRuntimePort, votes: VoteRuntimePort) -> None:
+        self._rooms = rooms
+        self._votes = votes
+
+    async def due_turns(self, *, now_ms: int, limit: int) -> tuple[DueTurn, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_DUE_TURN_LIMIT")
+        result = []
+        for room in await self._rooms.list_rooms():
+            if room.status is not RoomStatus.PLAYING or room.game_id is None:
+                continue
+            vote = await self._votes.get(room.room_id)
+            if vote is None or vote.game_id != room.game_id:
+                continue
+            if vote.deadline_ms is None or vote.deadline_ms <= now_ms:
+                result.append(DueTurn(room.room_id, vote.game_id, vote.turn_no))
+            if len(result) == limit:
+                break
+        return tuple(result)
 
 
 class InMemoryTurnFinalizationGate:

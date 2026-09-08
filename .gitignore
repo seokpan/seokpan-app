@@ -106,6 +106,9 @@ coverage/
 # Local tool caches
 .uv-cache/
 .npm-cache/
+.browser-cache/
+test-results/
+playwright-report/
 
 # ============================================================
 # OS Metadata

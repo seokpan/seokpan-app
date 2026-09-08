@@ -197,7 +197,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=7,
+    version=8,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -269,7 +269,12 @@ if operation == 'join' then
 end
 
 local current_participant = participant(payload.participant_id or payload.actor_id)
-if not current_participant then return rejection('PARTICIPANT_NOT_FOUND') end
+if not current_participant and operation ~= 'kick' then
+  if operation == 'disconnect' or operation == 'expire_disconnect' then
+    return rejection('CONNECTION_NOT_FOUND')
+  end
+  return rejection('PARTICIPANT_NOT_FOUND')
+end
 if operation ~= 'disconnect' and operation ~= 'expire_disconnect' then
   if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
 end
@@ -453,6 +458,24 @@ if operation == 'expire_disconnect' then
   local resolved = owner_departure(payload.participant_id, previous_owner_id)
   if not resolved.room_closed then advance_version() end
   return save({snapshot = snapshot(), vote_removed = vote_removed, departure = resolved})
+end
+
+if operation == 'kick' then
+  if redis.call('HGET', KEYS[1], 'status') ~= 'WAITING' then
+    return rejection('ROOM_NOT_WAITING')
+  end
+  local owner_id = redis.call('HGET', KEYS[1], 'owner_id')
+  if owner_id ~= payload.actor_id then return rejection('OWNER_REQUIRED') end
+  if payload.actor_id == payload.target_id then return rejection('CANNOT_KICK_SELF') end
+  if not participant(payload.target_id) then return rejection('PARTICIPANT_NOT_FOUND') end
+  redis.call('HDEL', KEYS[2], payload.target_id)
+  redis.call('SREM', KEYS[3], payload.target_id)
+  redis.call('HDEL', KEYS[4], payload.target_id)
+  advance_version()
+  return save({snapshot = snapshot(), departure = {
+    previous_owner_id = owner_id, new_owner_id = owner_id,
+    room_closed = false, game_termination = 'NONE'
+  }})
 end
 
 if operation == 'leave' then

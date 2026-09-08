@@ -105,6 +105,7 @@ local function snapshot(game)
     deadline_ms = game.deadline_ms,
     consecutive_passes = game.consecutive_passes,
     move_no = game.move_no,
+    last_move = game.last_move,
     game_status = game.game_status,
     end_reason = game.end_reason,
     valid_voter_count = game.valid_voter_count or cjson.null,
@@ -140,6 +141,10 @@ if operation == 'initialize' then
     return rejection('GAME_NOT_IN_CURRENT_ROOM')
   end
 end
+local existing = game_state()
+if existing and existing.schema_version ~= 3 then
+  return rejection('VOTE_SCHEMA_VERSION_MISMATCH')
+end
 local expired = redis.call('ZRANGEBYSCORE', KEYS[13], '-inf', time_ms())
 if #expired > 0 then
   redis.call('HDEL', KEYS[12], unpack(expired))
@@ -147,6 +152,9 @@ if #expired > 0 then
 end
 local cached = decode_or_nil(redis.call('HGET', KEYS[12], request_id))
 if cached then
+  if cached.result.snapshot.schema_version ~= 3 then
+    return rejection('VOTE_SCHEMA_VERSION_MISMATCH')
+  end
   if cached.fingerprint ~= payload.fingerprint then return rejection('REQUEST_ID_CONFLICT') end
   local current = game_state()
   if not current or current.game_id ~= cached.result.snapshot.game_id then
@@ -180,6 +188,7 @@ if operation == 'initialize' then
     deadline_ms = payload.deadline_ms,
     consecutive_passes = 0,
     move_no = 0,
+    last_move = cjson.null,
     game_status = 'ACTIVE',
     end_reason = cjson.null,
     valid_voter_count = cjson.null,
@@ -353,6 +362,7 @@ if operation == 'apply_resolution' then
     if redis.call('HEXISTS', KEYS[5], selected) == 1 then return rejection('POSITION_OCCUPIED') end
     redis.call('HSET', KEYS[5], selected, resolution.team)
     game.move_no = resolution.applied_move.move_no
+    game.last_move = resolution.applied_move
     game.consecutive_passes = 0
   else
     game.consecutive_passes = 2
@@ -382,13 +392,13 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=4,
+    version=5,
     source=_COMMON + _MUTATION,
 )
 
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",
-    version=4,
+    version=5,
     source=r"""
 local payload = cjson.decode(ARGV[1])
 local function sorted_hash(key)
@@ -403,6 +413,9 @@ end
 local raw_game = redis.call('GET', KEYS[3])
 if not raw_game then return cjson.encode({ok = true, error = cjson.null, snapshot = cjson.null}) end
 local game = cjson.decode(raw_game)
+if game.schema_version ~= 3 then
+  return cjson.encode({ok = false, error = 'VOTE_SCHEMA_VERSION_MISMATCH'})
+end
 if game.game_id ~= payload.game_id or game.turn_no ~= payload.turn_no then
   return cjson.encode({ok = false, error = 'REDIS_SNAPSHOT_CHANGED'})
 end
@@ -442,6 +455,7 @@ return cjson.encode({ok = true, error = cjson.null, snapshot = {
   deadline_ms = game.deadline_ms,
   consecutive_passes = game.consecutive_passes,
   move_no = game.move_no,
+  last_move = game.last_move,
   game_status = game.game_status,
   end_reason = game.end_reason,
   valid_voter_count = game.valid_voter_count or cjson.null,

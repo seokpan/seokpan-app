@@ -28,6 +28,8 @@ Production 값은 Linux Application Container에서 측정하기 전까지 정�
   Session Factory만 주입받는다.
 - `member` 한 Table만 조회·생성한다. `member_stats`는 첫 유효 Game Result Transaction에서
   `game_svc`가 생성한다.
+- 공개 랭킹·누적 전적은 별도 [Statistics 조회](member-statistics.md)가 Game 연결로
+  읽는다. 이 기능 때문에 Identity 계정의 Table 범위나 권한을 확대하지 않는다.
 - 가입 전 Login ID·닉네임 중복을 구분하고, 동시 삽입의 Unique 충돌도 재조회해 같은 오류로
   수렴한다.
 - Commit 결과가 불명확하면 같은 Login ID의 정확한 Member가 보이는 경우에만 성공으로
