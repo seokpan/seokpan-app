@@ -18,6 +18,10 @@
 //     curl / kustomize / jq 없음, non-root라 apk install도 불가.
 //
 // 미확정/미검증 항목은 하단 TODO 및 대화 내 질문 참고.
+//
+// [선행 조건] 이 Jenkinsfile은 buildkit-rootless PodTemplate에 'python', 'node' 컨테이너가
+// 추가되어 있어야 동작합니다(container('python'), container('node') 참조). 아직 추가 전이면
+// seokpan-gitops의 cicd/jenkins-jcasc-configmap.yaml에 먼저 반영 필요 - 별도 Issue/PR 권장.
 
 pipeline {
     agent {
@@ -58,17 +62,19 @@ pipeline {
             when { not { branch 'main' } }
             steps {
                 dir('backend') {
-                    sh 'uv lock --check'
-                    sh 'uv sync --locked'
-                    sh 'uv run ruff format --check .'
-                    sh 'uv run ruff check .'
-                    sh 'uv run mypy'
-                    sh 'uv run pytest'
+                    container('python') {
+                        sh 'uv lock --check'
+                        sh 'uv sync --locked'
+                        sh 'uv run ruff format --check .'
+                        sh 'uv run ruff check .'
+                        sh 'uv run mypy'
+                        sh 'uv run pytest'
 
-                    // TODO: Alembic Revision Chain / Model Import 정적 검증 명령 확정 필요.
-                    // 후보1) uv run pytest tests/persistence/test_migration_gate.py 로 이미 커버되는지 확인
-                    // 후보2) uv run alembic check (또는 유사 정적 검증 서브커맨드) 존재 여부 확인
-                    // 실제 DB에 연결하지 않는 정적 검증이어야 함 (PR 시점 DB Credential 사용 금지 원칙과 충돌 방지)
+                        // TODO: Alembic Revision Chain / Model Import 정적 검증 명령 확정 필요.
+                        // 후보1) uv run pytest tests/persistence/test_migration_gate.py 로 이미 커버되는지 확인
+                        // 후보2) uv run alembic check (또는 유사 정적 검증 서브커맨드) 존재 여부 확인
+                        // 실제 DB에 연결하지 않는 정적 검증이어야 함 (PR 시점 DB Credential 사용 금지 원칙과 충돌 방지)
+                    }
                 }
             }
         }
@@ -77,9 +83,11 @@ pipeline {
             when { not { branch 'main' } }
             steps {
                 dir('frontend') {
-                    sh 'npm ci'
-                    sh 'npm run typecheck'
-                    sh 'npm test'
+                    container('node') {
+                        sh 'npm ci'
+                        sh 'npm run typecheck'
+                        sh 'npm test'
+                    }
                 }
             }
         }
@@ -88,13 +96,15 @@ pipeline {
             when { not { branch 'main' } }
             steps {
                 dir('backend') {
-                    sh '''
-                        buildctl-daemonless.sh build \
-                          --frontend dockerfile.v0 \
-                          --local context=. \
-                          --local dockerfile=. \
-                          --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:pr-verify,push=false
-                    '''
+                    container('buildkit') {
+                        sh '''
+                            buildctl-daemonless.sh build \
+                              --frontend dockerfile.v0 \
+                              --local context=. \
+                              --local dockerfile=. \
+                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:pr-verify,push=false
+                        '''
+                    }
                 }
             }
         }
@@ -103,14 +113,18 @@ pipeline {
             when { not { branch 'main' } }
             steps {
                 dir('frontend') {
-                    sh 'npm run build'
-                    sh '''
-                        buildctl-daemonless.sh build \
-                          --frontend dockerfile.v0 \
-                          --local context=. \
-                          --local dockerfile=. \
-                          --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:pr-verify,push=false
-                    '''
+                    container('node') {
+                        sh 'npm run build'
+                    }
+                    container('buildkit') {
+                        sh '''
+                            buildctl-daemonless.sh build \
+                              --frontend dockerfile.v0 \
+                              --local context=. \
+                              --local dockerfile=. \
+                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:pr-verify,push=false
+                        '''
+                    }
                 }
             }
         }
@@ -159,24 +173,26 @@ pipeline {
             // 응답으로 재확인 부탁. 아직 Push 전이므로 조회 결과 404(Not Found)가 정상 케이스.
             when { branch 'main' }
             steps {
-                script {
-                    ['backend', 'frontend'].each { svc ->
-                        sh """
-                            AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                              | grep '"auth"' \\
-                              | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                container('buildkit') {
+                    script {
+                        ['backend', 'frontend'].each { svc ->
+                            sh """
+                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                  | grep '"auth"' \\
+                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                            HTTP_STATUS=\$(wget -q -O /tmp/${svc}-final.json --server-response \\
-                              --header="Authorization: Basic \${AUTH_B64}" \\
-                              "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
-                              2>&1 | awk '/^  HTTP/{print \$2}' | tail -1)
+                                HTTP_STATUS=\$(wget -q -O /tmp/${svc}-final.json --server-response \\
+                                  --header="Authorization: Basic \${AUTH_B64}" \\
+                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
+                                  2>&1 | awk '/^  HTTP/{print \$2}' | tail -1)
 
-                            echo "${svc} final tag 조회 HTTP status: \${HTTP_STATUS}"
-                            if [ "\${HTTP_STATUS}" = "200" ]; then
-                              echo "이미 존재하는 Tag(\${FINAL_TAG})입니다. 동일 Tag 재Push는 금지되어 있습니다."
-                              exit 1
-                            fi
-                        """
+                                echo "${svc} final tag 조회 HTTP status: \${HTTP_STATUS}"
+                                if [ "\${HTTP_STATUS}" = "200" ]; then
+                                  echo "이미 존재하는 Tag(\${FINAL_TAG})입니다. 동일 Tag 재Push는 금지되어 있습니다."
+                                  exit 1
+                                fi
+                            """
+                        }
                     }
                 }
             }
@@ -188,18 +204,20 @@ pipeline {
             // 아래 'SBOM / Provenance / Scan' Stage에 실제 명령을 채워 넣을 것.
             when { branch 'main' }
             steps {
-                sh '''
-                    echo "--- which 결과 ---"
-                    which syft   || echo "syft not found"
-                    which trivy  || echo "trivy not found"
-                    which grype  || echo "grype not found"
-                    which cosign || echo "cosign not found"
-                    echo "--- 버전(있는 경우) ---"
-                    syft version   2>&1 || true
-                    trivy --version 2>&1 || true
-                    grype version  2>&1 || true
-                    cosign version 2>&1 || true
-                '''
+                container('buildkit') {
+                    sh '''
+                        echo "--- which 결과 ---"
+                        which syft   || echo "syft not found"
+                        which trivy  || echo "trivy not found"
+                        which grype  || echo "grype not found"
+                        which cosign || echo "cosign not found"
+                        echo "--- 버전(있는 경우) ---"
+                        syft version   2>&1 || true
+                        trivy --version 2>&1 || true
+                        grype version  2>&1 || true
+                        cosign version 2>&1 || true
+                    '''
+                }
             }
         }
 
@@ -207,13 +225,15 @@ pipeline {
             when { branch 'main' }
             steps {
                 dir('backend') {
-                    sh '''
-                        buildctl-daemonless.sh build \
-                          --frontend dockerfile.v0 \
-                          --local context=. \
-                          --local dockerfile=. \
-                          --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:${CANDIDATE_TAG},push=true
-                    '''
+                    container('buildkit') {
+                        sh '''
+                            buildctl-daemonless.sh build \
+                              --frontend dockerfile.v0 \
+                              --local context=. \
+                              --local dockerfile=. \
+                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/backend:${CANDIDATE_TAG},push=true
+                        '''
+                    }
                 }
             }
         }
@@ -222,13 +242,15 @@ pipeline {
             when { branch 'main' }
             steps {
                 dir('frontend') {
-                    sh '''
-                        buildctl-daemonless.sh build \
-                          --frontend dockerfile.v0 \
-                          --local context=. \
-                          --local dockerfile=. \
-                          --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:${CANDIDATE_TAG},push=true
-                    '''
+                    container('buildkit') {
+                        sh '''
+                            buildctl-daemonless.sh build \
+                              --frontend dockerfile.v0 \
+                              --local context=. \
+                              --local dockerfile=. \
+                              --output type=image,name=${REGISTRY_HOST}/${HARBOR_PROJECT}/frontend:${CANDIDATE_TAG},push=true
+                        '''
+                    }
                 }
             }
         }
@@ -254,19 +276,21 @@ pipeline {
             // 동일한 아티팩트에 최종 태그를 추가 -> 최종 이미지 Digest = 후보 태그 Digest.
             when { branch 'main' }
             steps {
-                script {
-                    ['backend', 'frontend'].each { svc ->
-                        sh """
-                            AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                              | grep '"auth"' \\
-                              | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                container('buildkit') {
+                    script {
+                        ['backend', 'frontend'].each { svc ->
+                            sh """
+                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                  | grep '"auth"' \\
+                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                            wget -q -O - --method=POST \\
-                              --header="Authorization: Basic \${AUTH_B64}" \\
-                              --header="Content-Type: application/json" \\
-                              --body-data="{\\"name\\":\\"\${FINAL_TAG}\\"}" \\
-                              "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${CANDIDATE_TAG}/tags"
-                        """
+                                wget -q -O - --method=POST \\
+                                  --header="Authorization: Basic \${AUTH_B64}" \\
+                                  --header="Content-Type: application/json" \\
+                                  --body-data="{\\"name\\":\\"\${FINAL_TAG}\\"}" \\
+                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${CANDIDATE_TAG}/tags"
+                            """
+                        }
                     }
                 }
                 // TODO: BusyBox wget이 --method=POST/--body-data 조합을 지원하는지 실제 확인
@@ -279,18 +303,20 @@ pipeline {
             // 최종 태그의 Digest를 재조회해서 확인.
             when { branch 'main' }
             steps {
-                script {
-                    ['backend', 'frontend'].each { svc ->
-                        sh """
-                            AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
-                              | grep '"auth"' \\
-                              | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
+                container('buildkit') {
+                    script {
+                        ['backend', 'frontend'].each { svc ->
+                            sh """
+                                AUTH_B64=\$(grep -A2 "\${REGISTRY_HOST}" \${DOCKER_CONFIG}/config.json \\
+                                  | grep '"auth"' \\
+                                  | sed -E 's/.*"auth"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/')
 
-                            wget -q -O - \\
-                              --header="Authorization: Basic \${AUTH_B64}" \\
-                              "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
-                              | grep -o '"digest"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1
-                        """
+                                wget -q -O - \\
+                                  --header="Authorization: Basic \${AUTH_B64}" \\
+                                  "https://\${REGISTRY_HOST}/api/v2.0/projects/\${HARBOR_PROJECT}/repositories/${svc}/artifacts/\${FINAL_TAG}" \\
+                                  | grep -o '"digest"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1
+                            """
+                        }
                     }
                 }
             }
