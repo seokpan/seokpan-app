@@ -67,6 +67,14 @@ class VoteTallyResponse(BaseModel):
     count: int
 
 
+class LastMoveResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    move_no: int = Field(ge=1, le=225)
+    team: Stone
+    coordinate: str
+
+
 class PersonalRatingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -87,6 +95,7 @@ class GameResultResponse(BaseModel):
     end_reason: EndReason
     winner: Stone
     board: list[BoardCellResponse]
+    last_move: LastMoveResponse | None = None
     winning_line: list[str] | None
     ended_at: datetime
     stats_eligible: bool
@@ -104,8 +113,10 @@ class GameSnapshotResponse(BaseModel):
     move_no: int
     current_team: Stone | None
     deadline_ms: int | None
+    server_now_ms: int
     state_version: int
     board: list[BoardCellResponse]
+    last_move: LastMoveResponse | None = None
     forbidden_for_black: list[str]
     participants: list[GameParticipantResponse]
     vote_aggregation: list[VoteTallyResponse]
@@ -238,6 +249,13 @@ def game_result_response(snapshot: GameResultSnapshot) -> GameResultResponse:
         room_id=stored.room_id,
         turn_no=snapshot.turn_no,
         move_no=board.move_no,
+        last_move=None
+        if board.last_move is None
+        else LastMoveResponse(
+            move_no=board.last_move.move_no,
+            team=board.last_move.team,
+            coordinate=board.last_move.coordinate.canonical,
+        ),
         game_status=stored.status,
         end_reason=stored.end_reason,
         winner=stored.winner,
@@ -328,8 +346,16 @@ def game_snapshot_response(value: GameApplicationSnapshot) -> GameSnapshotRespon
         turn_status=runtime.turn_status if active else None,
         turn_no=runtime.turn_no,
         move_no=runtime.move_no,
+        last_move=None
+        if runtime.last_move is None
+        else LastMoveResponse(
+            move_no=runtime.last_move.move_no,
+            team=runtime.last_move.team,
+            coordinate=runtime.last_move.coordinate.canonical,
+        ),
         current_team=runtime.current_team if active else None,
         deadline_ms=runtime.deadline_ms if active else None,
+        server_now_ms=value.now_ms,
         state_version=runtime.state_version,
         board=[
             BoardCellResponse(coordinate=item.coordinate.canonical, stone=item.stone)

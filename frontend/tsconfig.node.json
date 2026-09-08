@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
     "composite": true,
     "skipLibCheck": true,
     "module": "ESNext",
@@ -8,5 +11,5 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite*.config.ts", "playwright*.config.ts", "e2e/**/*.ts"]
 }

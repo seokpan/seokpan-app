@@ -37,6 +37,14 @@ Guest 발급 또는 Member 가입·로그인
 
 ANALYSIS Runtime은 MVP 밖이다. 채팅, 랭킹, 고급 UI는 First Success의 선행조건이 아니다. 포함 시에도 핵심 Game 진행을 막거나 MariaDB에 영구 채팅 이력을 추가하지 않는다.
 
+위 First Success 설명은 A-07 Headless 기준이다. A-08 화면 인수 범위는
+[App #56](https://github.com/seokpan/seokpan-app/issues/56)의 범위 보완에 따라 로비/방 채팅,
+공개 랭킹·Member 내 전적, 사용자별 접속자 표시, 대기방 강퇴, 게임 방법·사용자 메뉴를 포함한다.
+원문의 Should 분류를 화면 기능 누락의 근거로 사용하지 않는다. AI는 정적 미제공 안내만 두며
+분석 실행·공개 복기·영구 채팅 이력은 추가하지 않는다. 공용 문서의 범위·인증 복구·채팅·
+접속자 상세 기록은 별도 변경으로 반영하며, 이 로컬 구현 기록을 공용 반영 완료로 간주하지 않는다.
+세부 규격은 아래 API 및 기능별 문서를 따른다.
+
 ## 3. Application 구조와 실행 경계
 
 - Backend는 하나의 FastAPI 배포 단위를 사용하는 Modular Monolith다.
@@ -93,20 +101,40 @@ Member만 Room을 생성하고 방장이 될 수 있다. Guest와 Member는 공�
 | Session | `POST /api/v1/sessions/guest` | Guest Session 발급 |
 | Member | `POST /api/v1/members` | 회원가입 |
 | Session | `POST /api/v1/sessions/member` | Member 로그인과 Session 회전 |
-| Session | `GET /api/v1/session` | 현재 신원·CSRF·참가 상태 조회 |
+| Session | `GET /api/v1/session` | 현재 신원·참가 상태 조회. CSRF는 포함하지 않음 |
+| Session | `POST /api/v1/session/csrf` | 유효 Cookie의 현재 신원·같은 CSRF 복구 |
 | Session | `DELETE /api/v1/session` | 로그아웃 |
 | Lobby | `GET /api/v1/rooms` | 입장 가능한 Room 목록 조회 |
+| Lobby | `GET /api/v1/lobby/snapshot` | Room 목록과 현재 Stream Version을 함께 조회 |
 | Room | `POST /api/v1/rooms` | Member의 Room 생성 |
 | Room | `GET /api/v1/rooms/{room_id}/snapshot` | Room 권위 Snapshot 조회 |
+| Room | `GET /api/v1/rooms/{room_id}/state` | 현재 참가자의 Room·Game과 Stream Version을 함께 조회 |
 | Room | `POST /api/v1/rooms/{room_id}/joins` | 조건 검사 후 입장 |
 | Room | `DELETE /api/v1/rooms/{room_id}/participants/me` | 명시적 이탈 |
+| Room | `POST /api/v1/rooms/{room_id}/participants/{participant_id}/kick` | WAITING 방장의 대상 참가자 강퇴 |
 | Room | `PATCH /api/v1/rooms/{room_id}/settings` | 방장 설정 변경 |
 | Room | `PUT /api/v1/rooms/{room_id}/participants/me/team` | 팀 변경 |
 | Room | `PUT /api/v1/rooms/{room_id}/participants/me/ready` | Ready 변경 |
 | Game | `POST /api/v1/rooms/{room_id}/games` | 시작 조건 검사 후 Game 시작 |
-| Game | `GET /api/v1/games/{game_id}` | 영속·복구 가능한 Game 조회 |
+| Game | `GET /api/v1/games/{game_id}` | 현재 참가 중인 방의 Game 상태 조회 |
+| Game | `GET /api/v1/games/{game_id}/result` | 현재 방의 완료 결과·보드 및 본인의 Rating 조회 |
 | Vote | `PUT /api/v1/games/{game_id}/turns/{turn_no}/vote` | 마지막 유효표 생성·교체 |
 | Vote | `DELETE /api/v1/games/{game_id}/turns/{turn_no}/vote` | 현재 표 삭제 |
+| Chat | `POST /api/v1/chat/lobby` | 현재 로비 범위 메시지 전송 |
+| Chat | `POST /api/v1/chat/rooms/{room_id}` | 현재 참가 중인 방 메시지 전송 |
+| Statistics | `GET /api/v1/rankings` | 공개 누적 랭킹·요청 Member 본인 전적 조회 |
+
+채팅 수신 `/ws/v1/chat/lobby`·`/ws/v1/chat/rooms/{room_id}`는 비영속 전달이며
+Room/Game Snapshot·state_version 복구 대상으로 취급하지 않는다. 접속자 수는
+`/ws/v1/presence`에서 사용자별 중복을 제거해 전달한다. 이 전용 연결의 접속 확인 ping/pong은
+기존 Lobby/Room 수신 전용 상태 WS와 별개이며 인증 idle TTL·Ready·투표·게임 결과를 바꾸지 않는다.
+상세 권한/실패 처리는 [채팅](../backend/docs/chat-delivery.md), [접속자](../backend/docs/presence.md),
+[랭킹](../backend/docs/member-statistics.md)을 따른다. 채팅·접속자의 실제 Redis 구현·다중 Replica 연결과
+랭킹 MariaDB 실제 실행은 A-10 후속이며 현재 Memory 시험 성공으로 대체하지 않는다.
+
+CSRF 복구는 정확한 허용 Origin, `X-CSRF-Bootstrap: 1`, JSON 요청을 요구하며 Referer만으로 허용하지 않는다. 같은 세션의 CSRF를 반환할 뿐 Session ID·Idle/Absolute 만료·참가 상태를 바꾸지 않는다. 응답은 `Cache-Control: no-store`이고 일반 변경 API의 CSRF 검사는 유지한다. Frontend는 Token을 메모리에만 두고 실패한 명령을 자동 재전송하지 않는다. 구형 Session 자료 전환은 실제 배포 전 별도로 검토하며 자동 변환·삭제하지 않는다.
+
+복구 조회는 기존 Room Socket을 끊거나 새 참가를 만들지 않는다. `stream_version`과 Room/Game의 변경 검사 Version은 서로 바꿔 쓰지 않는다. 일관된 상태를 읽지 못하면 성공 응답을 조립하지 않고 일시 오류를 반환한다. Game의 `deadline_ms`·`server_now_ms`는 남은 시간 표시용이며 Browser가 마감·착수·결과를 확정하지 않는다. 상세 호출·복구와 검증은 [Frontend 안내](../frontend/docs/api-and-session.md)를 따른다.
 
 중복 부작용이 가능한 명령은 UUIDv4 `request_id`로 수렴한다. 경합 가능한 변경은 `expected_state_version`을 검사한다. `X-Request-ID`는 Log 추적용이며 Domain 멱등 키로 사용하지 않는다.
 

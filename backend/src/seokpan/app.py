@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 
+from seokpan.api.chat import ChatApiServices, chat_router
 from seokpan.api.game import GameApiServices, game_router
 from seokpan.api.identity import IdentityApiServices, identity_router
+from seokpan.api.presence import PresenceApiServices, presence_router
 from seokpan.api.problems import install_problem_handlers
 from seokpan.api.realtime import (
     ActiveWebSocketRegistry,
@@ -13,7 +15,10 @@ from seokpan.api.realtime import (
     realtime_router,
 )
 from seokpan.api.room import RoomApiServices, room_router
+from seokpan.api.statistics import StatisticsApiServices, statistics_router
+from seokpan.clock import MillisecondClock
 from seokpan.game.application import GameApplicationService, TurnResolutionRunner
+from seokpan.game.application.resolution import DueTurnSource, TieSelector
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
     AuthSessionService,
@@ -33,6 +38,10 @@ from seokpan.persistence.memory import (
     InMemoryVoteRuntimeAdapter,
     ManualClock,
 )
+from seokpan.persistence.memory.chat_adapter import InMemoryChatAdapter
+from seokpan.persistence.memory.presence_adapter import InMemoryPresenceAdapter
+from seokpan.persistence.memory.resolution import MemoryRoomTurnSource
+from seokpan.persistence.memory.statistics_adapter import InMemoryStatisticsAdapter
 from seokpan.room.application import (
     DisconnectExpiryRunner,
     RealtimeEventPort,
@@ -58,12 +67,18 @@ class ApplicationServices:
     headless_clock: ManualClock | None = None
     turn_resolution: TurnResolutionRunner | None = None
     headless_due_turns: InMemoryDueTurnSource | None = None
+    statistics_api: StatisticsApiServices | None = None
+    chat_api: ChatApiServices | None = None
+    presence_api: PresenceApiServices | None = None
 
 
 def build_headless_services(
     settings: Settings,
     *,
     realtime_events: RealtimeEventPort | None = None,
+    clock: MillisecondClock | None = None,
+    discover_turns: bool = False,
+    tie_selector: TieSelector | None = None,
 ) -> ApplicationServices:
     if settings.environment == "production":
         raise RuntimeError("Production provider configuration is required")
@@ -72,12 +87,13 @@ def build_headless_services(
     )
     dummy_hash = password_hasher.hash(SecretsTokenSource().issue())
     member_ratings: dict[int, int] = {}
+    member_store = InMemoryIdentityAdapter(member_ratings=member_ratings)
     members = MemberIdentityService(
-        InMemoryIdentityAdapter(member_ratings=member_ratings),
+        member_store,
         password_hasher,
         dummy_password_hash=dummy_hash,
     )
-    clock = ManualClock()
+    clock = clock or ManualClock()
     events = realtime_events or InMemoryRealtimeEventAdapter()
     votes = InMemoryVoteRuntimeAdapter(clock, room_lookup=lambda room_id: room_runtime.get(room_id))
     room_runtime = InMemoryRoomRuntimeAdapter(clock, vote_connections=votes)
@@ -105,11 +121,13 @@ def build_headless_services(
     game_api = GameApiServices(identity_api, game_service)
     connections = RoomConnectionCoordinator(rooms=room_service, votes=votes, clock=clock)
     registry = ActiveWebSocketRegistry()
-    due_turns = InMemoryDueTurnSource()
+    due_turns: DueTurnSource = (
+        MemoryRoomTurnSource(room_runtime, votes) if discover_turns else InMemoryDueTurnSource()
+    )
     turn_resolution = TurnResolutionRunner(
         due_turns=due_turns,
         finalization_gate=InMemoryTurnFinalizationGate(),
-        tie_selector=InMemoryTieSelector(),
+        tie_selector=tie_selector or InMemoryTieSelector(),
         tie_audit=InMemoryTieSelectionAudit(),
         votes=votes,
         games=games,
@@ -128,9 +146,16 @@ def build_headless_services(
             connections=connections,
             clock=clock,
         ),
-        clock,
+        clock if isinstance(clock, ManualClock) else None,
         turn_resolution,
-        due_turns,
+        due_turns if isinstance(due_turns, InMemoryDueTurnSource) else None,
+        StatisticsApiServices(identity_api, InMemoryStatisticsAdapter(member_store, games)),
+        ChatApiServices(identity_api, room_service, InMemoryChatAdapter(), registry),
+        PresenceApiServices(
+            identity_api,
+            InMemoryPresenceAdapter(lease_seconds=15, max_connections=1000),
+            registry,
+        ),
     )
 
 
@@ -171,8 +196,14 @@ def create_app(
         application.include_router(room_router(resolved_services.room_api))
     if resolved_services.game_api is not None:
         application.include_router(game_router(resolved_services.game_api))
+    if resolved_services.statistics_api is not None:
+        application.include_router(statistics_router(resolved_services.statistics_api))
     if resolved_services.realtime_api is not None:
         application.include_router(realtime_router(resolved_services.realtime_api))
+    if resolved_services.chat_api is not None:
+        application.include_router(chat_router(resolved_services.chat_api))
+    if resolved_services.presence_api is not None:
+        application.include_router(presence_router(resolved_services.presence_api))
     application.state.services = resolved_services
     return application
 

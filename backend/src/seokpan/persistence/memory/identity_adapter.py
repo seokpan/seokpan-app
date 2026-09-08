@@ -10,6 +10,7 @@ from seokpan.identity.application import (
     StoredMember,
 )
 from seokpan.identity.domain import Member
+from seokpan.statistics import MemberStatistics
 
 
 class InMemoryIdentityAdapter:
@@ -55,6 +56,16 @@ class InMemoryIdentityAdapter:
 
     async def find_by_member_id(self, member_id: int) -> StoredMember | None:
         return self._with_current_rating(self._by_member_id.get(member_id))
+
+    def public_statistics_members(self) -> tuple[MemberStatistics, ...]:
+        """Fake read projection: never pass login IDs or password hashes to rankings."""
+        rows: list[MemberStatistics] = []
+        for stored in self._by_member_id.values():
+            current = self._with_current_rating(stored)
+            assert current is not None
+            member = current.member
+            rows.append(MemberStatistics(member.member_id, member.nickname, member.rating))
+        return tuple(rows)
 
     def _with_current_rating(self, stored: StoredMember | None) -> StoredMember | None:
         if stored is None:

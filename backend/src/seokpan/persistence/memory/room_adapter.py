@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from seokpan.persistence.memory.session_adapter import ManualClock
+from seokpan.clock import MillisecondClock
 from seokpan.room.application.runtime import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
@@ -21,6 +21,7 @@ from seokpan.room.application.runtime import (
     DueRoomDisconnect,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
+    KickRoomParticipant,
     LeaveRoomRuntime,
     RoomConnection,
     RoomMutationResult,
@@ -75,7 +76,7 @@ class InMemoryRoomRuntimeAdapter:
 
     def __init__(
         self,
-        clock: ManualClock,
+        clock: MillisecondClock,
         vote_connections: _VoteConnectionMirror | None = None,
     ) -> None:
         self._clock = clock
@@ -406,6 +407,21 @@ class InMemoryRoomRuntimeAdapter:
                 snapshot=self._snapshot(command.room_id, state),
                 vote_removed=vote_removed,
                 departure=departure,
+            ),
+        )
+
+    async def kick(self, command: KickRoomParticipant) -> RoomMutationResult:
+        replay = self._replay(command)
+        if replay is not None:
+            return replay
+        state = self._require_room(command.room_id)
+        self._require_expected_version(state, command.expected_state_version)
+        departure = state.room.kick(actor_id=command.actor_id, target_id=command.target_id)
+        state.connections.pop(command.target_id, None)
+        return self._remember(
+            command,
+            RoomMutationResult(
+                snapshot=self._snapshot(command.room_id, state), departure=departure
             ),
         )
 

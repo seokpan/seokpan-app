@@ -95,6 +95,7 @@ class RoomSnapshotResponse(BaseModel):
     owner_id: str | None
     state_version: int
     participants: list[RoomParticipantResponse]
+    game_id: str | None = None
     last_game_id: str | None = None
     replayed: bool = False
 
@@ -110,6 +111,7 @@ class LobbyRoomResponse(BaseModel):
     max_participants: int
     minimum_ready: int
     vote_seconds: int
+    status: RoomStatus
     state_version: int
 
 
@@ -223,6 +225,33 @@ def room_router(services: RoomApiServices) -> APIRouter:
         )
         if result.snapshot is None:
             return None
+        return await room_snapshot_response(services, result.snapshot, result.replayed)
+
+    @router.post(
+        "/{room_id}/participants/{participant_id}/kick",
+        response_model=RoomSnapshotResponse,
+        responses=room_problem_responses(401, 403, 404, 409, 422, 503),
+    )
+    async def kick_participant(
+        room_id: str,
+        participant_id: str,
+        payload: VersionedMutationRequest,
+        request: Request,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+        csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+    ) -> RoomSnapshotResponse:
+        current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
+        _require_current_room(services.rooms, current, room_id)
+        result = await _stale_guard(
+            services,
+            room_id,
+            services.rooms.kick_participant(
+                session=current,
+                target_id=participant_id,
+                request_id=_uuid4(payload.request_id),
+                expected_state_version=payload.expected_state_version,
+            ),
+        )
         return await room_snapshot_response(services, result.snapshot, result.replayed)
 
     @router.patch(
@@ -394,6 +423,7 @@ async def room_snapshot_response(
         owner_id=snapshot.owner_id,
         state_version=snapshot.state_version,
         participants=participants,
+        game_id=snapshot.game_id,
         last_game_id=snapshot.last_game_id,
         replayed=replayed,
     )
@@ -409,5 +439,6 @@ def lobby_room_response(snapshot: RoomRuntimeSnapshot) -> LobbyRoomResponse:
         max_participants=snapshot.config.max_participants,
         minimum_ready=snapshot.config.minimum_ready,
         vote_seconds=snapshot.config.vote_seconds,
+        status=snapshot.status,
         state_version=snapshot.state_version,
     )

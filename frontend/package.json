@@ -6,9 +6,14 @@
   "packageManager": "npm@12.0.2",
   "scripts": {
     "dev": "vite",
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:check": "node scripts/generate-api.mjs --check",
+    "verify": "node scripts/verify.mjs",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "e2e:install": "node scripts/browser-e2e.mjs install",
+    "e2e": "node scripts/browser-e2e.mjs test"
   },
   "dependencies": {
     "react": "19.2.8",
@@ -16,8 +21,10 @@
     "react-router-dom": "7.18.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
+    "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.1",

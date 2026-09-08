@@ -8,19 +8,22 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import cast
+from typing import Annotated, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import anyio
+from fastapi import APIRouter, Cookie, Response, WebSocket, WebSocketDisconnect
 
-from seokpan.api.game import GameApiServices, game_snapshot_response
+from seokpan.api.game import GameApiServices
 from seokpan.api.identity import SESSION_COOKIE, IdentityApiServices, require_current_session
-from seokpan.api.problems import ApiProblem
-from seokpan.api.room import (
-    LobbyResponse,
-    RoomApiServices,
-    lobby_room_response,
-    room_snapshot_response,
+from seokpan.api.problems import ApiProblem, room_problem_responses
+from seokpan.api.room import LobbyResponse, RoomApiServices
+from seokpan.api.snapshots import LobbyRecoveryResponse, RoomRecoveryResponse, SnapshotReader
+from seokpan.api.stream_access import (
+    SESSION_CHECK_INTERVAL_SECONDS,
+    SESSION_CHECK_TIMEOUT_SECONDS,
+    StreamAccess,
+    StreamAccessState,
 )
 from seokpan.identity.application import SessionRecord
 from seokpan.room.application import (
@@ -47,6 +50,7 @@ class StreamEnd(StrEnum):
     REPLACED = "REPLACED"
     ROOM_ACCESS_ENDED = "ROOM_ACCESS_ENDED"
     SHUTDOWN = "SHUTDOWN"
+    SESSION_EXPIRED = "SESSION_EXPIRED"
 
 
 class ActiveWebSocketRegistry:
@@ -86,9 +90,45 @@ class ActiveWebSocketRegistry:
     async def wait_for_shutdown(self) -> None:
         await self._shutdown.wait()
 
+    def connection_generation(self, room_id: str, participant_id: str) -> int | None:
+        current = self._active.get((room_id, participant_id))
+        return None if current is None else current[0]
+
+    @property
+    def shutting_down(self) -> bool:
+        return self._shutdown.is_set()
+
 
 def realtime_router(services: RealtimeApiServices) -> APIRouter:
     router = APIRouter(tags=["realtime"])
+    snapshots = SnapshotReader(services.rooms, services.games, services.events)
+
+    @router.get(
+        "/api/v1/lobby/snapshot",
+        response_model=LobbyRecoveryResponse,
+        responses=room_problem_responses(401, 503),
+    )
+    async def lobby_recovery(
+        response: Response,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    ) -> LobbyRecoveryResponse:
+        await require_current_session(services.identity, session_cookie, touch=True)
+        response.headers["Cache-Control"] = "no-store"
+        return await snapshots.lobby()
+
+    @router.get(
+        "/api/v1/rooms/{room_id}/state",
+        response_model=RoomRecoveryResponse,
+        responses=room_problem_responses(401, 403, 404, 503),
+    )
+    async def room_recovery(
+        room_id: str,
+        response: Response,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    ) -> RoomRecoveryResponse:
+        current = await require_current_session(services.identity, session_cookie, touch=True)
+        response.headers["Cache-Control"] = "no-store"
+        return await snapshots.room(current, room_id)
 
     @router.websocket("/ws/v1/lobby")
     async def lobby_socket(websocket: WebSocket) -> None:
@@ -98,11 +138,12 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         subscription: RealtimeSubscription | None = None
         try:
             subscription = await services.events.subscribe_lobby()
-            snapshot_version = services.events.lobby_version
-            snapshots = await services.rooms.rooms.list_rooms()
-            payload = LobbyResponse(
-                rooms=[lobby_room_response(item) for item in snapshots]
-            ).model_dump(mode="json")
+            snapshot = await snapshots.lobby()
+            snapshot_version = snapshot.stream_version
+            payload = LobbyResponse(rooms=snapshot.rooms).model_dump(mode="json")
+            access = StreamAccess(services.identity, current)
+            if await _check_access(websocket, access) is not None:
+                return
             await websocket.accept()
             await websocket.send_json(
                 _snapshot_envelope(
@@ -111,7 +152,13 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                     payload,
                 )
             )
-            await _stream_events(websocket, subscription, services.registry)
+            await _stream_events(
+                websocket,
+                subscription,
+                services.registry,
+                access=access,
+                snapshot_version=snapshot_version,
+            )
         except WebSocketDisconnect:
             return
         except Exception:
@@ -140,29 +187,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         end = StreamEnd.SHUTDOWN
         try:
             subscription = await services.events.subscribe_room(room_id)
-            snapshot_version = services.events.room_version(room_id)
-            room = await services.rooms.rooms.get(room_id)
-            if room is None:
-                raise RoomRuleViolation("ROOM_NOT_FOUND")
-            room_payload = await room_snapshot_response(services.rooms, room)
-            game_payload = None
-            if room.game_id is not None and services.games is not None:
-                game_payload = game_snapshot_response(
-                    await services.games.games.get_game(session=current, game_id=room.game_id)
-                ).model_dump(mode="json")
             await websocket.accept()
-            await websocket.send_json(
-                _snapshot_envelope(
-                    "room.snapshot",
-                    snapshot_version,
-                    {
-                        "room": room_payload.model_dump(mode="json"),
-                        "game": game_payload,
-                    },
-                    room_id=room_id,
-                    game_id=room.game_id,
-                )
-            )
             generation, _connected_state_version = await services.connections.connect(
                 session=current,
                 room_id=room_id,
@@ -173,14 +198,51 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 generation,
             )
             established = True
+            snapshot = await snapshots.room(current, room_id)
+            snapshot_version = snapshot.stream_version
+            access = StreamAccess(
+                services.identity,
+                current,
+                rooms=services.rooms.rooms,
+                room_id=room_id,
+                participant_id=participation.participant_id,
+            )
+            access_state = await access.check()
+            if services.registry.shutting_down:
+                await _safe_close(websocket, 1012)
+                return
+            if replaced.is_set():
+                end = StreamEnd.REPLACED
+                await _safe_close(websocket, 4001)
+                return
+            access_end = await _end_access(websocket, access_state)
+            if access_end is not None:
+                end = access_end
+                return
+            await websocket.send_json(
+                _snapshot_envelope(
+                    "room.snapshot",
+                    snapshot_version,
+                    {
+                        "room": snapshot.room.model_dump(mode="json"),
+                        "game": (
+                            None if snapshot.game is None else snapshot.game.model_dump(mode="json")
+                        ),
+                    },
+                    room_id=room_id,
+                    game_id=snapshot.room.game_id,
+                )
+            )
             end = await _stream_events(
                 websocket,
                 subscription,
                 services.registry,
+                access=access,
                 replaced=replaced,
                 room_id=room_id,
                 participant_id=participation.participant_id,
                 state_version=lambda: services.events.room_version(room_id),
+                snapshot_version=snapshot_version,
             )
         except WebSocketDisconnect:
             end = StreamEnd.CLIENT_DISCONNECT
@@ -191,7 +253,15 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 await subscription.close()
             if generation is not None:
                 services.registry.unregister(room_id, participation.participant_id, generation)
-            if established and generation is not None and end is StreamEnd.CLIENT_DISCONNECT:
+            if (
+                established
+                and generation is not None
+                and end
+                in (
+                    StreamEnd.CLIENT_DISCONNECT,
+                    StreamEnd.SESSION_EXPIRED,
+                )
+            ):
                 with suppress(ApiProblem, RoomRuleViolation):
                     await services.connections.disconnect(
                         room_id=room_id,
@@ -214,13 +284,17 @@ async def _websocket_session(
         await websocket.close(code=4403)
         return None
     try:
-        return await require_current_session(
-            identity,
-            websocket.cookies.get(SESSION_COOKIE),
-            touch=True,
-        )
-    except ApiProblem:
-        await websocket.close(code=4401)
+        async with asyncio.timeout(SESSION_CHECK_TIMEOUT_SECONDS):
+            return await require_current_session(
+                identity,
+                websocket.cookies.get(SESSION_COOKIE),
+                touch=True,
+            )
+    except ApiProblem as error:
+        await websocket.close(code=4401 if error.status == 401 else 1011)
+        return None
+    except Exception:
+        await _safe_close(websocket, 1011)
         return None
 
 
@@ -229,24 +303,30 @@ async def _stream_events(
     subscription: RealtimeSubscription,
     registry: ActiveWebSocketRegistry,
     *,
+    access: StreamAccess,
     replaced: asyncio.Event | None = None,
     room_id: str | None = None,
     participant_id: str | None = None,
     state_version: Callable[[], int] | None = None,
+    snapshot_version: int = 0,
 ) -> StreamEnd:
     receive_task = asyncio.create_task(websocket.receive())
     shutdown_task = asyncio.create_task(registry.wait_for_shutdown())
     replaced_task = None if replaced is None else asyncio.create_task(replaced.wait())
+    event_task = asyncio.create_task(subscription.receive())
     try:
         while True:
-            event_task = asyncio.create_task(subscription.receive())
             receive_wait = cast(asyncio.Future[object], receive_task)
             shutdown_wait = cast(asyncio.Future[object], shutdown_task)
             event_wait = cast(asyncio.Future[object], event_task)
             tasks = {receive_wait, shutdown_wait, event_wait}
             if replaced_task is not None:
                 tasks.add(cast(asyncio.Future[object], replaced_task))
-            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, _pending = await asyncio.wait(
+                tasks,
+                timeout=SESSION_CHECK_INTERVAL_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
             if shutdown_wait in done:
                 event_task.cancel()
                 await _safe_close(websocket, 1012)
@@ -269,17 +349,35 @@ async def _stream_events(
                 if message["type"] != "websocket.disconnect":
                     await _safe_close(websocket, 1008)
                 return StreamEnd.CLIENT_DISCONNECT
-            event = event_task.result()
-            await websocket.send_json(_event_value(event))
-            if event.event_type == "room.closed":
-                await _safe_close(websocket, 1000)
-                return StreamEnd.ROOM_ACCESS_ENDED
+            # A terminal notice may be sent after logout removed the binding. No
+            # further room/game data is delivered once that participation ends.
+            if event_wait in done:
+                terminal = event_task.result()
+                if terminal.event_type == "room.closed" or (
+                    terminal.event_type == "room.participant_left"
+                    and terminal.payload.get("participant_id") == participant_id
+                ):
+                    await websocket.send_json(_event_value(terminal))
+                    await _safe_close(websocket, 1000)
+                    return StreamEnd.ROOM_ACCESS_ENDED
+            access_state = await access.check()
+            # Recheck transport ownership after an awaited storage read.
             if (
-                event.event_type == "room.participant_left"
-                and event.payload.get("participant_id") == participant_id
+                registry.shutting_down
+                or receive_task.done()
+                or (replaced is not None and replaced.is_set())
             ):
-                await _safe_close(websocket, 1000)
-                return StreamEnd.ROOM_ACCESS_ENDED
+                continue
+            access_end = await _end_access(websocket, access_state)
+            if access_end is not None:
+                return access_end
+            if event_wait not in done:
+                continue
+            event = event_task.result()
+            event_task = asyncio.create_task(subscription.receive())
+            if event.state_version <= snapshot_version:
+                continue
+            await websocket.send_json(_event_value(event))
             if (
                 event.event_type == "snapshot.required"
                 and event.payload.get("reason") == "SLOW_CONSUMER"
@@ -287,9 +385,28 @@ async def _stream_events(
                 await _safe_close(websocket, 1013)
                 return StreamEnd.CLIENT_DISCONNECT
     finally:
-        for task in (receive_task, shutdown_task, replaced_task):
+        owned_tasks = (receive_task, shutdown_task, replaced_task, event_task)
+        for task in owned_tasks:
             if task is not None and not task.done():
                 task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(
+                *(task for task in owned_tasks if task is not None), return_exceptions=True
+            )
+
+
+async def _check_access(websocket: WebSocket, access: StreamAccess) -> StreamEnd | None:
+    return await _end_access(websocket, await access.check())
+
+
+async def _end_access(websocket: WebSocket, state: StreamAccessState) -> StreamEnd | None:
+    if state is StreamAccessState.EXPIRED:
+        await _safe_close(websocket, 4401)
+        return StreamEnd.SESSION_EXPIRED
+    if state is StreamAccessState.LEFT:
+        await _safe_close(websocket, 1000)
+        return StreamEnd.ROOM_ACCESS_ENDED
+    return None
 
 
 def _event_value(event: RealtimeEvent) -> dict[str, object]:

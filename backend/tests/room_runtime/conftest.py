@@ -23,6 +23,7 @@ from seokpan.room.application import (
     DisconnectRoomParticipant,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
+    KickRoomParticipant,
     LeaveRoomRuntime,
     RoomMutationResult,
     RoomRuntimePort,
@@ -132,6 +133,16 @@ class EmulatedRoomRedisClient:
                     session_digest=str(payload["session_digest"]),
                     expected_state_version=int(str(payload["expected_state_version"])),
                     private_access_verified=bool(payload["private_access_verified"]),
+                )
+            )
+        if operation == "kick":
+            return await self.store.kick(
+                KickRoomParticipant(
+                    room_id,
+                    request_id,
+                    str(payload["actor_id"]),
+                    str(payload["target_id"]),
+                    int(str(payload["expected_state_version"])),
                 )
             )
         if operation == "change_team":

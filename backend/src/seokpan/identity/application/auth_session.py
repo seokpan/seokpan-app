@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from seokpan.identity.application.session import (
@@ -48,8 +48,8 @@ class ParticipantSessionPort(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class IssuedSession:
-    token: str
-    csrf_token: str
+    token: str = field(repr=False)
+    csrf_token: str = field(repr=False)
     record: SessionRecord
 
 
@@ -93,6 +93,7 @@ class AuthSessionService:
             actor_type=actor_type,
             actor_id=actor_id,
             csrf_digest=digest_opaque_token(csrf_token),
+            csrf_token=csrf_token,
         )
         if current is None:
             record = await self._sessions.create(command)

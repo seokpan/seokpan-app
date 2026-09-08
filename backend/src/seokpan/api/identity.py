@@ -45,7 +45,7 @@ class IssuedSessionResponse(BaseModel):
     actor_type: SessionActorType
     actor_id: str
     display_name: str
-    csrf_token: str
+    csrf_token: str = Field(repr=False)
     absolute_expires_at_ms: int
 
 
@@ -82,6 +82,14 @@ class CurrentSessionResponse(BaseModel):
     absolute_expires_at_ms: int
     room_id: str | None = None
     participant_id: str | None = None
+
+
+class CsrfBootstrapRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CsrfBootstrapResponse(CurrentSessionResponse):
+    csrf_token: str = Field(repr=False)
 
 
 def identity_router(services: IdentityApiServices) -> APIRouter:
@@ -164,6 +172,41 @@ def identity_router(services: IdentityApiServices) -> APIRouter:
     ) -> CurrentSessionResponse:
         current = await require_current_session(services, session_cookie, touch=True)
         return await _current_response(services, current)
+
+    @router.post(
+        "/session/csrf",
+        response_model=CsrfBootstrapResponse,
+        responses=identity_problem_responses(401, 403, 422, 503),
+        # Keep the security rejection at 403 instead of Pydantic's missing-header 422.
+        openapi_extra={
+            "parameters": [
+                {
+                    "name": "X-CSRF-Bootstrap",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string", "enum": ["1"]},
+                    "description": "Required for Cookie-based CSRF recovery; exact value 1.",
+                }
+            ]
+        },
+    )
+    async def recover_csrf(
+        payload: CsrfBootstrapRequest,
+        request: Request,
+        response: Response,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+    ) -> CsrfBootstrapResponse:
+        # This read-only bootstrap cannot require the token it recovers.
+        # Unlike ordinary API calls, a Referer fallback is not accepted here.
+        if request.headers.get("Origin") not in services.settings.allowed_origins:
+            raise ApiProblem(403, "ORIGIN_NOT_ALLOWED", "Request origin is not allowed")
+        content_type = request.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if request.headers.get("X-CSRF-Bootstrap") != "1" or content_type != "application/json":
+            raise ApiProblem(403, "CSRF_BOOTSTRAP_INVALID", "Invalid CSRF recovery request")
+        current = await require_current_session(services, session_cookie, touch=False)
+        identity = await _current_response(services, current)
+        response.headers["Cache-Control"] = "no-store"
+        return CsrfBootstrapResponse(**identity.model_dump(), csrf_token=current.csrf_token)
 
     @router.delete(
         "/session",
@@ -290,6 +333,7 @@ def guest_display_name(actor_id: str) -> str:
 
 
 def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
+    response.headers["Cache-Control"] = "no-store"
     response.set_cookie(
         SESSION_COOKIE,
         token,

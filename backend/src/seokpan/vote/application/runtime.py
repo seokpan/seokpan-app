@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from seokpan.game.domain import BoardCell, Coordinate, EndReason, GameStatus, Stone
+from seokpan.game.domain import AppliedMove, BoardCell, Coordinate, EndReason, GameStatus, Stone
 from seokpan.vote.domain import (
     TurnClosure,
     TurnResolution,
@@ -18,7 +18,7 @@ from seokpan.vote.domain import (
     VoteTally,
 )
 
-VOTE_RUNTIME_SCHEMA_VERSION = 2
+VOTE_RUNTIME_SCHEMA_VERSION = 3
 RESOLVER_LEASE_MS = 5 * 1000
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -197,6 +197,7 @@ class VoteRuntimeSnapshot:
     candidates: tuple[Coordinate, ...]
     occupied_cells: tuple[BoardCell, ...]
     resolver: ResolverLease | None
+    last_move: AppliedMove | None = None
     valid_voter_count: int | None = None
     schema_version: int = VOTE_RUNTIME_SCHEMA_VERSION
 

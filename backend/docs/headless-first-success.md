@@ -42,7 +42,7 @@ Coverage는 중첩 HTTP Handler를 포함한 Python의 새 함수·변경 함수
 ## API와 Runtime 변경
 
 - 추가 HTTP: `GET /api/v1/games/{game_id}/result`. 현재 Room의 현재/마지막 Game만 허용하며 공통 결과와 본인 Rating을 구분한다. 접근 거부 403, 미저장 404, 진행 중 409, 불완전 결과/복원 불일치 503. [결과 조회 상세](game-persistence.md).
-- Room HTTP/WebSocket Snapshot: 선택적 `last_game_id` 추가. 내부 `last_game_turn_no`는 공개하지 않는다. Room Schema 2 → 3, Room Mutation v6 → v7, Read v1 → v2. [Room 상세](redis-room-runtime.md).
+- Room HTTP/WebSocket Snapshot: 선택적 `last_game_id` 추가. 내부 `last_game_turn_no`는 공개하지 않는다. A-07에서 Room Schema 2 → 3, Room Mutation v6 → v7, Read v1 → v2로 변경했다. 후속 A-08의 대기방 강퇴를 포함한 현재 Mutation은 v8이다. [Room 상세](redis-room-runtime.md).
 - Vote Schema는 2 유지. Mutation/Read Script v3 → v4. 내부 시작 명령에 이전 Game/종료 Turn 참조를 추가하고 종료 Runtime만 교체한다.
 - Room/Vote가 공유하는 Request Hash에서 Vote Field는 `vote:<request_id>`로 분리한다. 이전 판 캐시 응답은 새 판의 성공으로 반환하지 않는다. 전체 Request Hash를 지우지 않는다.
 - Redis 읽기 중 Game/Turn이 바뀌면 `503 REDIS_SNAPSHOT_CHANGED`로 거부한다. 다음 조회에서 최신 상태를 읽으며 서로 다른 Turn의 상태를 섞지 않는다. [Vote 상세](redis-vote-runtime.md).

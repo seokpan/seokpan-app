@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from seokpan.game.application import GameApplicationService
-from seokpan.identity.application import SessionActorType, SessionRecord
+from seokpan.identity.application import SessionActorType, SessionRecord, digest_opaque_token
 from seokpan.persistence.memory import (
     InMemoryGamePersistenceAdapter,
     InMemoryRealtimeEventAdapter,
@@ -41,7 +41,8 @@ def _session(character: str, member_id: int) -> SessionRecord:
         session_digest=character * 64,
         actor_type=SessionActorType.MEMBER,
         actor_id=str(member_id),
-        csrf_digest=character * 64,
+        csrf_digest=digest_opaque_token(character * 64),
+        csrf_token=character * 64,
         created_at_ms=0,
         last_activity_at_ms=0,
         absolute_expires_at_ms=100_000,

@@ -47,6 +47,7 @@ async def test_completed_runtime_can_be_replaced_without_old_request_replay(
     assert result.snapshot.game_id == "game-2"
     assert result.snapshot.turn_no == 1
     assert result.snapshot.move_no == 0
+    assert result.snapshot.last_move is None
     assert result.snapshot.votes == result.snapshot.tally == result.snapshot.occupied_cells == ()
     assert result.snapshot.resolver is None
     assert (await vote_harness.adapter.initialize(second)).replayed

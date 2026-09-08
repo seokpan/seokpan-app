@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from seokpan.game.application.persistence import GamePersistenceSnapshot, PersistenceRuleViolation
 from seokpan.game.domain import (
+    AppliedMove,
     BoardCell,
     Coordinate,
     EndReason,
@@ -24,6 +25,7 @@ class CompletedGameReplay:
     end_reason: EndReason
     winner: Stone
     winning_line: tuple[Coordinate, ...]
+    last_move: AppliedMove | None = None
 
 
 def replay_game_history(history: GamePersistenceSnapshot) -> Game:
@@ -80,5 +82,11 @@ def replay_completed_game(
     else:
         raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH")
     return CompletedGameReplay(
-        game.occupied_cells, game.move_no, status, end_reason, winner, winning_line
+        game.occupied_cells,
+        game.move_no,
+        status,
+        end_reason,
+        winner,
+        winning_line,
+        game.moves[-1] if game.moves else None,
     )

@@ -54,7 +54,11 @@ class EmulatedVoteRedisClient:
         if snapshot is None:
             return None
         return VersionedJsonCodec.encode(
-            {"game_id": snapshot.game_id, "turn_no": snapshot.turn_no}
+            {
+                "game_id": snapshot.game_id,
+                "turn_no": snapshot.turn_no,
+                "schema_version": snapshot.schema_version,
+            }
         ).encode()
 
     async def evalsha(
@@ -229,6 +233,13 @@ def _snapshot(value: VoteRuntimeSnapshot | None) -> dict[str, object] | None:
         "deadline_ms": value.deadline_ms,
         "consecutive_passes": value.consecutive_passes,
         "move_no": value.move_no,
+        "last_move": None
+        if value.last_move is None
+        else {
+            "move_no": value.last_move.move_no,
+            "team": value.last_move.team.value,
+            "coordinate": value.last_move.coordinate.canonical,
+        },
         "game_status": value.game_status.value,
         "end_reason": None if value.end_reason is None else value.end_reason.value,
         "participants": [

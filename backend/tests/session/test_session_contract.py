@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from seokpan.identity.application.session import (
@@ -150,4 +152,40 @@ def test_invalid_digest_is_rejected_before_provider_access() -> None:
             actor_type=SessionActorType.GUEST,
             actor_id="guest-1",
             csrf_digest=digest("f"),
+            csrf_token="f" * 64,
         )
+
+
+@pytest.mark.parametrize("token", ["", "wrong-csrf"])
+def test_csrf_token_must_match_the_stored_digest(token: str) -> None:
+    with pytest.raises(SessionRuleViolation, match="INVALID_CSRF_TOKEN"):
+        replace(guest_command(), csrf_token=token)
+
+
+@pytest.mark.asyncio
+async def test_session_secrets_survive_touch_and_failed_rotation(
+    session_harness: SessionHarness,
+) -> None:
+    command = guest_command()
+    initial = await session_harness.adapter.create(command)
+    assert initial.csrf_token == command.csrf_token
+    assert command.csrf_token not in repr(command)
+    assert initial.csrf_token not in repr(initial)
+    session_harness.clock.advance(1234)
+    touched = await session_harness.adapter.touch(command.session_digest)
+    assert touched is not None and touched.csrf_token == initial.csrf_token
+    with pytest.raises(SessionRuleViolation, match="UNSUPPORTED_SESSION_SCHEMA"):
+        replace(touched, schema_version=1)
+    with pytest.raises(SessionRuleViolation, match="INVALID_CSRF_TOKEN"):
+        replace(touched, csrf_token="wrong-token")
+    replacement = member_command()
+    await session_harness.adapter.rotate(
+        previous_session_digest=command.session_digest,
+        replacement=replacement,
+    )
+    restored = await session_harness.adapter.restore_after_failed_rotation(
+        failed_replacement_digest=replacement.session_digest,
+        previous=touched,
+    )
+    assert restored == touched
+    assert restored.csrf_token == initial.csrf_token != replacement.csrf_token

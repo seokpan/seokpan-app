@@ -27,7 +27,7 @@ from seokpan.game.domain import (
     RatingAdjustment,
     Stone,
 )
-from seokpan.identity.application import SessionActorType, SessionRecord
+from seokpan.identity.application import SessionActorType, SessionRecord, digest_opaque_token
 from seokpan.persistence.memory import InMemoryGamePersistenceAdapter, ManualClock
 from seokpan.room.application import RoomApplicationService, RoomParticipation, RoomRuntimeSnapshot
 from seokpan.room.application.runtime import RoomRuntimeParticipant
@@ -40,7 +40,16 @@ ROOM = "00000000-0000-4000-8000-000000000002"
 BLACK = "00000000-0000-4000-8000-000000000003"
 WHITE = "00000000-0000-4000-8000-000000000004"
 NOW = datetime(2026, 9, 7, tzinfo=UTC)
-SESSION = SessionRecord("a" * 64, SessionActorType.MEMBER, "1", "b" * 64, 0, 0, 1000)
+SESSION = SessionRecord(
+    "a" * 64,
+    SessionActorType.MEMBER,
+    "1",
+    digest_opaque_token("test-csrf"),
+    0,
+    0,
+    1000,
+    csrf_token="test-csrf",
+)
 
 
 @pytest.mark.asyncio

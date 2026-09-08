@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from seokpan.clock import MillisecondClock
 from seokpan.identity.application.session import (
     SESSION_ABSOLUTE_TTL_MS,
     SESSION_IDLE_TTL_MS,
@@ -34,7 +35,7 @@ class _StoredSession:
 class InMemorySessionAdapter:
     """A deterministic Fake; passing it is not Redis Provider evidence."""
 
-    def __init__(self, clock: ManualClock) -> None:
+    def __init__(self, clock: MillisecondClock) -> None:
         self._clock = clock
         self._sessions: dict[str, _StoredSession] = {}
         self._member_sessions: dict[str, dict[str, int]] = {}
@@ -139,6 +140,7 @@ class InMemorySessionAdapter:
             actor_type=command.actor_type,
             actor_id=command.actor_id,
             csrf_digest=command.csrf_digest,
+            csrf_token=command.csrf_token,
             created_at_ms=now_ms,
             last_activity_at_ms=now_ms,
             absolute_expires_at_ms=absolute_expires_at_ms,

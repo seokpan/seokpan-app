@@ -11,7 +11,7 @@ from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
 from seokpan.vote.application import InitializeVoteRuntime
 from seokpan.vote.domain import Voter
 
-from .conftest import EmulatedVoteRedisClient
+from .conftest import EmulatedVoteRedisClient, _snapshot
 
 
 def test_vote_keyspace_uses_one_room_hash_tag() -> None:
@@ -143,3 +143,90 @@ async def test_read_does_not_mix_new_game_with_previous_turn_keys() -> None:
 def test_missing_rejection_code_is_provider_failure() -> None:
     with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
         RedisVoteRuntimeAdapter._raise_rejection({"ok": False, "error": None})
+
+
+@pytest.mark.parametrize("version", [1, 2, 4])
+def test_old_or_future_vote_snapshot_is_not_interpreted(version: int) -> None:
+    with pytest.raises(RedisProviderError, match="VOTE_SCHEMA_VERSION_MISMATCH"):
+        RedisVoteRuntimeAdapter._optional_snapshot({"schema_version": version})
+
+
+def test_last_move_lua_write_is_persistence_gated_and_readable() -> None:
+    assert VOTE_MUTATION.version == VOTE_READ.version == 5
+    assert VOTE_MUTATION.source.index("existing.schema_version ~= 3") < VOTE_MUTATION.source.index(
+        "local expired"
+    )
+    assert "cached.result.snapshot.schema_version ~= 3" in VOTE_MUTATION.source
+    assert VOTE_MUTATION.source.index(
+        "if not payload.persistence_confirmed"
+    ) < VOTE_MUTATION.source.index("game.last_move = resolution.applied_move")
+    assert "last_move = cjson.null" in VOTE_MUTATION.source
+    assert "last_move = game.last_move" in VOTE_READ.source
+    assert "game.schema_version ~= 3" in VOTE_READ.source
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"move_no": 0, "team": "BLACK", "coordinate": "H8"},
+        {"move_no": 1, "team": "EMPTY", "coordinate": "H8"},
+        {"move_no": 1, "team": "BLACK", "coordinate": "P1"},
+        {"move_no": 1, "team": "WHITE", "coordinate": "h8"},
+    ],
+)
+def test_invalid_last_move_is_provider_failure(value: dict[str, object]) -> None:
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        RedisVoteRuntimeAdapter._last_move(value)
+
+
+@pytest.mark.asyncio
+async def test_last_move_must_match_snapshot_board_and_count() -> None:
+    from dataclasses import replace
+
+    from seokpan.game.domain import AppliedMove, BoardCell, Coordinate
+
+    client = EmulatedVoteRedisClient(ManualClock())
+    start = await client.store.initialize(
+        InitializeVoteRuntime(
+            "room-1",
+            "init",
+            "game-1",
+            (Voter("b", Stone.BLACK), Voter("w", Stone.WHITE)),
+            1000,
+            1,
+        )
+    )
+    move = AppliedMove(1, Stone.BLACK, Coordinate.parse("H8"))
+    current = replace(
+        start.snapshot,
+        move_no=1,
+        last_move=move,
+        occupied_cells=(BoardCell(move.coordinate, Stone.BLACK),),
+    )
+    assert RedisVoteRuntimeAdapter._optional_snapshot(_snapshot(current)) == current
+    for changes in (
+        {"last_move": None},
+        {"move_no": 0},
+        {"last_move": replace(move, move_no=2)},
+        {"last_move": replace(move, team=Stone.WHITE)},
+    ):
+        with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+            RedisVoteRuntimeAdapter._optional_snapshot(_snapshot(replace(current, **changes)))
+    missing = _snapshot(start.snapshot)
+    assert missing is not None
+    del missing["last_move"]
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        RedisVoteRuntimeAdapter._optional_snapshot(missing)
+
+
+class OldVoteClient(EmulatedVoteRedisClient):
+    async def get(self, key: str) -> bytes:
+        return self._encode({"schema_version": 2})
+
+
+@pytest.mark.asyncio
+async def test_old_game_read_stops_before_script_execution() -> None:
+    client = OldVoteClient(ManualClock())
+    with pytest.raises(RedisProviderError, match="VOTE_SCHEMA_VERSION_MISMATCH"):
+        await RedisVoteRuntimeAdapter(client).get("room-1")
+    assert client.evalsha_calls == []

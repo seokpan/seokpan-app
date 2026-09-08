@@ -13,6 +13,7 @@ from seokpan.identity.application.session import (
     SessionPort,
     SessionRecord,
     SessionRuleViolation,
+    digest_opaque_token,
 )
 from seokpan.persistence.memory import InMemorySessionAdapter, ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, VersionedJsonCodec
@@ -79,6 +80,18 @@ class EmulatedRedisClient:
         if sha not in self.loaded:
             raise NoScriptError("script cache miss")
         args = keys_and_args[numkeys:]
+        if sha != CREATE_SESSION.sha:
+            record = await self.store.get(str(args[0]))
+            if record is not None:
+                raw = VersionedJsonCodec.encode(self._payload(record)).encode()
+                expected = args[-1]
+                if isinstance(expected, str):
+                    expected = expected.encode()
+                if raw != expected:
+                    return VersionedJsonCodec.encode(
+                        {"ok": False, "session": None, "error": "SESSION_STATE_CHANGED"}
+                    ).encode()
+            args = args[:-1]
         try:
             if sha == CREATE_SESSION.sha:
                 command = self._command(args, digest_index=0, actor_index=1)
@@ -100,6 +113,7 @@ class EmulatedRedisClient:
                     actor_type=SessionActorType(str(args[2])),
                     actor_id=str(args[3]),
                     csrf_digest=str(args[4]),
+                    csrf_token=str(args[10]),
                     schema_version=int(str(args[5])),
                     created_at_ms=int(str(args[6])),
                     last_activity_at_ms=int(str(args[7])),
@@ -150,6 +164,7 @@ class EmulatedRedisClient:
             actor_type=SessionActorType(str(args[actor_index])),
             actor_id=str(args[actor_index + 1]),
             csrf_digest=str(args[actor_index + 2]),
+            csrf_token=str(args[-1]),
         )
 
     @classmethod
@@ -169,6 +184,7 @@ class EmulatedRedisClient:
             "actor_type": record.actor_type.value,
             "actor_id": record.actor_id,
             "csrf_digest": record.csrf_digest,
+            "csrf_token": record.csrf_token,
             "created_at_ms": record.created_at_ms,
             "last_activity_at_ms": record.last_activity_at_ms,
             "absolute_expires_at_ms": record.absolute_expires_at_ms,
@@ -204,7 +220,8 @@ def guest_command(character: str = "a") -> CreateSession:
         session_digest=digest(character),
         actor_type=SessionActorType.GUEST,
         actor_id="guest-1",
-        csrf_digest=digest("f"),
+        csrf_digest=digest_opaque_token("f" * 64),
+        csrf_token="f" * 64,
     )
 
 
@@ -213,7 +230,8 @@ def member_command(character: str = "b", member_id: str = "42") -> CreateSession
         session_digest=digest(character),
         actor_type=SessionActorType.MEMBER,
         actor_id=member_id,
-        csrf_digest=digest("e"),
+        csrf_digest=digest_opaque_token("e" * 64),
+        csrf_token="e" * 64,
     )
 
 

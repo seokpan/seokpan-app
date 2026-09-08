@@ -50,7 +50,7 @@ deadline이 지났더라도 Backend·Redis·플랫폼 장애 때문에 정상 �
 다음 항목은 후속 Provider Integration에서 연결하고 검증합니다.
 
 - Redis 8.10.1의 실제 마감 예정 Turn 자료구조와 탐색
-- Backend 시작·종료 수명주기의 반복 Runner 연결
+- Production Backend 시작·종료 수명주기의 반복 Runner 연결. A-08의 로컬 Memory 전용 반복 실행은 [브라우저 개발 구성](browser-development.md)에서 별도로 검증한다.
 - MariaDB·MaxScale TLS 경유 Move·Result·Rating 저장
 - 두 Backend Replica의 Resolver 경쟁, Lease 만료와 재시도
 - Redis·Backend 장애 시간을 구분할 실제 운영 신호
