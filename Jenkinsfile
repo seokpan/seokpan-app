@@ -89,10 +89,18 @@ pipeline {
             steps {
                 dir('frontend') {
                     container('node') {
-                        sh 'corepack enable npm'
-                        sh 'npm ci'
-                        sh 'npm run typecheck'
-                        sh 'npm test'
+                        // node:24.19.0-alpine 이미지의 /usr/local/bin은 root 소유라
+                        // runAsUser:1000에서 'corepack enable npm'이 심볼릭 링크를
+                        // 바꿔치기하지 못해 EACCES가 발생함(실제 재현됨). 공식 지원되는
+                        // --install-directory로 쓰기 가능한 경로에 shim을 만들고,
+                        // 그 경로를 PATH 맨 앞에 추가해서 우회.
+                        withEnv(['PATH+COREPACK=/tmp/corepack-bin']) {
+                            sh 'mkdir -p /tmp/corepack-bin'
+                            sh 'corepack enable --install-directory=/tmp/corepack-bin npm'
+                            sh 'npm ci'
+                            sh 'npm run typecheck'
+                            sh 'npm test'
+                        }
                     }
                 }
             }
@@ -122,8 +130,11 @@ pipeline {
             steps {
                 dir('frontend') {
                     container('node') {
-                        sh 'corepack enable npm'
-                        sh 'npm run build'
+                        withEnv(['PATH+COREPACK=/tmp/corepack-bin']) {
+                            sh 'mkdir -p /tmp/corepack-bin'
+                            sh 'corepack enable --install-directory=/tmp/corepack-bin npm'
+                            sh 'npm run build'
+                        }
                     }
                     container('buildkit') {
                         withEnv(['SSL_CERT_FILE=/etc/buildkit/certs/ca.crt']) {
