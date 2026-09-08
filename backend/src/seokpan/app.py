@@ -13,19 +13,23 @@ from seokpan.api.realtime import (
     realtime_router,
 )
 from seokpan.api.room import RoomApiServices, room_router
-from seokpan.game.application import GameApplicationService
+from seokpan.game.application import GameApplicationService, TurnResolutionRunner
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
     AuthSessionService,
     MemberIdentityService,
 )
 from seokpan.persistence.memory import (
+    InMemoryDueTurnSource,
     InMemoryGamePersistenceAdapter,
     InMemoryIdentityAdapter,
     InMemoryRealtimeEventAdapter,
     InMemoryRoomRuntimeAdapter,
     InMemorySessionAdapter,
     InMemorySessionWorkflow,
+    InMemoryTieSelectionAudit,
+    InMemoryTieSelector,
+    InMemoryTurnFinalizationGate,
     InMemoryVoteRuntimeAdapter,
     ManualClock,
 )
@@ -52,6 +56,8 @@ class ApplicationServices:
     realtime_api: RealtimeApiServices | None = None
     disconnect_expiry: DisconnectExpiryRunner | None = None
     headless_clock: ManualClock | None = None
+    turn_resolution: TurnResolutionRunner | None = None
+    headless_due_turns: InMemoryDueTurnSource | None = None
 
 
 def build_headless_services(
@@ -65,14 +71,15 @@ def build_headless_services(
         Argon2Parameters(time_cost=1, memory_cost_kib=8 * 1024, parallelism=1)
     )
     dummy_hash = password_hasher.hash(SecretsTokenSource().issue())
+    member_ratings: dict[int, int] = {}
     members = MemberIdentityService(
-        InMemoryIdentityAdapter(),
+        InMemoryIdentityAdapter(member_ratings=member_ratings),
         password_hasher,
         dummy_password_hash=dummy_hash,
     )
     clock = ManualClock()
     events = realtime_events or InMemoryRealtimeEventAdapter()
-    votes = InMemoryVoteRuntimeAdapter(clock)
+    votes = InMemoryVoteRuntimeAdapter(clock, room_lookup=lambda room_id: room_runtime.get(room_id))
     room_runtime = InMemoryRoomRuntimeAdapter(clock, vote_connections=votes)
     room_service = RoomApplicationService(
         room_runtime,
@@ -86,9 +93,10 @@ def build_headless_services(
         SecretsTokenSource(),
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
+    games = InMemoryGamePersistenceAdapter(member_ratings)
     game_service = GameApplicationService(
         rooms=room_service,
-        games=InMemoryGamePersistenceAdapter(),
+        games=games,
         votes=votes,
         clock=clock,
         events=events,
@@ -97,6 +105,19 @@ def build_headless_services(
     game_api = GameApiServices(identity_api, game_service)
     connections = RoomConnectionCoordinator(rooms=room_service, votes=votes, clock=clock)
     registry = ActiveWebSocketRegistry()
+    due_turns = InMemoryDueTurnSource()
+    turn_resolution = TurnResolutionRunner(
+        due_turns=due_turns,
+        finalization_gate=InMemoryTurnFinalizationGate(),
+        tie_selector=InMemoryTieSelector(),
+        tie_audit=InMemoryTieSelectionAudit(),
+        votes=votes,
+        games=games,
+        rooms=room_runtime,
+        clock=clock,
+        runner_id="headless",
+        events=events,
+    )
     return ApplicationServices(
         identity_api,
         room_api,
@@ -108,6 +129,8 @@ def build_headless_services(
             clock=clock,
         ),
         clock,
+        turn_resolution,
+        due_turns,
     )
 
 

@@ -302,15 +302,21 @@ Alembic 단일 Migration Job·승인 절차만 `SEOKPAN_MIGRATION_DATABASE_URL`�
   → Pure Domain Test
   → Port·Fake Adapter Headless 기능
   → MariaDB Baseline·Redis Adapter
-  → 실제 Provider 통합
-  → Frontend First Success
-  → Container·Jenkins·Harbor·GitOps·Argo CD 통합
-  → P4 MVP Acceptance
+  → A-07 Fake Provider 기반 Headless First Success
+  → A-08 Frontend First Success
+  → A-09 Container·Jenkins·Harbor 검증
+  → A-10 실제 DB·Redis·Migration·GitOps·Argo CD 통합
+  → 실제 D07 M5·P4 MVP Acceptance
 ```
 
 Fake 성공을 실제 MariaDB·Redis·Kubernetes 성공으로 표시하지 않는다. 정상 흐름 외에도 stale 요청, 중복 명령, 투표 경합, Move·Result 중복, DB Commit 후 Redis 재동기화, WebSocket 재접속, Event 누락·역전과 장애 오패배 방지를 검증한다.
 
 ## 12. 변경 관리
+
+위 순서는 [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)과
+[Docs PR #46](https://github.com/seokpan/seokpan-docs/pull/46)을 따른다. 실제 Provider의
+개별 준비·시험은 병렬로 진행할 수 있지만 D07 M5 완료에는 M3 Runtime·M4 Delivery와
+Observability 선행 조건 및 실제 통합 검증이 필요하다.
 
 - 공용 요구사항 변경은 `seokpan-docs`에서 먼저 승인·기록한다.
 - App 내부 구현 상세 변경은 관련 Issue, Test와 이 문서를 같은 PR에서 갱신한다.

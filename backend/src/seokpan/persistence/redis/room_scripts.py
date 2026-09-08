@@ -8,7 +8,7 @@ local function snapshot()
   local meta_values = redis.call(
     'HMGET', KEYS[1], 'schema_version', 'name', 'visibility',
     'max_participants', 'minimum_ready', 'vote_seconds', 'status',
-    'owner_id', 'state_version', 'game_id'
+    'owner_id', 'state_version', 'game_id', 'last_game_id', 'last_game_turn_no'
   )
   local participant_values = redis.call('HGETALL', KEYS[2])
   local participants = {}
@@ -36,6 +36,8 @@ local function snapshot()
     owner_id = meta_values[8] == '' and cjson.null or meta_values[8],
     state_version = tonumber(meta_values[9]),
     game_id = (not meta_values[10] or meta_values[10] == '') and cjson.null or meta_values[10],
+    last_game_id = (not meta_values[11] or meta_values[11] == '') and cjson.null or meta_values[11],
+    last_game_turn_no = tonumber(meta_values[12]) or cjson.null,
     participants = participants
   }
 end
@@ -59,6 +61,12 @@ local disconnect_lease_ms = tonumber(ARGV[5])
 local tombstone_ttl_ms = tonumber(ARGV[6])
 local payload = cjson.decode(ARGV[7])
 local fingerprint = redis.sha1hex(operation .. '\n' .. ARGV[7])
+
+-- Reject old state before request-cache cleanup or any other write.
+if redis.call('EXISTS', KEYS[1]) == 1 and
+   tonumber(redis.call('HGET', KEYS[1], 'schema_version')) ~= payload.schema_version then
+  return rejection('ROOM_SCHEMA_VERSION_MISMATCH')
+end
 
 local expired = redis.call('ZRANGEBYSCORE', KEYS[6], '-inf', current_ms)
 if #expired > 0 then
@@ -189,7 +197,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=6,
+    version=7,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -212,7 +220,7 @@ if operation == 'create' then
     'owner_id', payload.owner_id,
     'state_version', 1,
     'next_joined_order', 2,
-    'game_id', ''
+    'game_id', '', 'last_game_id', '', 'last_game_turn_no', ''
   )
   store_participant(payload.owner_id, {
     actor_type = 'MEMBER', joined_order = 1, connected = true, team = 'NONE'
@@ -367,7 +375,8 @@ if operation == 'complete_game' then
   if redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
     return rejection('STALE_GAME')
   end
-  redis.call('HSET', KEYS[1], 'status', 'WAITING', 'game_id', '')
+  redis.call('HSET', KEYS[1], 'status', 'WAITING', 'game_id', '',
+    'last_game_id', payload.game_id, 'last_game_turn_no', payload.final_turn_no)
   redis.call('DEL', KEYS[3])
   advance_version()
   return save({snapshot = snapshot()})
@@ -462,11 +471,17 @@ return rejection('ROOM_OPERATION_INVALID')
 """,
 )
 
-_READ_RESPONSE = "return cjson.encode({ok = true, snapshot = snapshot(), error = cjson.null})\n"
+_READ_RESPONSE = r"""
+if redis.call('EXISTS', KEYS[1]) == 1 and
+   tonumber(redis.call('HGET', KEYS[1], 'schema_version')) ~= tonumber(ARGV[2]) then
+  return cjson.encode({ok = false, error = 'ROOM_SCHEMA_VERSION_MISMATCH'})
+end
+return cjson.encode({ok = true, snapshot = snapshot(), error = cjson.null})
+"""
 
 ROOM_READ = VersionedLuaScript(
     name="room-runtime-read",
-    version=1,
+    version=2,
     source=_SNAPSHOT + _READ_RESPONSE,
 )
 

@@ -68,6 +68,37 @@ def _register(client: TestClient, csrf: str | None = None) -> None:
     assert response.status_code == 201
 
 
+def test_missing_fake_rating_is_service_unavailable_not_invalid_input() -> None:
+    settings = Settings(environment="test", allowed_origins=(ORIGIN,))
+    ratings: dict[int, int] = {}
+    hasher = Argon2PasswordHasher(
+        Argon2Parameters(time_cost=1, memory_cost_kib=8 * 1024, parallelism=1)
+    )
+    members = MemberIdentityService(
+        InMemoryIdentityAdapter(member_ratings=ratings),
+        hasher,
+        dummy_password_hash=hasher.hash("valid-dummy-password"),
+    )
+    sessions = AuthSessionService(
+        InMemorySessionWorkflow(InMemorySessionAdapter(ManualClock())), SequenceTokenSource()
+    )
+    application = create_app(
+        settings=settings,
+        services=ApplicationServices(IdentityApiServices(settings, members, sessions)),
+    )
+    with TestClient(application, base_url=ORIGIN) as client:
+        _register(client)
+        ratings.clear()
+        response = client.post(
+            "/api/v1/sessions/member",
+            headers={"Origin": ORIGIN},
+            json={"login_id": "member_01", "password": "correct-pass"},
+        )
+    assert response.status_code == 503
+    assert response.json()["code"] == "IDENTITY_PROVIDER_UNAVAILABLE"
+    assert ratings == {}
+
+
 def test_guest_cookie_and_current_session(
     app_harness: tuple[TestClient, InMemorySessionWorkflow],
 ) -> None:

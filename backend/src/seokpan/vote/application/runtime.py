@@ -47,12 +47,22 @@ class InitializeVoteRuntime:
     participants: tuple[Voter, ...]
     deadline_ms: int
     expected_state_version: int
+    previous_game_id: str | None = None
+    previous_turn_no: int | None = None
 
     def __post_init__(self) -> None:
         _base(self.room_id, self.request_id, self.game_id)
         _positive(self.expected_state_version, code="INVALID_STATE_VERSION")
         if self.deadline_ms < 0:
             raise VoteRuleViolation("INVALID_DEADLINE")
+        if (self.previous_game_id is None) != (self.previous_turn_no is None):
+            raise VoteRuleViolation("INVALID_PREVIOUS_GAME")
+        if self.previous_game_id is not None:
+            _identifier(self.previous_game_id, code="INVALID_PREVIOUS_GAME")
+            if self.previous_game_id == self.game_id:
+                raise VoteRuleViolation("INVALID_PREVIOUS_GAME")
+        if self.previous_turn_no is not None:
+            _positive(self.previous_turn_no, code="INVALID_TURN_NUMBER")
 
 
 @dataclass(frozen=True, slots=True)

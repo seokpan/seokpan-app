@@ -4,7 +4,7 @@ from seokpan.persistence.redis.common import VersionedLuaScript
 
 _COMMON = r"""
 local operation = ARGV[1]
-local request_id = ARGV[2]
+local request_id = 'vote:' .. ARGV[2]
 local request_ttl_ms = tonumber(ARGV[3])
 local resolver_lease_ms = tonumber(ARGV[4])
 local payload = cjson.decode(ARGV[5])
@@ -127,6 +127,19 @@ local function remember(result)
   return stored
 end
 
+if operation == 'initialize' then
+  if redis.call('EXISTS', KEYS[1]) == 0 then return rejection('ROOM_NOT_FOUND') end
+  if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING'
+      or redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
+    return rejection('GAME_NOT_IN_CURRENT_ROOM')
+  end
+  local last_id = redis.call('HGET', KEYS[1], 'last_game_id')
+  local last_turn = tonumber(redis.call('HGET', KEYS[1], 'last_game_turn_no'))
+  if (last_id and last_id ~= '' and last_id or cjson.null) ~= payload.previous_game_id
+      or (last_turn or cjson.null) ~= payload.previous_turn_no then
+    return rejection('GAME_NOT_IN_CURRENT_ROOM')
+  end
+end
 local expired = redis.call('ZRANGEBYSCORE', KEYS[13], '-inf', time_ms())
 if #expired > 0 then
   redis.call('HDEL', KEYS[12], unpack(expired))
@@ -135,6 +148,10 @@ end
 local cached = decode_or_nil(redis.call('HGET', KEYS[12], request_id))
 if cached then
   if cached.fingerprint ~= payload.fingerprint then return rejection('REQUEST_ID_CONFLICT') end
+  local current = game_state()
+  if not current or current.game_id ~= cached.result.snapshot.game_id then
+    return rejection('STALE_GAME')
+  end
   cached.result.replayed = true
   return cjson.encode(cached.result)
 end
@@ -142,13 +159,15 @@ end
 
 _MUTATION = r"""
 if operation == 'initialize' then
-  if redis.call('EXISTS', KEYS[4]) == 1 then
-    return rejection('GAME_RUNTIME_ALREADY_EXISTS')
-  end
-  if redis.call('EXISTS', KEYS[1]) == 0 then return rejection('ROOM_NOT_FOUND') end
-  if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING'
-      or redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
-    return rejection('GAME_NOT_IN_CURRENT_ROOM')
+  local previous = game_state()
+  if previous then
+    if previous.game_status ~= 'FINISHED' and previous.game_status ~= 'SYSTEM_INVALID' then
+      return rejection('GAME_RUNTIME_ALREADY_EXISTS')
+    end
+    if previous.game_id ~= payload.previous_game_id
+        or previous.turn_no ~= payload.previous_turn_no then return rejection('STALE_GAME') end
+  elseif payload.previous_game_id ~= cjson.null then
+    return rejection('GAME_RUNTIME_NOT_FOUND')
   end
   if payload.expected_state_version ~= 1 then return rejection('STATE_VERSION_CONFLICT') end
   local game = {
@@ -168,6 +187,7 @@ if operation == 'initialize' then
     candidates = {}
   }
   redis.call('DEL', KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9], KEYS[10], KEYS[11])
+  if previous then redis.call('DEL', KEYS[14], KEYS[15], KEYS[16]) end
   store_game(game)
   return remember(response({snapshot = snapshot(game)}))
 end
@@ -362,13 +382,13 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=3,
+    version=4,
     source=_COMMON + _MUTATION,
 )
 
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",
-    version=3,
+    version=4,
     source=r"""
 local payload = cjson.decode(ARGV[1])
 local function sorted_hash(key)
@@ -383,6 +403,9 @@ end
 local raw_game = redis.call('GET', KEYS[3])
 if not raw_game then return cjson.encode({ok = true, error = cjson.null, snapshot = cjson.null}) end
 local game = cjson.decode(raw_game)
+if game.game_id ~= payload.game_id or game.turn_no ~= payload.turn_no then
+  return cjson.encode({ok = false, error = 'REDIS_SNAPSHOT_CHANGED'})
+end
 local participants = {}
 for _, participant in ipairs(game.participants) do
   local raw = redis.call('HGET', KEYS[2], participant.participant_id)

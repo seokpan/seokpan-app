@@ -78,7 +78,7 @@ async def test_complete_game_returns_room_to_waiting_and_clears_ready(
     await room_harness.adapter.start_game(
         StartRoomGame("room-1", "start-complete", "member-1", "game-1", 6)
     )
-    command = CompleteRoomGame("room-1", "complete-1", "game-1", 7)
+    command = CompleteRoomGame("room-1", "complete-1", "game-1", 7, 13)
 
     result = await room_harness.adapter.complete_game(command)
     replay = await room_harness.adapter.complete_game(command)
@@ -86,9 +86,29 @@ async def test_complete_game_returns_room_to_waiting_and_clears_ready(
     assert result.snapshot is not None
     assert result.snapshot.status is RoomStatus.WAITING
     assert result.snapshot.game_id is None
+    assert result.snapshot.last_game_id == "game-1"
+    assert result.snapshot.last_game_turn_no == 13
     assert result.snapshot.state_version == 8
     assert all(not item.ready for item in result.snapshot.participants)
     assert replay.replayed is True
+    await room_harness.adapter.set_ready(
+        SetRoomReady("room-1", "next-ready-1", "member-1", True, 8)
+    )
+    await room_harness.adapter.set_ready(
+        SetRoomReady("room-1", "next-ready-2", "member-2", True, 9)
+    )
+    next_game = await room_harness.adapter.start_game(
+        StartRoomGame("room-1", "next-game", "member-1", "game-2", 10)
+    )
+    assert next_game.snapshot is not None
+    assert next_game.snapshot.game_id == "game-2"
+    assert next_game.snapshot.last_game_id == "game-1"
+    assert next_game.snapshot.last_game_turn_no == 13
+
+
+def test_room_completion_requires_actual_positive_final_turn() -> None:
+    with pytest.raises(RoomRuleViolation, match="INVALID_TURN_NUMBER"):
+        CompleteRoomGame("room-1", "complete", "game-1", 7, 0)
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Provider-neutral write contract for persistent Game history."""
+"""Provider-neutral read/write contract for persistent Game history."""
 
 from __future__ import annotations
 
@@ -11,10 +11,13 @@ from uuid import UUID
 
 from seokpan.game.domain import (
     Coordinate,
+    EndReason,
     GameParticipantRole,
     GameParticipantSnapshot,
     GameResult,
     GameStatus,
+    MemberOutcome,
+    RatingAdjustment,
     Stone,
 )
 
@@ -138,6 +141,60 @@ class GamePersistenceSnapshot:
     moves: tuple[OfficialMoveRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class StoredGameResult:
+    """Completed persistent result; Board and access checks belong to Application."""
+
+    game_id: str
+    room_id: str
+    status: GameStatus
+    end_reason: EndReason
+    winner: Stone
+    ended_at: datetime
+    rating_adjustments: tuple[RatingAdjustment, ...]
+
+    def __post_init__(self) -> None:
+        require_uuid4(self.game_id, code="INVALID_GAME_ID")
+        require_uuid4(self.room_id, code="INVALID_ROOM_ID")
+        if (self.status, self.end_reason, self.winner) not in {
+            (GameStatus.FINISHED, EndReason.BLACK_WIN, Stone.BLACK),
+            (GameStatus.FINISHED, EndReason.WHITE_WIN, Stone.WHITE),
+            (GameStatus.FINISHED, EndReason.DRAW, Stone.EMPTY),
+            (GameStatus.FINISHED, EndReason.FORFEIT, Stone.BLACK),
+            (GameStatus.FINISHED, EndReason.FORFEIT, Stone.WHITE),
+            (GameStatus.FINISHED, EndReason.JOINT_LOSS, Stone.EMPTY),
+            (GameStatus.SYSTEM_INVALID, EndReason.SYSTEM_INVALID, Stone.EMPTY),
+        }:
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        if not self.stats_eligible and self.rating_adjustments:
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        member_ids = tuple(item.member_id for item in self.rating_adjustments)
+        participant_ids = tuple(item.participant_id for item in self.rating_adjustments)
+        if len(set(member_ids)) != len(member_ids) or len(set(participant_ids)) != len(
+            participant_ids
+        ):
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        for item in self.rating_adjustments:
+            require_uuid4(item.participant_id, code="INVALID_PARTICIPANT_ID")
+            if (
+                item.member_id <= 0
+                or item.team not in {Stone.BLACK, Stone.WHITE}
+                or item.rating_before < 0
+                or item.rating_after != max(0, item.rating_before + item.rating_delta)
+                or item.outcome is not self.outcome_for(item.team)
+            ):
+                raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+
+    @property
+    def stats_eligible(self) -> bool:
+        return self.status is not GameStatus.SYSTEM_INVALID
+
+    def outcome_for(self, team: Stone) -> MemberOutcome:
+        if self.end_reason is EndReason.DRAW:
+            return MemberOutcome.DRAW
+        return MemberOutcome.WIN if team is self.winner else MemberOutcome.LOSS
+
+
 class GamePersistencePort(Protocol):
     async def start_game(self, command: StartGameCommand) -> PersistenceOutcome: ...
 
@@ -146,6 +203,8 @@ class GamePersistencePort(Protocol):
     async def finalize_game(self, command: FinalizeGameCommand) -> PersistenceOutcome: ...
 
     async def load_game(self, game_id: str) -> GamePersistenceSnapshot | None: ...
+
+    async def load_result(self, game_id: str) -> StoredGameResult | None: ...
 
     async def get_move(self, game_id: str, turn_no: int) -> OfficialMoveRecord | None: ...
 

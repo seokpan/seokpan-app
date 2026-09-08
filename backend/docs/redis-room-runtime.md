@@ -39,7 +39,7 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 - 이전 방장이 재접속해도 방장으로 자동 복귀하지 않는다.
 - 승계할 Member가 없으면 Room Runtime Key를 제거하고 10분 Tombstone을 남긴다.
 - WAITING 종료는 Game 기록을 만들지 않고, PLAYING 종료만 후속 흐름에 `SYSTEM_INVALID`를 전달한다.
-- 정상 Game Result 저장 뒤에는 Room Mutation Script v5의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거와 모든 Ready 해제를 한 번에 반영한다.
+- Game Result 저장과 종료 Vote Runtime 반영 뒤에는 Room Mutation Script v7의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거, `last_game_id`·`last_game_turn_no` 보관과 모든 Ready 해제를 한 번에 반영한다.
 - Room 종료에는 뒤따를 공개 Snapshot이 없으므로 삭제 직전 `state_version`을 따로 증가시키지 않는다. Key 삭제·Tombstone 생성·`room_closed` 종료 결과를 한 원자 처리로 반환하며, 후속 HTTP/WebSocket 계층은 이 종료 결과로 Room 종료와 Lobby 이동을 알린다.
 
 단절·퇴장 명령은 현재 Turn 번호가 주어진 경우 해당 참가자의 마감 전 Vote와 집계를 같은 Hash Slot에서 함께 제거한다. 진행 중 PLAYER의 공개 연결 상태나 Vote가 바뀌면 Game/Vote JSON과 그 Resource Version도 같은 Lua 실행에서 한 번 갱신한다. Room Resource Version과 Game/Vote Resource Version은 별도로 유지하므로 Ready·설정처럼 Game과 무관한 Room 변경은 Game/Vote Version을 바꾸지 않는다.
@@ -51,6 +51,16 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 Provider 오류는 URL·Credential·Key·Password·Token을 포함하지 않는 안정적인 코드로 변환한다. 종료 Tombstone이 남아 있는 동안 같은 Room ID의 즉시 재사용을 거부한다.
 
 ## 검증 경계
+
+Room Runtime Schema Version은 3이다. `last_game_id`와 `last_game_turn_no`는 한 쌍이며
+첫 경기 종료 전에는 모두 null이다. 종료 Turn은 내부 Runner의 실제 마감 Turn을 전달받고,
+Move 번호나 마지막 Move만으로 추정하지 않는다. HTTP/WebSocket Room Snapshot에는
+`last_game_id`만 공개한다. 다음 Game 시작 시에도 마지막 종료 정보는 유지하고 다음
+종료에서 교체한다. 최종 결과·Board·Rating의 원본을 Redis에 복제하는 구조가 아니다.
+
+이전 Version은 `ROOM_SCHEMA_VERSION_MISMATCH` Provider 오류로 거부한다. Lua는 기존
+상태의 Version을 검사한 뒤에만 요청 캐시 정리·변경을 수행하고 읽기 응답도 검사한다.
+실제 Redis 데이터의 전환·초기화는 A-10에서 별도로 승인·검증하며 자동 초기화하지 않는다.
 
 In-memory Fake와 Scripted Redis Client가 같은 Contract Test를 통과한다. 이 검증은 Room 의미, Adapter 입출력, Key Hash Slot, Lua Script Cache와 오류 경계를 확인하지만 실제 Redis Provider의 원자성·경합·AOF/PVC 복구를 증명하지 않는다.
 

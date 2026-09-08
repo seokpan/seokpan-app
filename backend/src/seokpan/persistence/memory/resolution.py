@@ -37,7 +37,7 @@ class InMemoryTurnFinalizationGate:
 
 
 class InMemoryTieSelector:
-    def __init__(self, selected_coordinate: str) -> None:
+    def __init__(self, selected_coordinate: str | None = None) -> None:
         self.selected_coordinate = selected_coordinate
         self.calls: list[tuple[str, int, tuple[str, ...]]] = []
 
@@ -49,7 +49,12 @@ class InMemoryTieSelector:
         candidates: tuple[str, ...],
     ) -> str:
         self.calls.append((game_id, turn_no, candidates))
-        return self.selected_coordinate
+        if self.selected_coordinate is not None:
+            return self.selected_coordinate
+        if not candidates:
+            raise ValueError("TIE_CANDIDATES_REQUIRED")
+        # Deterministic Fake only; production selection is a separate adapter.
+        return candidates[0]
 
 
 class InMemoryTieSelectionAudit:

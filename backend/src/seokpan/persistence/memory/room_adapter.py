@@ -45,6 +45,8 @@ class _RoomState:
     room: Room
     encoded_password: str | None
     connections: dict[str, RoomConnection]
+    last_game_id: str | None = None
+    last_game_turn_no: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +261,8 @@ class InMemoryRoomRuntimeAdapter:
         state = self._require_room(command.room_id)
         self._require_expected_version(state, command.expected_state_version)
         state.room.complete_game(game_id=command.game_id)
+        state.last_game_id = command.game_id
+        state.last_game_turn_no = command.final_turn_no
         return self._remember_result(command, state)
 
     async def connect(self, command: ConnectRoomParticipant) -> RoomMutationResult:
@@ -574,4 +578,6 @@ class InMemoryRoomRuntimeAdapter:
             state_version=room.state_version,
             participants=participants,
             game_id=room.game_id,
+            last_game_id=state.last_game_id,
+            last_game_turn_no=state.last_game_turn_no,
         )

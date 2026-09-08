@@ -24,15 +24,15 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 ## Vote와 마감
 
 - 현재 팀의 연결된 PLAYER만 `ACTIVE / VOTING` 상태와 Redis 서버 deadline 이전에 Vote를 등록·교체·삭제한다.
-- `request_id`는 동일 명령 결과를 24시간 재사용하고 다른 명령의 ID 재사용은 `REQUEST_ID_CONFLICT`로 거부한다.
+- `request_id`는 동일 명령 결과를 24시간 재사용하고 다른 Vote 명령의 ID 재사용은 `REQUEST_ID_CONFLICT`로 거부한다. 공유 Request Hash 안에서는 `vote:<request_id>` Field로 구분해 같은 시작 요청의 Room 처리 결과와 충돌하지 않는다.
 - `expected_state_version`이 다르면 상태를 바꾸지 않고 `STATE_VERSION_CONFLICT`로 거부한다.
 - Game/Vote `state_version`은 `room:{room_id}:game`에 보관하며 Room Meta의 `state_version`과 서로 독립적으로 증가한다.
 - 단절·퇴장은 Room Lua가 같은 Vote·Tally Key에서 마감 전 표와 집계를 함께 제거한다.
 - 단절·퇴장으로 PLAYER 연결 상태나 Vote가 바뀌면 Room Lua가 Game/Vote Version도 같은 실행에서 한 번 증가시킨다.
-- 이 연동의 Room Mutation Script는 v6, Vote Mutation·Read Script는 v3이며 관련 Key를 같은 Room Hash Slot에서 갱신한다.
+- 이 연동의 Room Mutation Script는 v7, Vote Mutation·Read Script는 v4이며 관련 Key를 같은 Room Hash Slot에서 갱신한다.
 - 마감은 Redis 서버 시각을 기준으로 Vote를 고정하고 한 번만 `RESOLVING` 또는 Pass로 전이한다.
 - 첫 0표 Pass는 `turn_no`와 연속 Pass 횟수만 진행하고 `move_no`를 유지한다. 두 번째 연속 0표는 `JOINT_LOSS` 후보로 `RESOLVING`에 머물며, 공식 Result 저장이 확인된 뒤에만 Redis 종료 상태로 반영한다.
-- 두 번째 0표의 대기 상태와 마감 시점 유효 투표자 수를 보존하는 Vote Runtime Schema·Script는 v2다.
+- 두 번째 0표의 대기 상태와 마감 시점 유효 투표자 수를 보존하는 Vote Runtime Schema는 v2다. 데이터 Schema 번호와 Lua Script 번호는 별도로 관리한다.
 - 공식 Move가 확정되면 연속 Pass 횟수를 0으로 초기화한다.
 
 ## Resolver와 장애 수렴
@@ -47,6 +47,18 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 
 ## 현재 검증 경계
 
+### 같은 Room의 다음 Game
+
+- 시작 처리 직후 Room이 실제로 가리키는 `game_id`를 확인한다. 이전 시작 요청의 저장된 응답만 보고 종료 Game을 다시 초기화하지 않는다.
+- 내부 `InitializeVoteRuntime`에는 Room에 보관한 `previous_game_id`·`previous_turn_no`를 함께 전달한다. 외부 HTTP 입력이나 새 게임 규칙이 아니다.
+- 기존 Runtime이 `FINISHED` 또는 `SYSTEM_INVALID`이고 이전 Game/Turn 참조가 일치할 때만 교체한다. `ACTIVE`는 `GAME_RUNTIME_ALREADY_EXISTS`, 이전 참조 불일치는 `STALE_GAME`, 이전 Runtime 유실은 `GAME_RUNTIME_NOT_FOUND`로 거부한다.
+- Headless Fake는 조립된 Room 조회 함수로, Redis는 Lua 안에서 Room의 `PLAYING`·새 Game·마지막 종료 Game/Turn을 대조한다. Room 부재 또는 참조 불일치는 `ROOM_NOT_FOUND` / `GAME_NOT_IN_CURRENT_ROOM`이며 요청 재사용보다 먼저 검사한다.
+- 새 Board와 첫 Turn을 초기화하고 이전 종료 Turn의 Vote·Tally·Resolver Key만 정리한다. Room Request Hash 전체와 DB의 Game·Move·Result·RatingHistory는 지우지 않는다.
+- 교체 뒤 이전 판의 캐시 응답을 현재 판의 성공으로 반환하지 않는다. 같은 새 시작 요청은 중복 초기화 없이 재사용한다.
+- Redis 조회용 Key를 고른 뒤 Game 또는 Turn이 바뀌었다면 `503 REDIS_SNAPSHOT_CHANGED`로 실패시킨다. 서로 다른 판/Turn의 Board·Vote·Resolver를 섞어 반환하지 않으며 다음 조회에서 새 상태를 읽는다.
+
+`tests/vote_runtime/test_next_game.py`는 교체·거부·이전 요청 재시도를, `test_redis_vote_adapter.py`는 전달 Key·오류 분류와 Lua의 정적 조건을 확인한다. `tests/http/test_first_success.py`는 한 판 종료부터 실제 Headless 조립의 두 번째 시작까지 검증한다.
+
 In-memory Fake와 Scripted Redis Client가 같은 Contract Test를 통과하도록 구성한다. Scripted Client는 Port·Key·Codec·Lua 호출 경계와 Adapter 입출력을 검증하지만 Lua Source 자체를 실행하지 않는다. 따라서 이 결과는 실제 Redis 상태 전이의 실행 증거가 아니다.
 
 다음 항목은 별도 Provider Integration Gate에서 확인한다.
@@ -56,5 +68,7 @@ In-memory Fake와 Scripted Redis Client가 같은 Contract Test를 통과하도�
 - Backend Pod에서 `redis.platform.svc.cluster.local:6379` 연결
 - AOF/PVC와 Pod 재기동 뒤 Runtime State 수렴
 - MariaDB·MaxScale를 통한 공식 Move·Result 저장과 Redis 재동기화
+- 같은 시작 `request_id`를 Room/Vote에 전달한 경우, 다음 판 교체 중 지연된 이전 요청, 이전 Turn Key 정리와 조회 경쟁을 실제 Lua에서 검증
+- Room Schema 3 및 Vote 요청 Field 접두사 전환: 운영 중인 이전 Schema/캐시를 그대로 혼용하지 않으며, 승인된 데이터 전환 또는 초기화 절차는 A-10에서 확인
 
 Redis Sentinel/Cluster는 MVP 범위가 아니다. `{room_id}` Hash Tag는 후속 확장을 막지 않기 위한 Key 경계이며 Cluster 검증 완료를 의미하지 않는다.

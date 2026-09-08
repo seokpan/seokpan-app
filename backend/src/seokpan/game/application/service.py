@@ -9,13 +9,23 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
+from seokpan.game.application.history import CompletedGameReplay, replay_completed_game
 from seokpan.game.application.persistence import (
     GameParticipantRecord,
     GamePersistencePort,
     PersistenceOutcome,
+    PersistenceRuleViolation,
     StartGameCommand,
+    StoredGameResult,
 )
-from seokpan.game.domain import Coordinate, GameParticipantRole, Stone
+from seokpan.game.domain import (
+    Coordinate,
+    EndReason,
+    GameParticipantRole,
+    GameStatus,
+    RatingAdjustment,
+    Stone,
+)
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.room.application import (
     NullRealtimeEventAdapter,
@@ -58,6 +68,14 @@ class _AllocatedStart:
     game_id: str
     expected_state_version: int
     started_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class GameResultSnapshot:
+    result: StoredGameResult
+    board: CompletedGameReplay
+    turn_no: int
+    my_rating: RatingAdjustment | None
 
 
 class GameApplicationService:
@@ -113,6 +131,9 @@ class GameApplicationService:
         roster = room_result.start_roster
         if room is None or roster is None:
             raise RoomRuleViolation("GAME_START_RESULT_INVALID")
+        current_room = await self._rooms.get(room.room_id)
+        if current_room is None or current_room.game_id != allocated.game_id:
+            raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
 
         player_entries = tuple(
             entry for entry in roster.entries if entry.role is RoomParticipantRole.PLAYER
@@ -145,6 +166,8 @@ class GameApplicationService:
                 ),
                 deadline_ms=allocated.started_at_ms + room.config.vote_seconds * 1000,
                 expected_state_version=1,
+                previous_game_id=room.last_game_id,
+                previous_turn_no=room.last_game_turn_no,
             )
         )
         completed_before = (
@@ -184,9 +207,70 @@ class GameApplicationService:
         participation = self._require_participation(session)
         room = await self._rooms.get(participation.room_id)
         runtime = await self._votes.get(participation.room_id)
-        if runtime is not None:
+        if room is not None and runtime is not None and runtime.game_id == room.game_id:
             return runtime.state_version, f"/api/v1/games/{runtime.game_id}"
+        if room is not None and room.last_game_id is not None:
+            return room.state_version, f"/api/v1/games/{room.last_game_id}/result"
         return (None if room is None else room.state_version), None
+
+    async def get_result(self, *, session: SessionRecord, game_id: str) -> GameResultSnapshot:
+        participation = self._require_participation(session)
+        room = await self._rooms.get(participation.room_id)
+        if room is None:
+            raise RoomRuleViolation("ROOM_NOT_FOUND")
+        if not any(
+            item.participant_id == participation.participant_id for item in room.participants
+        ):
+            raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
+        try:
+            history = await self._games.load_game(game_id)
+        except PersistenceRuleViolation as error:
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE") from error
+        if history is None:
+            raise PersistenceRuleViolation("GAME_NOT_FOUND")
+        if game_id not in {room.game_id, room.last_game_id}:
+            raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
+        stored = await self._games.load_result(game_id)
+        if stored is None:
+            if game_id == room.game_id:
+                raise PersistenceRuleViolation("GAME_NOT_FINISHED")
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        if stored.room_id != room.room_id or history.start.room_id != room.room_id:
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        if game_id == room.last_game_id:
+            final_turn_no = room.last_game_turn_no
+        else:
+            runtime = await self._votes.get(room.room_id)
+            if (
+                runtime is None
+                or runtime.game_id != game_id
+                or runtime.game_status is GameStatus.ACTIVE
+            ):
+                raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+            final_turn_no = runtime.turn_no
+        if final_turn_no is None or final_turn_no < max(
+            (item.turn_no for item in history.moves), default=1
+        ):
+            raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
+        try:
+            board = replay_completed_game(history, stored.status, stored.end_reason, stored.winner)
+        except PersistenceRuleViolation as error:
+            raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH") from error
+        if stored.end_reason in {EndReason.BLACK_WIN, EndReason.WHITE_WIN, EndReason.DRAW} and (
+            final_turn_no != history.moves[-1].turn_no
+        ):
+            raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH")
+        my_rating = next(
+            (
+                item
+                for item in stored.rating_adjustments
+                if session.actor_type is SessionActorType.MEMBER
+                and str(item.member_id) == session.actor_id
+                and item.participant_id == participation.participant_id
+            ),
+            None,
+        )
+        return GameResultSnapshot(stored, board, final_turn_no, my_rating)
 
     async def cast_vote(
         self,
