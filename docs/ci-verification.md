@@ -2,7 +2,7 @@
 
 [App #60](https://github.com/seokpan/seokpan-app/issues/60), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-09 첫 작업이다. Jenkins 연결은 [#40](https://github.com/seokpan/seokpan-app/issues/40), main Image Pipeline은 [#58](https://github.com/seokpan/seokpan-app/issues/58)에서 담당한다.
 
-**검증 상태:** 기존 Windows 전체 검증은 아래 실행 ID·Commit의 결과로 보존한다. 이후 [PR #61](https://github.com/seokpan/seokpan-app/pull/61)의 Jenkins Build #2에서 Linux Backend 테스트 1건이 실패했다. 종료 판정 테스트의 보완과 별도 Windows 회귀 결과는 아래 Jenkins 실패 절을 참고한다. 보완 후 Linux/Jenkins 성공은 아직 확인하지 않았으며 Image/Harbor·실제 Provider 검증도 남아 있다.
+**검증 상태:** 기존 Windows 전체 검증은 아래 실행 ID·Commit의 결과로 보존한다. [PR #61](https://github.com/seokpan/seokpan-app/pull/61)의 Jenkins Build #2에서 발견한 종료 판정 테스트를 보완한 Commit `230a1ba`의 Build #3은 GitHub status `success`를 확인했다. 같은 Commit의 실제 Node 원본 파일 Linux 시험도 5 PASS·exit 0과 시험 Pod 삭제를 확인했다. 아래 실행 근거와 범위를 참고한다. 이 결과를 Frontend 도구 전체 Linux 시험·Image Runtime Smoke·Harbor 또는 실제 Provider 통합 성공으로 확대하지 않는다.
 
 ## 고정 도구와 변경 범위
 
@@ -211,7 +211,7 @@ GitHub의 `This commit cannot be built`는 이 결과에 대한 포괄적 표시
 | 무관한 프로세스 보존 | Python·Node 각각 네 번 모두 ALIVE |
 | 종료 | `PYTHON_DIAGNOSTIC_PASS`·`NODE_DIAGNOSTIC_PASS`, 두 Pod 각각 삭제 메시지·`FINAL_EXIT_CODE=0` |
 
-이 결과는 종료된 자식의 남은 PID 때문에 기존 판정이 실패할 수 있음을 두 CI 이미지에서 재현한 근거다. `Z`는 실행 종료이며 PID 정리까지 완료됐다는 뜻은 아니다. Jenkins Build #2 자체의 PID 상태를 사후 복원한 자료는 아니다. 진단은 동일한 POSIX 종료 방식을 재현한 독립 코드이며, 미커밋 App 테스트 파일이나 전체 pytest/Jenkins를 Linux에서 실행한 결과로 사용하지 않는다. 보완된 실제 App 검사의 Linux 결과는 아직 남아 있다.
+이 결과는 종료된 자식의 남은 PID 때문에 기존 판정이 실패할 수 있음을 두 CI 이미지에서 재현한 근거다. `Z`는 실행 종료이며 PID 정리까지 완료됐다는 뜻은 아니다. Jenkins Build #2 자체의 PID 상태를 사후 복원한 자료는 아니다. 진단은 동일한 POSIX 종료 방식을 재현한 독립 코드이며, 당시 미커밋 App 테스트 파일이나 전체 pytest/Jenkins를 Linux에서 실행한 결과로 사용하지 않는다. 이후 실제 파일 실행은 아래 별도 절에 기록한다.
 
 ### 보완 후 로컬 회귀와 남은 확인
 
@@ -226,9 +226,32 @@ Backend 테스트 파일은 첫 Run부터 동일하며, Frontend의 같은 문�
 
 초기 로컬 실행은 Windows 파일/임시 경로 권한 부족으로 실패했고, 허용된 로컬 실행에서 재검증했다. Node 보고서 출력 디렉터리를 만들지 않은 실행도 시작 전에 실패해 새 실행 ID로 재수행했다. 이 실패들을 Linux 결함의 재현이나 성공 결과로 사용하지 않는다.
 
-독립 Linux 진단은 위와 같이 완료했다. 다음은 별도 승인 후 보완된 테스트를 Commit/Push하고 실제 Jenkins에서 PR의 Backend/Frontend 검사와 두 Image Build Verify 결과를 확인하는 것이다. 현재 Jenkinsfile의 `uv run pytest`에는 수정한 Backend 테스트가 포함되지만, Frontend의 `npm test`는 `vite.config.ts`의 `src/**/*.test.{ts,tsx}`만 실행하므로 `npm run test:tooling`을 대신하지 않는다. 따라서 Jenkins 성공만으로 수정한 Node 도구 시험의 Linux 성공을 주장하지 않는다. 같은 Commit의 `ci-process.mjs`·`ci-process.test.mjs` 두 원본 파일과 해시를 확인한 뒤, 별도 승인된 Linux 환경에서 `node --test scripts/ci-process.test.mjs`의 5개 시험을 확인한다. Node 표준 모듈만 필요하며 npm 설치·Python·실제 Provider는 필요하지 않다. 이 결과는 전체 81개 도구 시험이나 전체 Linux CI 성공이 아니다. 지속적인 도구 검사 연결은 기존 #40/#58에 남기며 담당자의 Jenkinsfile을 이번 보완에서 대신 수정하지 않는다.
+현재 Jenkinsfile의 `uv run pytest`에는 수정한 Backend 테스트가 포함되지만, Frontend의 `npm test`는 `vite.config.ts`의 `src/**/*.test.{ts,tsx}`만 실행하므로 `npm run test:tooling`을 대신하지 않는다. 따라서 Jenkins 성공과 아래 Node 원본 파일 Linux 시험을 별도 근거로 구분한다. 지속적인 도구 검사 연결은 기존 #40/#58에 남기며 담당자의 Jenkinsfile을 이번 보완에서 대신 수정하지 않는다.
 
-독립 진단을 실제 수정 파일의 Linux 시험으로 대체하지 않으며 실패하면 추가 보완한다. 새 Commit의 리뷰 승인·기존 Jenkins 검사 통과·수정 Node 도구 시험의 Linux 결과 확인 전에는 PR을 병합하지 않는다. 기존 Windows 전체 Run은 새 Commit의 실행 결과로 다시 표시하지 않는다.
+### 실제 Node 원본 파일 Linux 시험 — 2026-09-09
+
+다음은 cp-01에서 `cicd/app-pr61-node-source-check` 일회성 Pod를 실행한 담당자가 제공한 터미널 출력의 요약이다. 앞선 독립 진단과 달리 GitHub의 아래 Commit에서 원본 두 파일을 내려받아 SHA-256 일치 후 그대로 실행한 결과다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 검증 대상 Commit | `230a1ba5817f1074c873a34b2cdbb022bf117bcf` |
+| 이미지 | `node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43` |
+| Runtime | Linux, Node `v24.19.0`, UID `1000` |
+| 명령 | `node --test --test-reporter=tap scripts/ci-process.test.mjs` |
+| 시험 결과 | tests 5, pass 5, fail/cancelled/skipped/todo 각각 0 |
+| 시간 | TAP `duration_ms: 1740.454969` — 단일 시험 실행값이며 성능 기준 아님 |
+| 종료·정리 | `TEST_EXIT_CODE=0`, `NODE_SOURCE_TEST_PASS`, 시험 Pod 삭제, `FINAL_EXIT_CODE=0` |
+
+| 원본 파일 | 출력에서 확인한 SHA-256 |
+| --- | --- |
+| [ci-process.mjs](https://github.com/seokpan/seokpan-app/blob/230a1ba5817f1074c873a34b2cdbb022bf117bcf/frontend/scripts/ci-process.mjs) | `288f873143d2056cc672e32f75dd0379d3f53813bf806f1711bc5720831843d5` |
+| [ci-process.test.mjs](https://github.com/seokpan/seokpan-app/blob/230a1ba5817f1074c873a34b2cdbb022bf117bcf/frontend/scripts/ci-process.test.mjs) | `3fbb128c943f82a97e169a5a74e3ba62b7432d3d895e84c1250253cb3c1453b2` |
+
+실제 다섯 시험은 상태·조회 오류 구분, 종료 지연·미종료 거부, 명령 성공/실패/시작 실패, timeout 시 부모·자식 종료와 무관한 프로세스 보존, 잘못된 timeout 거부다. 모두 `ok`였으며 원본 테스트 코드나 실행 함수를 수정하지 않았다. 표준 Node 모듈만 사용했고 npm 설치·Python·실제 Provider는 필요하지 않았다. 이 결과는 Frontend 도구 전체 81개나 전체 Linux CI 실행 결과가 아니다.
+
+동일 Commit의 [Jenkins GitHub status](https://api.github.com/repos/seokpan/seokpan-app/commits/230a1ba5817f1074c873a34b2cdbb022bf117bcf/status)는 `continuous-integration/jenkins/pr-head=success`, Build #3을 가리킨다. 이는 API로 직접 확인한 상태이며 이번 기록에서 Build #3 Console의 개별 시험 수를 새로 집계한 것은 아니다. 별도 Node 시험의 근거는 위 담당자 제공 출력이며 Jenkins 결과와 구분한다.
+
+이 결과를 추가하는 문서 전용 Commit은 검증 대상 Commit `230a1ba`와 구분한다. 코드·테스트·Lock·실행 설정이 바뀌면 해당 검증을 다시 수행하며, 문서만 바뀌어도 새 Head의 Jenkins 결과와 재리뷰를 확인한 뒤 병합한다. 기존 Windows 전체 Run도 새 Commit의 실행 결과로 다시 표시하지 않는다.
 
 ## Windows 실행 결과 — 2026-09-09
 
