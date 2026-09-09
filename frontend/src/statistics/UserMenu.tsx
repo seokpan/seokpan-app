@@ -9,12 +9,20 @@ import s from "./statistics.module.css";
 
 function MemberRecord({ identity }: { identity: SessionIdentity }) {
   const { data, pending, error, refresh } = useRankings(identity, 0, 1);
-  return <>
-    {pending && <p role="status">전적을 불러오고 있습니다.</p>}
-    {error != null && <p role="alert">{failureMessage(error)} {data && "마지막으로 확인한 기록입니다."}</p>}
-    {data?.me && <RecordSummary record={data.me} />}
-    <button disabled={pending} onClick={refresh}>{error != null ? "전적 다시 조회" : "전적 새로고침"}</button>
-  </>;
+  return (
+    <>
+      {pending && <p role="status">전적을 불러오고 있습니다.</p>}
+      {error != null && (
+        <p role="alert">
+          {failureMessage(error)} {data && "마지막으로 확인한 기록입니다."}
+        </p>
+      )}
+      {data?.me && <RecordSummary record={data.me} />}
+      <button disabled={pending} onClick={refresh}>
+        {error != null ? "전적 다시 조회" : "전적 새로고침"}
+      </button>
+    </>
+  );
 }
 export function UserMenu({ identity }: { identity: SessionIdentity }) {
   const { busy, logout } = useSession();
@@ -23,25 +31,62 @@ export function UserMenu({ identity }: { identity: SessionIdentity }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
   const location = useLocation();
-  useEffect(() => { setOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
   useEffect(() => {
     if (!open) return;
-    const outside = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) setOpen(false); };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); } };
+    const outside = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
   }, [open]);
-  return <div ref={container} className={s.userMenu} onBlur={event => {
-    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
-  }}>
-    <button ref={trigger} aria-label="내 전적 메뉴" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
-      <span aria-hidden="true">◉ </span>{identity.display_name} · {identity.actor_type === "MEMBER" ? "Member" : "Guest"}
-    </button>
-    {open && <section id={id} aria-label="사용자 정보" className={s.popover}>
-      <h2>{identity.display_name} <small>{identity.actor_type === "MEMBER" ? "Member" : "Guest"}</small></h2>
-      {identity.actor_type === "MEMBER" ? <MemberRecord identity={identity} /> : <p>Guest의 개인 전적과 Rating은 저장되지 않습니다.</p>}
-      <button className={s.logout} disabled={busy} onClick={() => void logout()}>로그아웃</button>
-    </section>}
-  </div>;
+  return (
+    <div
+      ref={container}
+      className={s.userMenu}
+      onBlur={(event) => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node))
+          setOpen(false);
+      }}
+    >
+      <button
+        ref={trigger}
+        aria-label="내 전적 메뉴"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">◉ </span>
+        {identity.display_name} · {identity.actor_type === "MEMBER" ? "Member" : "Guest"}
+      </button>
+      {open && (
+        <section id={id} aria-label="사용자 정보" className={s.popover}>
+          <h2>
+            {identity.display_name}{" "}
+            <small>{identity.actor_type === "MEMBER" ? "Member" : "Guest"}</small>
+          </h2>
+          {identity.actor_type === "MEMBER" ? (
+            <MemberRecord identity={identity} />
+          ) : (
+            <p>Guest의 개인 전적과 Rating은 저장되지 않습니다.</p>
+          )}
+          <button className={s.logout} disabled={busy} onClick={() => void logout()}>
+            로그아웃
+          </button>
+        </section>
+      )}
+    </div>
+  );
 }

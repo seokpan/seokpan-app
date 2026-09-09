@@ -1,9 +1,18 @@
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { reportDirectory } from "./scripts/ci-paths.mjs";
+
+const ciReports = process.env.SEOKPAN_CI_RUN_ID ? reportDirectory("browser-full") : undefined;
 
 const backend = fileURLToPath(new URL("../backend/", import.meta.url));
-const python = fileURLToPath(new URL(process.platform === "win32"
-  ? "../backend/.venv/Scripts/python.exe" : "../backend/.venv/bin/python", import.meta.url));
+const python = fileURLToPath(
+  new URL(
+    process.platform === "win32"
+      ? "../backend/.venv/Scripts/python.exe"
+      : "../backend/.venv/bin/python",
+    import.meta.url,
+  ),
+);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -14,7 +23,14 @@ export default defineConfig({
   forbidOnly: true,
   timeout: 150_000,
   expect: { timeout: 12_000 },
-  reporter: [["list"], ["json", { outputFile: "test-results/browser-e2e.json" }]],
+  outputDir: ciReports ? `${ciReports}/artifacts` : "test-results/full-artifacts",
+  reporter: ciReports
+    ? [
+        ["list"],
+        ["json", { outputFile: `${ciReports}/results.json` }],
+        ["junit", { outputFile: `${ciReports}/junit.xml` }],
+      ]
+    : [["list"], ["json", { outputFile: "test-results/browser-e2e.json" }]],
   use: {
     baseURL: "http://localhost:5175",
     browserName: "chromium",
@@ -24,7 +40,9 @@ export default defineConfig({
     navigationTimeout: 15_000,
     acceptDownloads: false,
     // Traces/HAR can contain cookies, passwords and CSRF response bodies.
-    trace: "off", video: "off", screenshot: "off",
+    trace: "off",
+    video: "off",
+    screenshot: "off",
   },
   webServer: [
     {

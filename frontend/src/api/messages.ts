@@ -34,12 +34,17 @@ const messages: Record<string, string> = {
 };
 
 export function failureMessage(error: unknown): string {
-  if (!(error instanceof ApiFailure)) return "요청을 처리하지 못했습니다. 잠시 후 다시 확인해 주세요.";
+  if (!(error instanceof ApiFailure))
+    return "요청을 처리하지 못했습니다. 잠시 후 다시 확인해 주세요.";
   if (error.kind === "timeout" || error.kind === "network" || error.kind === "aborted") {
     return "서버 응답을 확인하지 못했습니다. 요청이 처리되었을 수 있으니 현재 상태를 확인해 주세요.";
   }
-  if (error.kind === "invalid-response") return "서버 응답을 읽지 못했습니다. 상태를 다시 확인해 주세요.";
-  return messages[error.code] ?? (error.status === 503
-    ? "서버가 잠시 요청을 처리할 수 없습니다. 잠시 후 다시 확인해 주세요."
-    : "요청을 처리하지 못했습니다. 입력과 현재 상태를 확인해 주세요.");
+  if (error.kind === "invalid-response")
+    return "서버 응답을 읽지 못했습니다. 상태를 다시 확인해 주세요.";
+  return (
+    messages[error.code] ??
+    (error.status === 503
+      ? "서버가 잠시 요청을 처리할 수 없습니다. 잠시 후 다시 확인해 주세요."
+      : "요청을 처리하지 못했습니다. 입력과 현재 상태를 확인해 주세요.")
+  );
 }

@@ -12,6 +12,8 @@ React 19.2.8, TypeScript 5.9.3 strict, Vite 8.2.2와 npm Lock을 사용합니다
 
 ## Development
 
+App #60에서 Format/Lint 및 실행별 JUnit·coverage 구성을 추가했다. 고정 도구·명령·보고서 위치와 남은 CI 연동은 [Application CI 검증](../docs/ci-verification.md)을 따른다. `npm run verify`에는 Format/Lint와 검사 도구 시험도 포함한다. `npm run test:ci -- --run-id <새-ID>`는 결과를 저장소 루트 `test-results/`에 기록하며 기존 실행 ID 재사용을 거부한다. 아래 A-08 수치는 당시 기능 검증 이력이다.
+
 2026-09-08 최신: 방 생성·공개/비공개 입장을 모달로 전환하고 입력/오류·중복 요청·인증 복구·
 초점·목록 변경을 연결했습니다. [방 생성·입장 검증](docs/room-entry.md),
 [최신 전체 Browser 시험](docs/browser-e2e.md)을 참고하세요. 아래 날짜별 수치와 대기 항목은 당시 기록입니다.
@@ -45,6 +47,6 @@ npm audit
 ## API 연결 검사
 
 `npm run api:generate`로 현재 Backend 명세에서 Type을 생성하고 `npm run api:check`로
-차이를 검사합니다. `npm run verify`는 명세·Type Check·Test·Build를 함께 실행합니다.
+차이를 검사합니다. `npm run verify`는 명세·Format/Lint·Type Check·도구/기능 Test·Build를 함께 실행합니다.
 Backend Python이 필요한 기본 실행과 CI Container 간 JSON 전달 방식, CSRF·세션 복구
 검증 범위는 [API와 세션 연결 안내](docs/api-and-session.md)를 참고하세요.

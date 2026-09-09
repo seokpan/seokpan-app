@@ -473,11 +473,34 @@ def test_guest_identity_promotion_preserves_participant_state() -> None:
     assert promoted.team is Team.WHITE
     assert promoted.ready is True
     assert room.state_version == version_before + 1
+    promoted_version = room.state_version
+    room.change_identity(participant_id="guest-1", actor_type=ActorType.MEMBER)
+    assert room.participant("guest-1") == promoted
+    assert room.state_version == promoted_version
     assert_rejected_without_mutation(
         room,
         "ROOM_IDENTITY_CHANGE_NOT_ALLOWED",
         lambda: room.change_identity(participant_id="guest-1", actor_type=ActorType.GUEST),
     )
+
+
+def test_empty_game_id_and_completion_in_wrong_state_preserve_room() -> None:
+    room = create_room()
+    assert_rejected_without_mutation(
+        room,
+        "INVALID_GAME_ID",
+        lambda: room.start_game(actor_id="member-owner", game_id=""),
+    )
+    assert_rejected_without_mutation(
+        room, "ROOM_NOT_PLAYING", lambda: room.complete_game(game_id="game-1")
+    )
+    join_ready_player(room, "black", Team.BLACK)
+    join_ready_player(room, "white", Team.WHITE)
+    room.start_game(actor_id="member-owner", game_id="game-1")
+    assert_rejected_without_mutation(
+        room, "STALE_GAME", lambda: room.complete_game(game_id="game-old")
+    )
+    assert room.game_id == "game-1"
 
 
 def test_platform_failure_cannot_be_recorded_as_participant_disconnect() -> None:

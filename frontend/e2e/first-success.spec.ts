@@ -19,7 +19,11 @@ async function member(page: Page, suffix: string) {
   await registration.getByLabel("닉네임", { exact: true }).fill(name);
   await registration.getByLabel("비밀번호", { exact: true }).fill(password);
   await page.getByRole("button", { name: "가입하기", exact: true }).click();
-  await expect(page.getByText("회원가입이 완료되었습니다. 아이디와 비밀번호로 로그인해 주세요.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("회원가입이 완료되었습니다. 아이디와 비밀번호로 로그인해 주세요.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.getByLabel("아이디", { exact: true }).fill(id);
   await page.getByLabel("비밀번호", { exact: true }).fill(password);
   await page.getByRole("button", { name: "로그인", exact: true }).click();
@@ -29,40 +33,76 @@ async function member(page: Page, suffix: string) {
 
 async function join(page: Page) {
   await page.getByRole("button", { name: "목록 새로고침" }).click();
-  await page.getByRole("row").filter({ hasText: roomTitle }).getByRole("button", { name: "입장", exact: true }).click();
-  await page.getByRole("dialog", { name: "비공개 방 입장" }).getByLabel("방 비밀번호").fill(roomPassword.slice(0, 16));
+  await page
+    .getByRole("row")
+    .filter({ hasText: roomTitle })
+    .getByRole("button", { name: "입장", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "비공개 방 입장" })
+    .getByLabel("방 비밀번호")
+    .fill(roomPassword.slice(0, 16));
   await page.getByRole("button", { name: "입장 확인" }).click();
   await expect(page.getByRole("heading", { name: roomTitle, exact: true })).toBeVisible();
 }
 
 async function roster(pages: Page[], name: string, ready: boolean) {
   for (const page of pages) {
-    await expect(page.getByRole("listitem").filter({ hasText: name })).toContainText(ready ? " · Ready" : "미준비");
+    await expect(page.getByRole("listitem").filter({ hasText: name })).toContainText(
+      ready ? " · Ready" : "미준비",
+    );
   }
 }
 
 async function vote(page: Page, coordinate: string, team: "흑" | "백") {
-  await expect(page.getByRole("heading", { name: `${team === "흑" ? "●" : "○"} ${team}팀 차례` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: `${team === "흑" ? "●" : "○"} ${team}팀 차례` }),
+  ).toBeVisible();
   await page.getByRole("button", { name: `${coordinate} 빈 자리`, exact: true }).click();
   await expect(page.getByText(`내 투표: ${coordinate}`, { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(`^${coordinate} ${team}돌(?:, 마지막 착수)?$`) })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(`^${coordinate} ${team}돌(?:, 마지막 착수)?$`) }),
+  ).toBeVisible();
 }
 
-test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → 다음 판 → Guest PLAYER", async ({ browser, baseURL }, info) => {
-  await info.attach("environment", { contentType: "application/json", body: JSON.stringify({
-    node: process.versions.node, playwright: require("@playwright/test/package.json").version,
-    browser: browser.version(), os: platform(), osRelease: release(),
-    provider: "volatile-memory", baseURL,
-  }) });
+test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → 다음 판 → Guest PLAYER", async ({
+  browser,
+  baseURL,
+}, info) => {
+  await info.attach("environment", {
+    contentType: "application/json",
+    body: JSON.stringify({
+      node: process.versions.node,
+      playwright: require("@playwright/test/package.json").version,
+      browser: browser.version(),
+      os: platform(),
+      osRelease: release(),
+      provider: "volatile-memory",
+      baseURL,
+    }),
+  });
   // Isolated contexts, not tabs sharing one login cookie. No storageState reuse.
-  const contexts = await Promise.all([0, 1, 2].map(() => browser.newContext({
-    baseURL, acceptDownloads: false, viewport: { width: 1280, height: 900 },
-  })));
-  const [black, white, guest] = await Promise.all(contexts.map(context => context.newPage()));
+  const contexts = await Promise.all(
+    [0, 1, 2].map(() =>
+      browser.newContext({
+        baseURL,
+        acceptDownloads: false,
+        viewport: { width: 1280, height: 900 },
+      }),
+    ),
+  );
+  const [black, white, guest] = await Promise.all(contexts.map((context) => context.newPage()));
   const pages = [black, white, guest];
-  pages.forEach(page => { page.setDefaultTimeout(10_000); page.setDefaultNavigationTimeout(15_000); });
+  pages.forEach((page) => {
+    page.setDefaultTimeout(10_000);
+    page.setDefaultNavigationTimeout(15_000);
+  });
   let pageErrors = 0;
-  pages.forEach(page => page.on("pageerror", () => { pageErrors += 1; }));
+  pages.forEach((page) =>
+    page.on("pageerror", () => {
+      pageErrors += 1;
+    }),
+  );
   try {
     const blackName = await member(black, "흑");
     const whiteName = await member(white, "백");
@@ -70,7 +110,8 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await guest.getByRole("button", { name: "Guest로 시작하기 →" }).click();
     await expect(guest.getByRole("heading", { name: "게임 방", exact: true })).toBeVisible();
     await expect(guest.getByRole("button", { name: "방 생성" })).toHaveCount(0);
-    for (const page of pages) await expect(page.getByLabel("전체 접속자", { exact: true })).toHaveText("접속 3명");
+    for (const page of pages)
+      await expect(page.getByLabel("전체 접속자", { exact: true })).toHaveText("접속 3명");
     const extraTab = await contexts[0].newPage();
     await extraTab.goto("/lobby");
     await expect(extraTab.getByLabel("전체 접속자", { exact: true })).toHaveText("접속 3명");
@@ -84,7 +125,7 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await white.evaluate("window.dispatchEvent(new Event('focus'))");
     await expect(white.getByLabel("로비 채팅 메시지 입력", { exact: true })).toBeEnabled();
     await expect(white.getByRole("log")).toContainText(lobbyMessage);
-    expect(await lobbyLog!.evaluate(node => node.isConnected)).toBe(true);
+    expect(await lobbyLog!.evaluate((node) => node.isConnected)).toBe(true);
     await black.getByRole("button", { name: "방 생성" }).click();
     await black.getByLabel("방 이름", { exact: true }).fill(roomTitle);
     await black.getByLabel("공개 여부").selectOption("PRIVATE");
@@ -104,17 +145,23 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await black.evaluate("window.dispatchEvent(new Event('focus'))");
     await expect(black.getByLabel("방 채팅 메시지 입력", { exact: true })).toBeEnabled();
     await expect(black.getByRole("log")).toContainText(roomMessage);
-    expect(await roomLog!.evaluate(node => node.isConnected)).toBe(true);
+    expect(await roomLog!.evaluate((node) => node.isConnected)).toBe(true);
     await black.getByRole("button", { name: "흑팀 선택" }).click();
-    await expect(white.getByRole("heading", { name: "● 흑팀", exact: true }).locator("..")).toContainText(blackName);
+    await expect(
+      white.getByRole("heading", { name: "● 흑팀", exact: true }).locator(".."),
+    ).toContainText(blackName);
     await white.getByRole("button", { name: "백팀 선택" }).click();
-    await expect(black.getByRole("heading", { name: "○ 백팀", exact: true }).locator("..")).toContainText(whiteName);
+    await expect(
+      black.getByRole("heading", { name: "○ 백팀", exact: true }).locator(".."),
+    ).toContainText(whiteName);
     await black.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, blackName, true);
     await white.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, whiteName, true);
     await black.getByRole("button", { name: "게임 시작", exact: true }).click();
-    await expect(guest.getByText("관전 중 · 이번 판에는 투표할 수 없습니다.", { exact: true })).toBeVisible();
+    await expect(
+      guest.getByText("관전 중 · 이번 판에는 투표할 수 없습니다.", { exact: true }),
+    ).toBeVisible();
     await expect(guest.getByRole("button", { name: "투표 취소" })).toHaveCount(0);
     await expect(guest.getByText(/다른 빈 자리를 선택하면 표가 변경됩니다/)).toHaveCount(0);
     await guest.getByRole("button", { name: "게임 방법", exact: true }).click();
@@ -129,7 +176,9 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     }
     for (const page of pages) {
       await expect(page.getByRole("heading", { name: "흑팀 승리", exact: true })).toBeVisible();
-      await expect(page.getByText("마지막 투표 기회 9번째 · 공식 착수 9수", { exact: true })).toBeVisible();
+      await expect(
+        page.getByText("마지막 투표 기회 9번째 · 공식 착수 9수", { exact: true }),
+      ).toBeVisible();
     }
     await expect(black.getByText("내 Rating: 1000 → 1016 (+16)", { exact: true })).toBeVisible();
     await expect(white.getByText("내 Rating: 1000 → 984 (-16)", { exact: true })).toBeVisible();
@@ -163,46 +212,68 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await white.getByRole("button", { name: "게임 시작", exact: true }).click();
     for (const page of pages) {
       await expect(page.getByRole("button", { name: "A1 빈 자리", exact: true })).toBeVisible();
-      await expect(page.getByRole("heading", { name: "양 팀 공동 패배", exact: true })).toBeVisible();
-      await expect(page.getByText("마지막 투표 기회 2번째 · 공식 착수 0수", { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "양 팀 공동 패배", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("마지막 투표 기회 2번째 · 공식 착수 0수", { exact: true }),
+      ).toBeVisible();
       await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
     }
     await guest.getByRole("button", { name: "흑팀 선택" }).click();
-    await expect(white.getByRole("heading", { name: "● 흑팀", exact: true }).locator("..")).toContainText("Guest-");
+    await expect(
+      white.getByRole("heading", { name: "● 흑팀", exact: true }).locator(".."),
+    ).toContainText("Guest-");
     await guest.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, "Guest-", true);
     await white.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, whiteName, true);
     await white.getByRole("button", { name: "게임 시작", exact: true }).click();
-    await expect(black.getByText("관전 중 · 이번 판에는 투표할 수 없습니다.", { exact: true })).toBeVisible();
+    await expect(
+      black.getByText("관전 중 · 이번 판에는 투표할 수 없습니다.", { exact: true }),
+    ).toBeVisible();
     await expect(black.getByRole("button", { name: "투표 취소" })).toHaveCount(0);
     await vote(guest, "H8", "흑");
     for (const page of pages) {
-      await expect(page.getByRole("heading", { name: "양 팀 공동 패배", exact: true })).toBeVisible();
-      await expect(page.getByText("마지막 투표 기회 3번째 · 공식 착수 1수", { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "양 팀 공동 패배", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("마지막 투표 기회 3번째 · 공식 착수 1수", { exact: true }),
+      ).toBeVisible();
     }
     await expect(black.getByText(/본인의 Rating 변동 내역이 없습니다/)).toBeVisible();
     await expect(guest.getByText(/본인의 Rating 변동 내역이 없습니다/)).toBeVisible();
-    for (const page of pages) await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
+    for (const page of pages)
+      await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
     const guestName = await guest.getByRole("button", { name: "내 전적 메뉴" }).innerText();
     const guestDisplay = guestName.match(/Guest-[A-Z0-9]+/)![0];
     await white.getByRole("button", { name: `${guestDisplay} 강퇴`, exact: true }).click();
-    await white.getByRole("dialog", { name: "참가자 강퇴" }).getByRole("button", { name: "강퇴 확인" }).click();
+    await white
+      .getByRole("dialog", { name: "참가자 강퇴" })
+      .getByRole("button", { name: "강퇴 확인" })
+      .click();
     await expect(guest.getByRole("heading", { name: "게임 방", exact: true })).toBeVisible();
     await expect(guest.getByLabel("전체 접속자", { exact: true })).toHaveText("접속 3명");
-    await expect(guest.getByText("방장에 의해 퇴장했습니다. 로비로 이동합니다.", { exact: true })).toBeVisible();
+    await expect(
+      guest.getByText("방장에 의해 퇴장했습니다. 로비로 이동합니다.", { exact: true }),
+    ).toBeVisible();
     await guest.getByRole("button", { name: "방 안내 닫기", exact: true }).click();
-    await expect(guest.getByText("방장에 의해 퇴장했습니다. 로비로 이동합니다.", { exact: true })).toHaveCount(0);
+    await expect(
+      guest.getByText("방장에 의해 퇴장했습니다. 로비로 이동합니다.", { exact: true }),
+    ).toHaveCount(0);
     await join(guest);
     await black.getByRole("button", { name: "내 전적 메뉴", exact: true }).click();
     await black.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(black.getByRole("heading", { name: "Member 로그인", exact: true })).toBeVisible();
     await white.getByRole("button", { name: "내 전적 메뉴", exact: true }).click();
     await white.getByRole("button", { name: "로그아웃", exact: true }).click();
-    await expect(guest.getByText("방이 종료되었습니다. 로비로 이동합니다.", { exact: true })).toBeVisible();
+    await expect(
+      guest.getByText("방이 종료되었습니다. 로비로 이동합니다.", { exact: true }),
+    ).toBeVisible();
     await expect(guest.getByText("아직 열린 방이 없습니다.", { exact: true })).toBeVisible();
     expect(pageErrors).toBe(0);
   } finally {
-    await Promise.all(contexts.map(context => context.close()));
+    await Promise.all(contexts.map((context) => context.close()));
   }
 });

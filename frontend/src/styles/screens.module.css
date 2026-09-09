@@ -1,75 +1,371 @@
-.header { background: #081637; color: white; padding: 1.1rem max(1rem, calc((100vw - 1160px) / 2)); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
-.header a { color: white; text-decoration: none; }
-.header a[aria-current="page"] { color: #54e0e5; text-decoration: underline; text-underline-offset: .5rem; }
-.brand { font-size: 1.35rem; font-weight: 800; }
-.brand span { margin-right: .5rem; }
-.header nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
-.header button { background: transparent; color: white; border: 1px solid #73809b; border-radius: .4rem; padding: .45rem .7rem; }
-.shell { max-width: 1160px; margin: 0 auto; padding: 2rem 1.25rem 4rem; min-height: 80vh; }
-.hero { text-align: center; padding: 1rem 0 2rem; }
-.hero h1 { font-size: clamp(2rem, 5vw, 3.6rem); margin: .5rem 0; letter-spacing: -.045em; }
-.hero p { font-size: 1.15rem; }
-.hero strong { color: #007d8c; }
-.authGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; max-width: 960px; margin: auto; align-items: stretch; }
-.teamGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
-.card { padding: clamp(1.25rem, 3vw, 2.5rem); border: 1px solid #e0e5ee; border-radius: 1.1rem; background: white; box-shadow: 0 6px 24px #071b3a0c; }
-.card h1, .card h2 { margin-top: 0; overflow-wrap: anywhere; }
-.card h2 { font-size: 1.5rem; }
-.roomCard { padding: clamp(1rem, 2vw, 1.75rem); }
-.guestCard { background: linear-gradient(145deg, #123a6c, #081b3f); color: white; display: flex; flex-direction: column; justify-content: center; gap: 1rem; }
-.guestCard p { color: #dce9f7; line-height: 1.8; }
-.stones { font-size: 3rem; letter-spacing: -.4rem; }
-.card label { display: block; font-weight: 650; margin: 1.1rem 0 .4rem; }
-.card input { width: 100%; border: 1px solid #a1afc4; border-radius: .5rem; padding: .8rem; background: white; color: #112343; }
-.card input, .card select { min-height: 46px; }
-.authCard { min-height: 440px; }
-.authDialog { width: min(480px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; color: #112343; }
-.authDialog::backdrop { background: #081637a6; }
-:global(body:has(dialog[open])) .shell > .notice { visibility: hidden; }
-.dialogHeading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.dialogHeading h2 { margin: 0; }
-.dialogClose { min-width: 44px; min-height: 44px; border: 1px solid #a1afc4; border-radius: .5rem; background: white; color: #123c78; font-size: 1.25rem; }
-.card small { display: block; color: #52617a; margin: .4rem 0; line-height: 1.5; }
-.primaryButton, .secondaryButton, .tealButton { border-radius: .6rem; padding: .8rem 1.2rem; font-weight: 700; min-height: 44px; border: 1px solid transparent; }
-.primaryButton { color: white; background: #123c78; margin-top: 1.2rem; width: 100%; }
-.secondaryButton { color: #123c78; background: white; border-color: #8b9fbe; }
-.card > .secondaryButton { margin-top: .9rem; width: 100%; }
-.tealButton { background: #007c87; color: white; border-color: #35d0d7; }
-.error { color: #9c2432; background: #fff1f1; padding: .8rem; border-radius: .4rem; }
-.notice { background: #e5f2f4; border-left: 3px solid #007c87; padding: 1rem; line-height: 1.6; }
-.muted { color: #52617a; line-height: 1.6; }
-.sectionHeading { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: center; }
-.sectionHeading > * { min-width: 0; max-width: 100%; }
-.sectionHeading h1 { margin-bottom: .5rem; }
-.empty { text-align: center; color: #52617a; padding: 3rem 1rem; }
-.tableScroll { overflow-x: auto; }
-.card table { border-collapse: collapse; width: 100%; text-align: left; min-width: 430px; }
-.card th, .card td { padding: 1rem .6rem; border-bottom: 1px solid #e0e5ee; overflow-wrap: anywhere; }
-.card thead { background: #f5f7fa; }
-.footer { text-align: center; padding: 1.5rem; color: #52617a; font-size: .85rem; }
-.visuallyHidden, .skipLink:not(:focus) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.skipLink:focus { display: block; padding: 1rem; }
-.entryForm { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid #a1afc4; border-radius: .7rem; max-width: 600px; }
-.entryDialog { width: min(560px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; color: #112343; }
-.entryDialog::backdrop { background: #081637a6; }
-.entryDialog form { margin-top: 1rem; }
-.entryDialog fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
-.entryDialog select { width: 100%; }
-.entryNumbers { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.entryRoom { background: #f5f7fa; border: 1px solid #e0e5ee; padding: .8rem 1rem; border-radius: .6rem; overflow-wrap: anywhere; }
-.card select { font: inherit; padding: .7rem; max-width: 100%; border: 1px solid #a1afc4; border-radius: .5rem; background: white; color: #102344; }
-.teamPanel { padding: 1rem; border: 1px solid #e0e5ee; border-radius: .7rem; }
-.teamPanel ul { list-style: none; padding: 0; }
-.teamPanel li { line-height: 1.8; overflow-wrap: anywhere; }
-.waitingTeams { display: grid; gap: .75rem; }
-.waitingTeams h2, .readyPanel h2 { font-size: 1.1rem; margin-bottom: .65rem; }
-.waitingTeams ul { max-height: 9rem; overflow-y: auto; scrollbar-gutter: stable; }
-.waitingTeams button, .readyPanel select { width: 100%; }
-.readyPanel .primaryButton { margin-top: .6rem; }
+.header {
+  background: #081637;
+  color: white;
+  padding: 1.1rem max(1rem, calc((100vw - 1160px) / 2));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.header a {
+  color: white;
+  text-decoration: none;
+}
+.header a[aria-current="page"] {
+  color: #54e0e5;
+  text-decoration: underline;
+  text-underline-offset: 0.5rem;
+}
+.brand {
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+.brand span {
+  margin-right: 0.5rem;
+}
+.header nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+.header button {
+  background: transparent;
+  color: white;
+  border: 1px solid #73809b;
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.7rem;
+}
+.shell {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  min-height: 80vh;
+}
+.hero {
+  text-align: center;
+  padding: 1rem 0 2rem;
+}
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.6rem);
+  margin: 0.5rem 0;
+  letter-spacing: -0.045em;
+}
+.hero p {
+  font-size: 1.15rem;
+}
+.hero strong {
+  color: #007d8c;
+}
+.authGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  max-width: 960px;
+  margin: auto;
+  align-items: stretch;
+}
+.teamGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.card {
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+  border: 1px solid #e0e5ee;
+  border-radius: 1.1rem;
+  background: white;
+  box-shadow: 0 6px 24px #071b3a0c;
+}
+.card h1,
+.card h2 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.card h2 {
+  font-size: 1.5rem;
+}
+.roomCard {
+  padding: clamp(1rem, 2vw, 1.75rem);
+}
+.guestCard {
+  background: linear-gradient(145deg, #123a6c, #081b3f);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+}
+.guestCard p {
+  color: #dce9f7;
+  line-height: 1.8;
+}
+.stones {
+  font-size: 3rem;
+  letter-spacing: -0.4rem;
+}
+.card label {
+  display: block;
+  font-weight: 650;
+  margin: 1.1rem 0 0.4rem;
+}
+.card input {
+  width: 100%;
+  border: 1px solid #a1afc4;
+  border-radius: 0.5rem;
+  padding: 0.8rem;
+  background: white;
+  color: #112343;
+}
+.card input,
+.card select {
+  min-height: 46px;
+}
+.authCard {
+  min-height: 440px;
+}
+.authDialog {
+  width: min(480px, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  color: #112343;
+}
+.authDialog::backdrop {
+  background: #081637a6;
+}
+:global(body:has(dialog[open])) .shell > .notice {
+  visibility: hidden;
+}
+.dialogHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.dialogHeading h2 {
+  margin: 0;
+}
+.dialogClose {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid #a1afc4;
+  border-radius: 0.5rem;
+  background: white;
+  color: #123c78;
+  font-size: 1.25rem;
+}
+.card small {
+  display: block;
+  color: #52617a;
+  margin: 0.4rem 0;
+  line-height: 1.5;
+}
+.primaryButton,
+.secondaryButton,
+.tealButton {
+  border-radius: 0.6rem;
+  padding: 0.8rem 1.2rem;
+  font-weight: 700;
+  min-height: 44px;
+  border: 1px solid transparent;
+}
+.primaryButton {
+  color: white;
+  background: #123c78;
+  margin-top: 1.2rem;
+  width: 100%;
+}
+.secondaryButton {
+  color: #123c78;
+  background: white;
+  border-color: #8b9fbe;
+}
+.card > .secondaryButton {
+  margin-top: 0.9rem;
+  width: 100%;
+}
+.tealButton {
+  background: #007c87;
+  color: white;
+  border-color: #35d0d7;
+}
+.error {
+  color: #9c2432;
+  background: #fff1f1;
+  padding: 0.8rem;
+  border-radius: 0.4rem;
+}
+.notice {
+  background: #e5f2f4;
+  border-left: 3px solid #007c87;
+  padding: 1rem;
+  line-height: 1.6;
+}
+.muted {
+  color: #52617a;
+  line-height: 1.6;
+}
+.sectionHeading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+}
+.sectionHeading > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.sectionHeading h1 {
+  margin-bottom: 0.5rem;
+}
+.empty {
+  text-align: center;
+  color: #52617a;
+  padding: 3rem 1rem;
+}
+.tableScroll {
+  overflow-x: auto;
+}
+.card table {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+  min-width: 430px;
+}
+.card th,
+.card td {
+  padding: 1rem 0.6rem;
+  border-bottom: 1px solid #e0e5ee;
+  overflow-wrap: anywhere;
+}
+.card thead {
+  background: #f5f7fa;
+}
+.footer {
+  text-align: center;
+  padding: 1.5rem;
+  color: #52617a;
+  font-size: 0.85rem;
+}
+.visuallyHidden,
+.skipLink:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.skipLink:focus {
+  display: block;
+  padding: 1rem;
+}
+.entryForm {
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  border: 1px solid #a1afc4;
+  border-radius: 0.7rem;
+  max-width: 600px;
+}
+.entryDialog {
+  width: min(560px, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  color: #112343;
+}
+.entryDialog::backdrop {
+  background: #081637a6;
+}
+.entryDialog form {
+  margin-top: 1rem;
+}
+.entryDialog fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.entryDialog select {
+  width: 100%;
+}
+.entryNumbers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.entryRoom {
+  background: #f5f7fa;
+  border: 1px solid #e0e5ee;
+  padding: 0.8rem 1rem;
+  border-radius: 0.6rem;
+  overflow-wrap: anywhere;
+}
+.card select {
+  font: inherit;
+  padding: 0.7rem;
+  max-width: 100%;
+  border: 1px solid #a1afc4;
+  border-radius: 0.5rem;
+  background: white;
+  color: #102344;
+}
+.teamPanel {
+  padding: 1rem;
+  border: 1px solid #e0e5ee;
+  border-radius: 0.7rem;
+}
+.teamPanel ul {
+  list-style: none;
+  padding: 0;
+}
+.teamPanel li {
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.waitingTeams {
+  display: grid;
+  gap: 0.75rem;
+}
+.waitingTeams h2,
+.readyPanel h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.65rem;
+}
+.waitingTeams ul {
+  max-height: 9rem;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.waitingTeams button,
+.readyPanel select {
+  width: 100%;
+}
+.readyPanel .primaryButton {
+  margin-top: 0.6rem;
+}
 @media (max-width: 700px) {
-  .authGrid, .teamGrid { grid-template-columns: 1fr; gap: 1rem; }
-  .shell { padding-top: 1.25rem; }
-  .guestCard { gap: .25rem; }
-  .stones { font-size: 2rem; }
-  .header nav { font-size: .85rem; width: 100%; justify-content: flex-end; }
+  .authGrid,
+  .teamGrid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .shell {
+    padding-top: 1.25rem;
+  }
+  .guestCard {
+    gap: 0.25rem;
+  }
+  .stones {
+    font-size: 2rem;
+  }
+  .header nav {
+    font-size: 0.85rem;
+    width: 100%;
+    justify-content: flex-end;
+  }
 }

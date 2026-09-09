@@ -16,6 +16,8 @@ Alembic의 실제 DB 변경 진입점은 `seokpan-migration-gate`로 제한합�
 
 ## Development
 
+App #60의 `python scripts/verify_ci.py --run-id <새-ID> --uv <uv 실행 파일>`로 아래 기존 검사를 순서대로 실행하고 JUnit·coverage·실행 요약을 남길 수 있습니다. 실행 범위·Linux 인계 및 아직 구현 중인 전체 CI 연결은 [Application CI 검증](../docs/ci-verification.md)을 따릅니다. 실제 DB 연결이나 Migration 실행은 포함하지 않습니다.
+
 uv 0.12.5를 사용하며 `pyproject.toml`의 `required-version`으로 다른 버전의 실행을 거부합니다. Windows 전역 uv를 프로젝트 기준으로 사용하지 않으며, 실제 Linux Container·CI에서도 uv 0.12.5를 명시적으로 설치해 같은 Lock을 사용합니다.
 
 ```powershell

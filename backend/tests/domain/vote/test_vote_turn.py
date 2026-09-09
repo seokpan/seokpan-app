@@ -672,6 +672,9 @@ def test_first_zero_vote_pass_advances_and_second_consecutive_pass_is_joint_loss
     assert subject.consecutive_passes == 1
 
     resolution = subject.resolve_joint_loss(game_id="game-1", turn_no=2)
+    finished_snapshot = snapshot(subject)
+    assert subject.resolve_joint_loss(game_id="game-1", turn_no=2) == resolution
+    assert snapshot(subject) == finished_snapshot
     assert resolution.result is TurnResultKind.JOINT_LOSS
     assert resolution.status is TurnStatus.PASSED
     assert subject.game.status is GameStatus.FINISHED
@@ -680,6 +683,33 @@ def test_first_zero_vote_pass_advances_and_second_consecutive_pass_is_joint_loss
     assert subject.game.move_no == 0
     assert subject.deadline_ms is None
     assert subject.consecutive_passes == 2
+
+
+def test_joint_loss_rejects_voting_move_closure_and_committed_move() -> None:
+    subject = voting_game()
+    cast(subject, "black-1", "H8")
+    assert_rejected_without_mutation(
+        subject,
+        "TURN_NOT_RESOLVING",
+        lambda: subject.resolve_joint_loss(game_id="game-1", turn_no=1),
+    )
+    subject.close_voting(game_id="game-1", turn_no=1, now_ms=1_000)
+    assert_rejected_without_mutation(
+        subject,
+        "RESOLUTION_MISMATCH",
+        lambda: subject.resolve_joint_loss(game_id="game-1", turn_no=1),
+    )
+    subject.resolve_move(
+        game_id="game-1",
+        turn_no=1,
+        selected_coordinate=None,
+        next_deadline_ms=2_000,
+    )
+    assert_rejected_without_mutation(
+        subject,
+        "RESOLUTION_ALREADY_APPLIED",
+        lambda: subject.resolve_joint_loss(game_id="game-1", turn_no=1),
+    )
 
 
 def test_first_pass_requires_a_future_deadline_without_mutation() -> None:
