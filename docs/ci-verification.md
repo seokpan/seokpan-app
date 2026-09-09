@@ -2,7 +2,7 @@
 
 [App #60](https://github.com/seokpan/seokpan-app/issues/60), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-09 첫 작업이다. Jenkins 연결은 [#40](https://github.com/seokpan/seokpan-app/issues/40), main Image Pipeline은 [#58](https://github.com/seokpan/seokpan-app/issues/58)에서 담당한다.
 
-**Windows 로컬 검증 완료·PR 검토 전:** Backend·Frontend·Browser 여섯 단계와 같은 실행/소스의 최종 집계까지 확인했다. 이 문서를 실제 Jenkins 실행 성공 기록으로 사용하지 않는다. Linux/Image/Harbor·실제 Provider는 미실행이며 A-09 후속과 A-10에서 검증한다.
+**Windows 로컬 검증 결과:** Backend·Frontend·Browser 여섯 단계와 같은 실행/소스의 최종 집계까지 확인했다. [PR #61](https://github.com/seokpan/seokpan-app/pull/61)과 아래 Windows 실행 결과 절은 같은 검증 대상 Commit과 실행 ID를 참조한다. 이 문서를 실제 Jenkins 실행 성공 기록으로 사용하지 않는다. Linux/Image/Harbor·실제 Provider는 미실행이며 A-09 후속과 A-10에서 검증한다.
 
 ## 고정 도구와 변경 범위
 
@@ -171,9 +171,23 @@ Windows의 .venv나 node_modules를 Linux로 복사해 재사용하지 않는다
 
 ## Windows 실행 결과 — 2026-09-09
 
-기반 main은 `6b5a50e6a5b4d98273643f442bd9269a6b51674c`다. 아래는 #60 Commit `219a2fd3a41c6f2a108abc2afc065c872a8364df` 위에 js-yaml 보완을 적용한 미커밋 작업 트리의 최신 결과다. 실행 ID는 `a09-security-20260909-01`, 소스 SHA-256은 `5ca80e13e32904d8b82761fb2717871a4680fa399b00ee7d5895584a14c34761`, dirty true다. Commit이나 소스가 바뀌면 새 ID로 실행하며 과거 manifest를 고쳐 재사용하지 않는다.
+### 최종 전체 검증
 
-이전 `a09-aggregate-20260909-01` 성공 이후 Commit 직후의 `a09-commit-219a2fd-20260909-01`에서 Audit HIGH 2건·최종 exit 1이 발생했다. 해당 실행의 Backend/Frontend 기능은 통과했지만 Browser는 미실행이며 원격 반영을 중단했다. 새 보안 보완 Run은 설치부터 여섯 단계 모두 다시 실행한 결과다. 이전 Audit 0개 응답이나 실패 Run은 삭제하지 않으며 현재 결과와 구분한다.
+기반 main은 `6b5a50e6a5b4d98273643f442bd9269a6b51674c`다. 아래 표는 보안 보완을 Commit한 뒤 깨끗한 작업 트리에서 전체 검사를 새로 실행한 결과이며, [PR #61](https://github.com/seokpan/seokpan-app/pull/61)의 최종 검증 표와 같은 실행을 가리킨다.
+
+| 실행 식별 | 값 |
+| --- | --- |
+| 검증 대상 Commit | `156c282eab10ec6cb21926287d472792ebeead7e` |
+| 실행 ID | `a09-pr-final-20260909-01` |
+| 소스 SHA-256 | `5ca80e13e32904d8b82761fb2717871a4680fa399b00ee7d5895584a14c34761` |
+| 실행 당시 수정 여부 | `dirty false` |
+| 실행환경 | Windows, Python 3.13.15·uv 0.12.5·Node 24.19.0·npm 12.0.2 |
+| 최종 판정 | 6 Stage `passed`, `exit_code: 0`, 보고서 19개 해시·실행/소스 일치 |
+| 원본 결과 위치 | `test-results/a09-pr-final-20260909-01/summary.json` 및 같은 실행 디렉터리의 보고서 |
+
+이 절을 보완하는 문서 전용 Commit과 위 검증 대상 Commit은 구분한다. 위 수치를 문서 보완 후 HEAD에서 새로 실행한 결과로 표현하지 않는다. 소스 해시와 `dirty`의 검사 범위는 앞서 명시한 `backend/`, `frontend/`, `.gitattributes`, `.gitignore`이며, 문서만 변경됐는지는 별도로 Git Diff 전체를 대조한다. 해시 일치만으로 모든 파일이 같다고 판단하지 않는다.
+
+이후 전체 검증을 새로 실행하면 새 실행 ID를 사용하고, PR과 이 절의 Commit·실행 ID·소스 해시·결과를 함께 갱신한다. 이전 결과는 이력으로 보존하며 기존 manifest/summary의 Commit이나 결과를 수정해 새 실행처럼 재사용하지 않는다.
 
 | 검사 | 결과 |
 | --- | --- |
@@ -189,6 +203,12 @@ Windows의 .venv나 node_modules를 Linux로 복사해 재사용하지 않는다
 | 최종 집계 | 6 Stage passed, exit 0, 19개 보고서 해시·실행/소스 일치 |
 
 Backend 전체 912개에는 Python 도구 시험 90개가 포함돼 있으며 모두 PASS다. `backend/tests/tooling/`과 `frontend/scripts/*.test.mjs`에서 경로 이탈·잘못된 버전·명령 시작 실패·검사 실패·시간 초과·보고서 누락/불일치·집계 중 소스 변경 등을 검증한다. 실행기 Test Double과 실제 프로세스 시험을 구분하며, 실제 Windows 하위 프로세스 timeout에서는 해당 부모/자식만 종료되고 대조 프로세스는 유지됐다. Linux 신호/정리는 아직 직접 실행하지 않았다.
+
+### 이전 검증·실패 이력
+
+`a09-aggregate-20260909-01` 성공 이후 Commit 직후의 `a09-commit-219a2fd-20260909-01`에서 Audit HIGH 2건·최종 exit 1이 발생했다. 해당 실행의 Backend/Frontend 기능은 통과했지만 Browser는 미실행이며 원격 반영을 중단했다.
+
+이후 `a09-security-20260909-01`은 Commit `219a2fd3a41c6f2a108abc2afc065c872a8364df` 위에 js-yaml 보완을 적용한 미커밋 작업 트리의 검증이다. 소스 SHA-256은 `5ca80e13e32904d8b82761fb2717871a4680fa399b00ee7d5895584a14c34761`, `dirty true`이며 설치부터 여섯 단계 모두 통과했다. 이는 위 최종 clean-commit 실행 이전의 결과다. 이전 Audit 0개 응답이나 실패 Run은 삭제하지 않으며 최종 결과와 구분한다.
 
 PR 전 재검토에서 제한된 Windows 실행 권한으로 도구 시험을 다시 실행했을 때 Python 89 PASS/1 FAIL, Node 78 PASS/1 FAIL이 발생했다. 두 실패 모두 `taskkill` 종료 단계였다. 동일 소스를 시험 프로세스 종료가 허용된 실행에서 다시 검증해 Python 90 PASS·Node 79 PASS, 건너뜀 0개를 확인했다. 최초 실패를 숨기거나 제한된 환경에서도 정리가 성공한다고 주장하지 않는다. 실행환경에는 자신이 시작한 하위 프로세스를 종료할 권한이 필요하며 이 결과가 Linux 실행 권한·정리를 보증하지 않는다.
 
