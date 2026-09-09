@@ -117,7 +117,13 @@ python scripts/summarize_ci.py --run-id <같은 실행 ID>
 - `test-results/<run-id>/summary.json`을 한 번만 생성한다. 기존 최종 집계를 덮지 않으며 미완료 상태로 집계했다면 검사를 끝낸 뒤 같은 결과를 고쳐 쓰지 않고 새 Run을 수행한다. 읽은 보고서의 상대 경로·SHA-256을 기록하며 Raw 내용이나 Secret은 복사하지 않는다.
 - 이 명령의 성공은 **오프라인 App 검사 묶음의 성공**이다. 실제 Linux Runtime·Image·Jenkins·Harbor·DB/Redis·MVP 인수 완료를 뜻하지 않는다. 실행하지 않은 항목은 최종 JSON에도 별도로 남긴다.
 
-Jenkins 연결 시 각 검사 종료 코드를 유지하고 `post/always`에서 집계한 뒤 같은 Run의 보고서를 수집한다. 집계 자체를 실행하지 못했거나 최종 JSON이 없으면 미완료다. 집계 오류·Artifact 수집 오류가 원래 실패 코드를 지우거나 성공으로 바꾸면 안 된다. 이 문서는 인계 조건이며 팀원 소유 Jenkinsfile을 자동 수정하지 않는다.
+Jenkins 연결 시 정상 경로는 **App 검사 → 최종 집계·이번 Run의 필수 보고서 수집 → Image Build/Push** 순서다. 집계와 필수 보고서 수집을 Pipeline 종료 후의 `post/always`로만 미루지 않는다. 모든 검사와 집계·수집이 성공해야 후속 Image 단계로 진행한다. 이 집계는 이후 Image/Harbor 검증 결과를 대신하지 않는다.
+
+- 앞 검사가 실패하면 후속 검사·Image 작업을 중단하고, `post/always`에서 아직 시도하지 않은 집계와 이번 Run의 보고서 수집을 시도한다. 집계 시도 여부는 호출 전에 기록해 정상 Stage와 post에서 같은 Run을 중복 집계하지 않는다. 기존 최종 summary는 덮어쓰지 않는다.
+- 집계 명령의 nonzero 종료로 보고서 수집까지 건너뛰지 않도록 종료 코드를 별도로 받거나 try/finally로 수집 시도를 보장한다. 원래 검사 실패·집계 실패·필수 보고서 수집 실패 중 하나라도 있으면 최종 Build를 성공으로 처리하지 않는다.
+- Agent/Workspace 상실로 집계를 실행하지 못했거나 최종 JSON이 없으면 미완료로 기록한다. 누락된 결과를 이전 Run에서 가져오거나 성공 파일로 만들어 채우지 않는다. Workspace 정리는 보고서 수집 시도 이후에 수행한다.
+
+이 문서는 Jenkins 연결 조건이며 팀원 소유 Jenkinsfile을 자동 수정하지 않는다. 실제 Stage 연결과 실패 경로 검증은 #40/#58에서 수행한다.
 
 ## 출력 위치
 
@@ -132,7 +138,7 @@ Jenkins 연결 시 각 검사 종료 코드를 유지하고 `post/always`에서 
 | frontend | summary.json, junit.xml, coverage/cobertura-coverage.xml, coverage/lcov.info, coverage/coverage-summary.json |
 | browser-ui / browser-full | summary.json, results.json, junit.xml, artifacts/ |
 
-단계 실패·미실행은 성공과 구분한다. Jenkins는 해당 실행 경로만 `post/always`에서 수집하고 원래 실패 코드를 유지해야 한다. `allowEmpty`만으로 성공을 선언하거나 이전 Run 보고서를 대신 가져오지 않는다. 실제 Credential/Cookie/CSRF 값·전체 환경변수는 수집하지 않는다. JSON/XML은 기존 도구의 합성 시험 결과이며 실제 Provider 자료가 아니다.
+단계 실패·미실행은 성공과 구분한다. Jenkins는 정상 경로에서 Image 단계 전에 해당 Run의 필수 보고서를 수집하며, 실패 경로에서도 `post/always`에서 생성된 보고서 수집을 시도하고 원래 실패 상태를 유지한다. `allowEmpty`만으로 성공을 선언하거나 이전 Run 보고서를 대신 가져오지 않는다. 실제 Credential/Cookie/CSRF 값·전체 환경변수는 수집하지 않는다. JSON/XML은 기존 도구의 합성 시험 결과이며 실제 Provider 자료가 아니다.
 
 Browser CI 설정은 `SEOKPAN_CI_RUN_ID`가 가리키는 예약된 `browser-ui`/`browser-full` 디렉터리로 결과를 분리한다. UI는 5174, 전체 Memory E2E는 5175/8001을 사용하며 사용자 5173/8000을 재사용하지 않는다. UI는 Python이 필요 없고, 전체 E2E는 Backend .venv의 Python 3.13.15가 필요하다. 양쪽 모두 Playwright 1.63.0의 고정 Chromium Headless Shell을 사용하며 개인 Chrome/Edge 프로필에 접속하지 않는다. Browser 요약에도 Node 버전·실행 OS를 기록한다.
 
