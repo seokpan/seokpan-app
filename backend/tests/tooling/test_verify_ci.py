@@ -3,6 +3,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -228,6 +230,96 @@ def test_execute_forwards_output_without_opening_a_console() -> None:
     assert "child-err" in result.stderr
 
 
+def linux_process_has_exited(pid: int, proc_root: Path = Path("/proc")) -> bool:
+    # kill(pid, 0) tests PID existence, not whether the process still executes.
+    # A terminated grandchild can remain a zombie until its new parent reaps it.
+    if not proc_root.is_dir():
+        raise RuntimeError("Linux process verification requires a mounted /proc")
+    try:
+        stat = (proc_root / str(pid) / "stat").read_text()
+    except FileNotFoundError:
+        return True
+    # comm can contain spaces and parentheses; split after its final ')'.
+    identity, separator, tail = stat.rpartition(")")
+    fields = tail.split()
+    if (
+        not identity.startswith(f"{pid} (")
+        or not separator
+        or not fields
+        or fields[0] not in {"R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I"}
+    ):
+        raise ValueError(f"Invalid process state for PID {pid}")
+    return fields[0] in {"Z", "X", "x"}
+
+
+def posix_process_has_exited(pid: int) -> bool:
+    if sys.platform == "linux":
+        return linux_process_has_exited(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def wait_for_process_exit(exited: Callable[[], bool], *, timeout: float = 5) -> None:
+    deadline = time.monotonic() + timeout
+    while not exited():
+        if time.monotonic() >= deadline:
+            raise AssertionError("Owned process is still running after termination")
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("state", ["R", "S", "D", "T", "t", "K", "W", "P", "I", "Z", "X", "x"])
+def test_linux_exit_check_uses_execution_state(tmp_path: Path, state: str) -> None:
+    process = tmp_path / "123"
+    process.mkdir()
+    (process / "stat").write_text(f"123 (name with ) () {state} 1 123 123")
+    assert linux_process_has_exited(123, tmp_path) is (state in {"Z", "X", "x"})
+
+
+def test_linux_exit_check_accepts_reaped_process_but_requires_proc(tmp_path: Path) -> None:
+    assert linux_process_has_exited(123, tmp_path)
+    with pytest.raises(RuntimeError, match="mounted /proc"):
+        linux_process_has_exited(123, tmp_path / "missing-proc")
+
+
+@pytest.mark.parametrize(
+    "stat", ["", "123 (python)", "456 (python) Z 1", "123 python Z 1", "123 (p) ? 1"]
+)
+def test_linux_exit_check_rejects_unreadable_state(tmp_path: Path, stat: str) -> None:
+    process = tmp_path / "123"
+    process.mkdir()
+    (process / "stat").write_text(stat)
+    with pytest.raises(ValueError, match="Invalid process state"):
+        linux_process_has_exited(123, tmp_path)
+
+
+def test_linux_exit_check_does_not_hide_permission_error(tmp_path: Path, monkeypatch) -> None:
+    def denied(*args, **kwargs):
+        raise PermissionError("process state is not readable")
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(PermissionError):
+        linux_process_has_exited(123, tmp_path)
+
+
+def test_exit_wait_handles_signal_delivery_delay(monkeypatch) -> None:
+    states = iter([False, False, True])
+    pauses = []
+    monkeypatch.setattr(time, "sleep", pauses.append)
+    wait_for_process_exit(lambda: next(states))
+    assert pauses == [0.01, 0.01]
+
+
+def test_exit_wait_rejects_still_running_process(monkeypatch) -> None:
+    ticks = iter([0, 0, 5])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    with pytest.raises(AssertionError, match="still running"):
+        wait_for_process_exit(lambda: False)
+
+
 def test_timeout_stops_only_the_owned_process_tree(tmp_path: Path) -> None:
     record = tmp_path / "children.json"
     code = (
@@ -265,8 +357,7 @@ def test_timeout_stops_only_the_owned_process_tree(tmp_path: Path) -> None:
                     finally:
                         kernel.CloseHandle(handle)
             else:
-                with pytest.raises(ProcessLookupError):
-                    os.kill(pid, 0)
+                wait_for_process_exit(lambda pid=pid: posix_process_has_exited(pid))
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=5)

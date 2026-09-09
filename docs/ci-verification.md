@@ -2,7 +2,7 @@
 
 [App #60](https://github.com/seokpan/seokpan-app/issues/60), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-09 첫 작업이다. Jenkins 연결은 [#40](https://github.com/seokpan/seokpan-app/issues/40), main Image Pipeline은 [#58](https://github.com/seokpan/seokpan-app/issues/58)에서 담당한다.
 
-**Windows 로컬 검증 결과:** Backend·Frontend·Browser 여섯 단계와 같은 실행/소스의 최종 집계까지 확인했다. [PR #61](https://github.com/seokpan/seokpan-app/pull/61)과 아래 Windows 실행 결과 절은 같은 검증 대상 Commit과 실행 ID를 참조한다. 이 문서를 실제 Jenkins 실행 성공 기록으로 사용하지 않는다. Linux/Image/Harbor·실제 Provider는 미실행이며 A-09 후속과 A-10에서 검증한다.
+**검증 상태:** 기존 Windows 전체 검증은 아래 실행 ID·Commit의 결과로 보존한다. 이후 [PR #61](https://github.com/seokpan/seokpan-app/pull/61)의 Jenkins Build #2에서 Linux Backend 테스트 1건이 실패했다. 종료 판정 테스트의 보완과 별도 Windows 회귀 결과는 아래 Jenkins 실패 절을 참고한다. 보완 후 Linux/Jenkins 성공은 아직 확인하지 않았으며 Image/Harbor·실제 Provider 검증도 남아 있다.
 
 ## 고정 도구와 변경 범위
 
@@ -168,6 +168,67 @@ Windows의 .venv나 node_modules를 Linux로 복사해 재사용하지 않는다
 | 결과 판정 | non-production Process Smoke와 실제 DB/Redis readiness를 분리. Production에서 Memory Provider를 허용해 통과시키지 않음 |
 
 이 목록은 Image 실행 성공 기록이 아니다. Container/Image/Harbor 작업은 실제 환경·명령과 대상 승인을 받아 수행하고, 실제 Provider·다중 Replica·Gateway는 A-10에서 검증한다.
+
+## Jenkins 실패와 종료 판정 보완 — 2026-09-09
+
+### 직접 확인한 실패
+
+`Jenkinsfile / PR-61 / Build #2`, Commit `da01a42a9a65156d914e39408536bc1296104f20`의 Console Output에서 다음 결과를 확인했다.
+
+| 항목 | 결과 |
+| --- | --- |
+| Checkout·uv Lock/Sync·Ruff Format/Lint·mypy | PASS |
+| Linux/Python 3.13.15 Backend pytest | 911 PASS, 1 FAIL |
+| 실패 위치 | `tests/tooling/test_verify_ci.py`, `test_timeout_stops_only_the_owned_process_tree` |
+| 실패 내용 | 종료 뒤 `os.kill(pid, 0)`이 `ProcessLookupError`를 발생시켜야 한다는 단언 실패 |
+| Frontend 검사·두 Image Build Verify | 선행 Backend 실패로 미실행 |
+
+GitHub의 `This commit cannot be built`는 이 결과에 대한 포괄적 표시이며, 모든 검사가 실패했거나 Jenkins가 시작되지 않았다는 뜻이 아니다. 로그에 실패 PID의 상태는 없으므로 해당 실행에서 실제 프로세스가 계속 실행됐는지, 종료 후 PID가 남았는지는 아직 확정하지 않았다.
+
+### 보완 범위와 판정 기준
+
+[Linux kill(2)](https://man7.org/linux/man-pages/man2/kill.2.html)의 signal 0은 PID 존재·권한 조회다. 종료됐지만 부모가 아직 종료 정보를 회수하지 않은 프로세스도 PID가 남을 수 있다. 따라서 테스트에서 PID 존재와 실행 상태를 구분한다.
+
+- Backend와 Frontend 도구의 프로세스 종료 테스트에 동일한 보완을 적용한다. Frontend에서도 같은 `process.kill(pid, 0)` 단언이 있어 도구 검사의 Linux 연결 시 재발할 가능성을 함께 처리한다.
+- Linux는 [`/proc/<pid>/stat`](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html)의 상태를 읽는다. PID 소멸 또는 종료 상태 `Z`/`X`/`x`를 실행 종료로 구분한다. 이는 종료 정보 회수까지 완료됐다는 뜻은 아니다.
+- 실행·대기·정지 상태는 종료로 인정하지 않는다. 신호 전달 직후의 짧은 지연은 최대 5초 확인하되, 계속 실행 중이면 실패한다. `/proc` 부재·권한 오류·잘못된 상태도 성공으로 바꾸지 않는다.
+- 합성 상태별 판정, 괄호/공백이 포함된 프로세스 이름, 읽기 실패, 종료 지연과 미종료 거부를 회귀 시험으로 추가했다. 기존 실제 부모/자식 종료와 무관한 프로세스 보존 검사를 유지한다.
+- 실행 함수 `backend/scripts/verify_ci.py`와 `frontend/scripts/ci-process.mjs`의 종료 로직은 변경하지 않았다. 서비스 코드·Lock·Jenkinsfile·Dockerfile·Infra/GitOps 변경도 없다. 실제 Linux 재현에서 종료 로직 결함이 확인되면 별도로 보완한다.
+
+### Linux Python·Node 원인 재현 — 사용자 실행 결과
+
+2026-09-09 사용자가 cp-01에서 일회성 Pod를 각각 실행하고 출력을 전달했다. 두 Pod 모두 UID 1000, ServiceAccount Token 자동 Mount 없음, 읽기 전용 Root Filesystem과 임시 `/tmp`로 구성한 별도 진단이다. Jenkins 설정·실제 DB/Redis·서비스 배포는 변경하지 않았다.
+
+| 구분 | Pod (`cicd`) | Jenkins와 같은 고정 이미지 |
+| --- | --- | --- |
+| Python 3.13.15 | `app-pr61-python-exit-check` | `harbor.seokpan.soldesk.store/seokpan/ci-python@sha256:8baf6c1f6910e2909c9b1ac38b93f782ca79d5859daf1f35ae6a085e1dd37bad` |
+| Node 24.19.0 | `app-pr61-node-exit-check` | `node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43` |
+
+| 시나리오 | 사용자 출력에서 확인한 결과 |
+| --- | --- |
+| 그룹 종료 | Python·Node 각각 3회 모두 부모 PID 소멸, 자식 상태 `Z`, 자식 PID 조회 성공. 기존 PID 소멸 판정은 각각 3회 모두 false |
+| 부모만 종료하는 결함 모사 | Python·Node 각각 1회 자식 상태 `S`가 남았고 실행 종료로 인정하지 않음 |
+| 무관한 프로세스 보존 | Python·Node 각각 네 번 모두 ALIVE |
+| 종료 | `PYTHON_DIAGNOSTIC_PASS`·`NODE_DIAGNOSTIC_PASS`, 두 Pod 각각 삭제 메시지·`FINAL_EXIT_CODE=0` |
+
+이 결과는 종료된 자식의 남은 PID 때문에 기존 판정이 실패할 수 있음을 두 CI 이미지에서 재현한 근거다. `Z`는 실행 종료이며 PID 정리까지 완료됐다는 뜻은 아니다. Jenkins Build #2 자체의 PID 상태를 사후 복원한 자료는 아니다. 진단은 동일한 POSIX 종료 방식을 재현한 독립 코드이며, 미커밋 App 테스트 파일이나 전체 pytest/Jenkins를 Linux에서 실행한 결과로 사용하지 않는다. 보완된 실제 App 검사의 Linux 결과는 아직 남아 있다.
+
+### 보완 후 로컬 회귀와 남은 확인
+
+아래는 `da01a42` 위의 미커밋 테스트 보완에 대한 **Windows 회귀 결과**다. 두 Run을 합친 전체 CI 성공으로 집계하지 않으며, 아래 기존 여섯 단계 전체 실행의 보고서를 새 소스에 재사용하지 않는다.
+
+| 실행 | 결과 | 보고서 |
+| --- | --- | --- |
+| `a09-linux-exit-20260909-03` | Ruff Format/Lint·mypy PASS, Backend 전체 933 PASS | `test-results/<실행 ID>/backend.xml` |
+| `a09-linux-exit-20260909-05` | Frontend 도구 81 PASS, 실패/건너뜀 0 | `test-results/<실행 ID>/frontend-tooling.xml` |
+
+Backend 테스트 파일은 첫 Run부터 동일하며, Frontend의 같은 문제는 연쇄 점검에서 발견해 두 번째 Run으로 검증했다. Frontend 변경 파일의 Prettier·ESLint도 통과했다. 서비스 기능·Browser 전체·Image·실제 Provider를 이번 차수에 다시 실행한 결과는 아니다.
+
+초기 로컬 실행은 Windows 파일/임시 경로 권한 부족으로 실패했고, 허용된 로컬 실행에서 재검증했다. Node 보고서 출력 디렉터리를 만들지 않은 실행도 시작 전에 실패해 새 실행 ID로 재수행했다. 이 실패들을 Linux 결함의 재현이나 성공 결과로 사용하지 않는다.
+
+독립 Linux 진단은 위와 같이 완료했다. 다음은 별도 승인 후 보완된 테스트를 Commit/Push하고 실제 Jenkins에서 PR의 Backend/Frontend 검사와 두 Image Build Verify 결과를 확인하는 것이다. 현재 Jenkinsfile의 `uv run pytest`에는 수정한 Backend 테스트가 포함되지만, Frontend의 `npm test`는 `vite.config.ts`의 `src/**/*.test.{ts,tsx}`만 실행하므로 `npm run test:tooling`을 대신하지 않는다. 따라서 Jenkins 성공만으로 수정한 Node 도구 시험의 Linux 성공을 주장하지 않는다. 같은 Commit의 `ci-process.mjs`·`ci-process.test.mjs` 두 원본 파일과 해시를 확인한 뒤, 별도 승인된 Linux 환경에서 `node --test scripts/ci-process.test.mjs`의 5개 시험을 확인한다. Node 표준 모듈만 필요하며 npm 설치·Python·실제 Provider는 필요하지 않다. 이 결과는 전체 81개 도구 시험이나 전체 Linux CI 성공이 아니다. 지속적인 도구 검사 연결은 기존 #40/#58에 남기며 담당자의 Jenkinsfile을 이번 보완에서 대신 수정하지 않는다.
+
+독립 진단을 실제 수정 파일의 Linux 시험으로 대체하지 않으며 실패하면 추가 보완한다. 새 Commit의 리뷰 승인·기존 Jenkins 검사 통과·수정 Node 도구 시험의 Linux 결과 확인 전에는 PR을 병합하지 않는다. 기존 Windows 전체 Run은 새 Commit의 실행 결과로 다시 표시하지 않는다.
 
 ## Windows 실행 결과 — 2026-09-09
 
