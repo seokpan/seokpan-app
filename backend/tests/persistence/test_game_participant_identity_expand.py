@@ -13,7 +13,7 @@ BACKEND_ROOT = Path(__file__).parents[2]
 AUDIT_SQL = BACKEND_ROOT / "migrations" / "audit" / "game_participant_identity.sql"
 BASELINE_REVISION = "20260901_0001"
 EXPAND_REVISION = "20260902_0002"
-DATABASE_URL = "mysql+asyncmy://db_admin@db.stone.test:3306/stone_game"
+DATABASE_URL = "mysql+asyncmy://db_admin@db.seokpan.soldesk.store:3306/stone_game"
 
 
 def offline_sql(

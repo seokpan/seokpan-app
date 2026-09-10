@@ -138,7 +138,7 @@ def test_migration_settings_are_separate_and_required(monkeypatch: pytest.Monkey
 
     monkeypatch.setenv(
         "SEOKPAN_MIGRATION_DATABASE_URL",
-        "mysql+asyncmy://db_admin@db.stone.test:3306/stone_game",
+        "mysql+asyncmy://db_admin@db.seokpan.soldesk.store:3306/stone_game",
     )
     settings = MigrationSettings()
 
@@ -158,7 +158,7 @@ def test_offline_upgrade_emits_all_seven_tables(
 ) -> None:
     monkeypatch.setenv(
         "SEOKPAN_MIGRATION_DATABASE_URL",
-        "mysql+asyncmy://db_admin@db.stone.test:3306/stone_game",
+        "mysql+asyncmy://db_admin@db.seokpan.soldesk.store:3306/stone_game",
     )
     config = Config(BACKEND_ROOT / "alembic.ini")
     output = StringIO()

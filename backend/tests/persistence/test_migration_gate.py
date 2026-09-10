@@ -1,4 +1,5 @@
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from alembic.config import Config
@@ -6,6 +7,14 @@ from alembic.config import Config
 from seokpan.persistence.mariadb.migration_gate import MigrationGateError, run
 
 DATABASE_URL = "mysql+asyncmy://db_admin:do-not-print@db.seokpan.soldesk.store:3306/stone_game"
+
+
+@pytest.fixture(autouse=True)
+def public_ca(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SSLKEYLOGFILE", raising=False)
+    monkeypatch.setenv(
+        "SEOKPAN_DATABASE_CA_FILE", str(Path(__file__).parent / "fixtures/public-ca.crt")
+    )
 
 
 class FakeRunner:
