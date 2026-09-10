@@ -2,9 +2,15 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import Connection, pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from pydantic import ValidationError
+from sqlalchemy import Connection
 
+from seokpan.persistence.mariadb.connection import (
+    DatabaseConfigurationError,
+    DatabaseConnectionError,
+    create_migration_engine,
+    validated_database_url,
+)
 from seokpan.persistence.mariadb.models import Base
 from seokpan.persistence.mariadb.settings import MigrationSettings
 
@@ -16,13 +22,16 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def migration_url() -> str:
-    return MigrationSettings().migration_database_url
+def migration_settings() -> MigrationSettings:
+    try:
+        return MigrationSettings()  # type: ignore[call-arg]
+    except ValidationError:
+        raise DatabaseConfigurationError("migration settings are missing or invalid") from None
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=migration_url(),
+        url=validated_database_url(migration_settings().migration_database_url, "db_admin"),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -41,18 +50,18 @@ def run_sync_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = migration_url()
-    connectable = async_engine_from_config(
-        section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(run_sync_migrations)
-
-    await connectable.dispose()
+    connectable = create_migration_engine(migration_settings())
+    try:
+        try:
+            async with connectable.connect() as connection:
+                await connection.run_sync(run_sync_migrations)
+        finally:
+            await connectable.dispose()
+    except Exception:
+        # Do not expose URL, credentials, SQL parameters or the original exception chain.
+        raise DatabaseConnectionError(
+            "online migration failed; do not automatically retry"
+        ) from None
 
 
 def run_migrations_online() -> None:

@@ -14,6 +14,9 @@ Infra가 별도 Table Schema를 두 번째 기준으로 생성하지 않는다. 
 
 ## 연결 설정
 
+공식 주소·공개 CA·역할별 Engine 생성과 Offline/Online 구분은
+[DB TLS 연결 안내](database-tls.md)를 따른다. 실제 연결은 별도 승인·검증 대상이다.
+
 정상 Backend Runtime은 두 개의 최소 권한 연결만 소비한다.
 
 ```text
@@ -52,6 +55,7 @@ upgrade-head    # 승인된 Revision Chain을 head까지 적용
 
 ```bash
 export SEOKPAN_MIGRATION_DATABASE_URL='<db_admin-secret-url>'
+export SEOKPAN_DATABASE_CA_FILE='/etc/seokpan/pki/ca.crt'
 
 uv run seokpan-migration-gate current \
   --expect-host db.seokpan.soldesk.store \
@@ -64,9 +68,9 @@ uv run seokpan-migration-gate stamp-baseline \
   --execute
 ```
 
-`db.seokpan.soldesk.store`는 현재 Infra Endpoint Registry의 Canonical DB Endpoint다.
-공식 공용 문서 반영과 MaxScale TLS 연결 방식이 확정되기 전에는 위 예시를 실제 실행
-승인으로 해석하지 않는다. 이후 Kubernetes 실행 자산은 이 CLI를 정확한 Backend Image
+`db.seokpan.soldesk.store`는 공식 DB Endpoint다. Online 실행 전에는 지정 경로에
+승인된 공개 CA 파일이 읽기 가능하게 준비되어야 한다. 주소·TLS 기준이 확정되어 있어도
+위 예시는 실제 실행 승인을 대신하지 않는다. Kubernetes 실행 자산은 이 CLI를 정확한 Backend Image
 Digest와 Migration 전용 Secret으로 한 번만 호출하며, 정상 Backend Deployment에는
 포함하지 않는다.
 

@@ -10,8 +10,16 @@ from typing import Protocol, TextIO
 
 from alembic import command
 from alembic.config import Config
+from pydantic import ValidationError
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import SQLAlchemyError
 
+from seokpan.persistence.mariadb.connection import (
+    DatabaseConfigurationError,
+    DatabaseConnectionError,
+    database_ssl_context,
+    validated_database_url,
+)
 from seokpan.persistence.mariadb.settings import MigrationSettings
 
 BASELINE_REVISION = "20260901_0001"
@@ -86,27 +94,27 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _validated_url(raw_url: str, expected: ExpectedTarget) -> URL:
-    url = make_url(raw_url)
-    actual_port = url.port or 3306
-    actual_database = (url.database or "").lstrip("/")
+    try:
+        url = make_url(raw_url)
+        actual_port = 3306 if url.port is None else url.port
+    except (ValueError, TypeError, SQLAlchemyError):
+        raise MigrationGateError("migration URL is malformed") from None
+    actual_database = url.database or ""
 
     if url.drivername != EXPECTED_DRIVER:
         raise MigrationGateError(f"migration URL must use {EXPECTED_DRIVER}")
     if url.username != MIGRATION_ACCOUNT:
         raise MigrationGateError(f"migration URL must use the {MIGRATION_ACCOUNT} account")
     if url.host != expected.host:
-        raise MigrationGateError(
-            f"database host mismatch: expected {expected.host!r}, got {url.host!r}"
-        )
+        raise MigrationGateError("database host mismatch")
     if actual_port != expected.port:
-        raise MigrationGateError(
-            f"database port mismatch: expected {expected.port}, got {actual_port}"
-        )
+        raise MigrationGateError("database port mismatch")
     if actual_database != expected.database:
-        raise MigrationGateError(
-            f"database name mismatch: expected {expected.database!r}, got {actual_database!r}"
-        )
-    return url
+        raise MigrationGateError("database name mismatch")
+    try:
+        return validated_database_url(raw_url, "db_admin")
+    except DatabaseConfigurationError as error:
+        raise MigrationGateError(str(error)) from None
 
 
 def _safe_target(url: URL) -> str:
@@ -130,7 +138,10 @@ def run(
     args = _parser().parse_args(argv)
     expected = ExpectedTarget(args.expect_host, args.expect_port, args.expect_database)
     # Pydantic Settings supplies this required field from the environment at runtime.
-    settings = MigrationSettings()  # type: ignore[call-arg]
+    try:
+        settings = MigrationSettings()  # type: ignore[call-arg]
+    except ValidationError:
+        raise MigrationGateError("migration settings are missing or invalid") from None
     url = _validated_url(settings.migration_database_url, expected)
 
     if args.action in MUTATING_ACTIONS:
@@ -139,12 +150,13 @@ def run(
         if not args.approval_ref or not args.approval_ref.strip():
             raise MigrationGateError("mutating action requires a non-empty --approval-ref")
 
+    config = _config(args.config)
+    database_ssl_context(settings.database_ca_file)
     selected_runner = runner or CommandAlembicRunner()
     print(f"action={args.action}", file=stdout)
     print(f"target={_safe_target(url)}", file=stdout)
     print(f"approval_ref={args.approval_ref or 'not-required-read-only'}", file=stdout)
 
-    config = _config(args.config)
     if args.action == "current":
         selected_runner.current(config)
     elif args.action == "stamp-baseline":
@@ -157,9 +169,9 @@ def run(
 def main() -> None:
     try:
         raise SystemExit(run(sys.argv[1:]))
-    except MigrationGateError as error:
+    except (MigrationGateError, DatabaseConfigurationError, DatabaseConnectionError) as error:
         print(f"migration gate refused: {error}", file=sys.stderr)
-        raise SystemExit(2) from error
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":
