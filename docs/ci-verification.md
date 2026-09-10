@@ -61,9 +61,26 @@ npm audit
 
 같은 Checkout을 공유하는 Python 단계에서, Backend 검사가 성공한 뒤 Backend 디렉터리를 작업 위치로 실행한다. Backend 실행기가 Run 디렉터리를 먼저 예약하므로 전체 실행은 반드시 Backend 검사 → OpenAPI Export → Frontend 검사 순서로 진행하고 같은 ID를 사용한다.
 
+OpenAPI Export는 Backend 검사에서 `uv sync --locked`로 구성한 `.venv`의 Python을 사용한다.
+다음 단계의 기본 `python`이 자동으로 이 가상환경으로 바뀌지는 않는다. Export 도구는 자신을
+실행한 Python으로 App을 import하므로, App 의존성을 설치한 경로를 명시한다.
+
+Linux/Jenkins (`backend/`에서 실행):
+
 ```text
-python scripts/export_openapi_ci.py --run-id <Backend와 같은 실행 ID>
+.venv/bin/python scripts/export_openapi_ci.py --run-id <Backend와 같은 실행 ID>
 ```
+
+Windows PowerShell 수동 실행도 작업 위치는 `backend/`다:
+
+```text
+.\.venv\Scripts\python.exe scripts/export_openapi_ci.py --run-id <Backend와 같은 실행 ID>
+```
+
+두 예시는 실행 환경에 맞는 하나만 사용하고, 꺾쇠로 표시한 ID는 앞 Backend 검사의 실제 ID로
+바꾼다. Windows 가상환경을 Linux로 복사하지 않는다. 기본 Python으로 시작하는
+`verify_ci.py`와 표준 라이브러리·Git으로 실행하는 `summarize_ci.py` 명령은 변경하지 않는다.
+관련 실행 기준은 [App #62](https://github.com/seokpan/seokpan-app/issues/62)를 따른다.
 
 Python 3.13.15를 확인하고 `test-results/<실행 ID>/openapi/`를 새로 예약한 뒤 기존 Offline Export를 실행한다. 실제 Provider 설정은 전달하지 않으며 서버/DB를 기동하지 않는다. JSON 검사와 소스 변경 여부 대조까지 성공해야 `manifest.json`을 생성한다. 실패한 경로는 덮어쓰지 않고 새 ID로 다시 실행한다.
 
