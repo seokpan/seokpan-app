@@ -233,6 +233,7 @@ pipeline {
                     }
                 }
             }
+        } // 
 
         // ==================================================================
         // Group 2: Build Verify (PR) - buildkit-rootless-pr PodTemplate
