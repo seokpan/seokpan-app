@@ -152,7 +152,7 @@ pipeline {
                     steps {
                         container('app-ci') {
                             dir('backend') {
-                                sh 'python scripts/export_openapi_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
+                                sh '.venv/bin/python scripts/export_openapi_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
                             }
                         }
                     }
@@ -192,39 +192,47 @@ pipeline {
                     steps {
                         container('app-ci') {
                             dir('backend') {
-                                sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
+                                script {
+                                    // 집계 "시도" 여부를 호출 전에 기록 - 실패해도 post에서 재집계하지 않음
+                                    env.CI_AGGREGATE_ATTEMPTED = 'true'
+                                    sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
+                                }
                             }
-                            // 정상 경로에서 집계 성공 - post에서 중복 집계하지 않도록 플래그
-                            script { env.CI_AGGREGATED = 'true' }
-                            // Build Verify 그룹이 확인할 명시적 통과 상태 (보완사항 ④)
-                            script { env.APP_CI_PASSED = 'true' }
+                            // 정상 경로 수집 - 비어있으면 그 자체로 실패 처리 (allowEmptyArchive 없음)
+                            archiveArtifacts(
+                                artifacts: "test-results/${env.SEOKPAN_CI_RUN_ID}/**",
+                                fingerprint: true
+                             )
+                             // 집계 + 정상 경로 수집까지 모두 성공해야 통과 상태로 인정 (보완사항 ④)
+                             script { env.APP_CI_PASSED = 'true' }
                         }
                     }
                 }
             }
             post {
                 always {
-                    container('app-ci') {
-                        // 앞 Stage가 실패해 Aggregate까지 못 왔으면, 여기서 아직 시도 안 한
-                        // 집계를 한 번 시도한다 (보완사항 ⑤). 이미 성공했으면 재실행하지 않는다.
-                        script {
-                            if (env.CI_AGGREGATED != 'true') {
-                                dir('backend') {
-                                    sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID} || true'
+                    script {
+                        try {
+                            container('app-ci') {
+                                // 이미 시도했다면(성공이든 실패든) 재집계하지 않고 수집만 시도
+                                if (env.CI_AGGREGATE_ATTEMPTED != 'true') {
+                                    dir('backend') {
+                                        sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID} || true'
+                                    }
                                 }
+                                archiveArtifacts(
+                                    artifacts: "test-results/${env.SEOKPAN_CI_RUN_ID}/**",
+                                    allowEmptyArchive: true,
+                                    fingerprint: true
+                                )
                             }
+                        } catch (Exception e) {
+                            // container 부재 등 Jenkins 레벨 예외 - 원래 실패 상태를 덮지 않고 기록만 남김
+                            echo "WARN: fallback collection skipped (agent/container unavailable): ${e.getMessage()}"
                         }
-                        // 필수 보고서는 성공/실패 무관하게 이 Pod가 살아있는 동안 반드시 수집한다.
-                        // Workspace 정리(Pod 종료)는 이 수집 이후에만 일어난다.
-                        archiveArtifacts(
-                            artifacts: "test-results/${env.SEOKPAN_CI_RUN_ID}/**",
-                            allowEmptyArchive: true,
-                            fingerprint: true
-                        )
                     }
                 }
             }
-        }
 
         // ==================================================================
         // Group 2: Build Verify (PR) - buildkit-rootless-pr PodTemplate
