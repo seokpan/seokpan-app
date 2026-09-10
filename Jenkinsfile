@@ -40,12 +40,6 @@
 // [Template 참조] label 대신 inheritFrom으로 등록된 Template 이름을 명시 참조한다
 //   (Kubernetes Plugin 공식 권장 - Kubernetes Plugin 문서 참고, 팀 코멘트 반영).
 //
-// [미확정 - 팀 재확인 필요, 하단 PR 코멘트 참고]
-//   - Kubernetes Plugin의 Pod 재사용 방지 기본 동작(신규 Pod·emptyDir Workspace)이 실제로
-//     이 클러스터의 Plugin 버전에서도 별도 설정 없이 보장되는지 - 연속 두 Build로 실증 필요.
-//   - buildkit-rootless-pr에 harbor-ca-cert/DOCKER_CONFIG를 넣지 않은 판단(Base 이미지가 전부
-//     Public이고 push=false라 불필요하다는 판단)은 seokpan-gitops PR(buildkit-rootless-pr
-//     PodTemplate)에서 팀 승인 완료.
 
 pipeline {
     agent none
