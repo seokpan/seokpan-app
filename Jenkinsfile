@@ -117,7 +117,8 @@ pipeline {
                                     # [v3.1 수정] 실제 Dockerfile Build 검증(seokpan-gitops #53)에서
                                     # 실행 파일명이 headless_shell이 아니라 chrome-headless-shell로
                                     # 배포됨을 확인 - 두 이름 다 찾도록 조건 확장.
-                                    BIN=$(find "$REVISION_DIR" -type f \( -name "headless_shell" -o -name "chrome-headless-shell" \) | head -1)
+                                    BIN=$(find "$REVISION_DIR" -type f -name "headless_shell" -o -name "chrome-headless-shell" | head -1)
+
                                     [ -n "$BIN" ] && [ -x "$BIN" ] || { echo "ERROR: binary missing/not executable" >&2; exit 1; }
                                     if ldd "$BIN" 2>&1 | grep -q "not found"; then
                                         echo "ERROR: missing shared libraries:" >&2
