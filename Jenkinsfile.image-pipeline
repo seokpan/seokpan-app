@@ -4,15 +4,20 @@
 // 관련 Issue: #58 (Jenkins Image Pipeline)
 // 담당: 최유준 (Delivery & Observability)
 // 작성 날짜: 2026-09-10
+// 수정 날짜: 2026-09-10 (팀 확정 사항 반영: Guard 실패 조건, SBOM native
+//   attestation 우선 검증 방침, Scan CRITICAL/HIGH-with-fix 비대칭 정책,
+//   PASS/FAIL Candidate 처리 흐름, Promote 후 Digest 일치 검증 추가)
 //
 // 주의:
 //   - 이 파일은 App #62의 PR 검사용 Jenkinsfile과 별개다.
 //     App #62 -> buildkit-rootless-pr (Credential 없음, Push 불가)
 //     본 파일 -> buildkit-rootless   (Credential 있음, Push 가능)
 //   - Guard Stage 200(최종 태그 이미 존재) 케이스는 "실패 처리"로 확정됨
-//     (중복 실행 방지). 재사용/스킵 정책 아님.
-//   - SBOM 도구, Scan 심각도 임계값, Candidate 태그 정리 정책은 TODO 표시된
-//     지점에서 팀 확인 후 확정 필요.
+//     (중복 실행 방지). 재사용/스킵 정책 아님. 200/404 외 모든 응답
+//     (401/403/5xx/Timeout/DNS/TLS/파싱 실패 포함)도 조회 실패로 간주해
+//     fail-closed 처리 (Guard Stage 파이썬 스크립트의 except Exception 분기).
+//   - 남은 TODO(팀 확인 진행 중): SBOM native attestation 실제 동작 검증,
+//     Vulnerability Scanner 제품 선정, FAIL Candidate Retention 기간/개수.
 // ============================================================================
 
 pipeline {
@@ -138,23 +143,39 @@ PYEOF
         }
 
         // --------------------------------------------------------------
-        // TODO(팀 확인 필요): SBOM 생성 도구 미확정 (예: syft, trivy sbom 등)
-        // 현재는 자리표시(placeholder)만 있음. 확정 후 실제 명령으로 대체.
+        // 팀 확정 방침(2026-09-10): 별도 도구(syft 등)를 먼저 정하지 않고,
+        // BuildKit native SBOM/Provenance attestation을 이 rootless 환경에서
+        // 먼저 실제 검증한다. 정상 동작하면 그대로 사용, 안 되면 그때
+        // Sidecar/별도 도구를 검토한다 (아직 검증 전, TODO 유지).
+        // 검증 시 명령 성공 여부뿐 아니라, 생성된 SBOM/Provenance가 해당
+        // Candidate 이미지에 실제로 연결되어 Harbor에 저장되고 재조회 가능한지도
+        // 함께 확인해야 함 (팀 코멘트 기준).
         // --------------------------------------------------------------
-        stage('SBOM') {
+        stage('SBOM & Provenance (native attestation 검증 예정)') {
             steps {
-                container('python') {
-                    echo "TODO: SBOM 생성 도구 확정 필요 (syft / trivy sbom 등)"
-                    // 예시(확정 전):
-                    // sh "syft ${HARBOR_HOST}/${HARBOR_PROJECT}/${IMAGE_REPO}:${CANDIDATE_TAG} -o spdx-json > sbom.json"
+                container('buildkit') {
+                    echo "TODO: BuildKit native attestation 검증 필요 (--output ...,attest:sbom=...,attest:provenance=...)"
+                    // 예시(검증 전, 뼈대):
+                    // buildctl-daemonless.sh build \
+                    //   --frontend dockerfile.v0 --local context=. --local dockerfile=. \
+                    //   --output type=image,name=...:${CANDIDATE_TAG},push=true \
+                    //   --attest type=sbom \
+                    //   --attest type=provenance,mode=max
+                    // 검증 후: Harbor에서 해당 태그의 attestation manifest가 재조회되는지 확인
                 }
             }
         }
 
         // --------------------------------------------------------------
-        // TODO(팀 확인 필요): Scan 실행 방식(Harbor 내장 Scan API vs 외부 Trivy)과
-        // 심각도 임계값(critical/high 등 차단 기준) 미확정.
-        // 여기서는 Harbor Scan API 트리거 + 폴링 뼈대만 작성.
+        // 팀 확정 방침(2026-09-10):
+        //   차단 정책 - CRITICAL: fix 여부 무관 실패 / HIGH: 수정 가능(fix 존재)한
+        //   경우만 실패 / 파이프라인 내 임의 예외처리 금지.
+        //   Scanner 제품(Trivy/Grype 등)은 아직 미확정 — TODO 유지.
+        //   단, 위 정책이 "HIGH는 fix 유무로 갈라진다"는 비대칭 조건이라
+        //   단순 severity 필터(--severity HIGH,CRITICAL)만으로는 구현 불가.
+        //   Scanner 선택 시 취약점 단위로 fix 존재 여부를 머신 리더블하게
+        //   제공하는지(JSON의 FixedVersion / fix.state 등) 반드시 확인 필요.
+        //   확정되면 JSON 결과를 받아 심각도별로 직접 분기하는 커스텀 파싱으로 구현.
         // --------------------------------------------------------------
         stage('Scan') {
             steps {
@@ -164,16 +185,21 @@ PYEOF
                         usernameVariable: 'HARBOR_API_USER',
                         passwordVariable: 'HARBOR_API_PASS'
                     )]) {
-                        echo "TODO: Scan 심각도 임계값 확정 필요"
+                        echo "TODO: Scanner 제품 확정 필요 (Trivy/Grype 등, CRITICAL/HIGH-with-fix 비대칭 정책 구현 가능해야 함)"
                         // 예시(확정 전, 뼈대):
-                        // 1) POST /api/v2.0/projects/{p}/repositories/{r}/artifacts/{tag}/scan
-                        // 2) GET  .../artifacts/{tag}?with_scan_overview=true 폴링
-                        // 3) severity가 임계값 초과 시 error()로 fail-closed 처리
+                        // 1) Scanner로 ${CANDIDATE_TAG} 이미지 스캔, JSON 출력
+                        // 2) CRITICAL 존재 시 무조건 실패
+                        // 3) HIGH 중 fix가 있는 항목이 하나라도 있으면 실패
+                        // 4) 위 조건 미해당 시 통과 (임의 예외처리 금지)
                     }
                 }
             }
         }
 
+        // --------------------------------------------------------------
+        // Promote: Candidate 태그가 가리키는 아티팩트에 최종 태그(git-*)를
+        // 추가한다 (재빌드/재푸시 없음, 동일 digest에 태그만 하나 더 붙음).
+        // --------------------------------------------------------------
         stage('Promote') {
             steps {
                 container('python') {
@@ -216,22 +242,88 @@ PYEOF
         }
 
         // --------------------------------------------------------------
-        // TODO(팀 확인 필요): Candidate 태그(scan-*) Promote 이후 삭제할지,
-        // 보존할지(디버깅/추적용) 정책 미확정. 현재는 보존(no-op).
+        // Digest 일치 검증 + PASS 경로 Candidate 즉시 삭제
+        // (팀 확정 흐름: Promote -> Digest 일치 확인 -> scan-* Candidate 삭제)
+        // 동일 아티팩트에 태그만 추가하는 거라 이론상 불일치가 나올 수 없지만,
+        // Promote 이후 GC/경합 등으로 final 태그가 다른 digest를 가리키게 되는
+        // 상황을 배제할 수 없으므로 반드시 확인한다. 불일치 시 git-*는 이미
+        // Immutable이라 되돌릴 수 없는 상태이므로 fail-closed로 알림 목적의
+        // 실패 처리만 하고, 실제 롤백은 팀 확인 후 수동 대응한다.
         // --------------------------------------------------------------
-        stage('Cleanup (placeholder)') {
+        stage('Verify Digest & Cleanup Candidate') {
             steps {
-                echo "TODO: Candidate 태그 정리 정책 확정 필요 (삭제 vs 보존)"
+                container('python') {
+                    withCredentials([usernamePassword(
+                        credentialsId: env.HARBOR_API_CRED,
+                        usernameVariable: 'HARBOR_API_USER',
+                        passwordVariable: 'HARBOR_API_PASS'
+                    )]) {
+                        sh '''
+                            python3 - <<'PYEOF'
+import os, json, urllib.request, urllib.error, base64
+
+host    = os.environ["HARBOR_HOST"]
+project = os.environ["HARBOR_PROJECT"]
+repo    = os.environ["IMAGE_REPO"]
+cand    = os.environ["CANDIDATE_TAG"]
+final   = os.environ["FINAL_TAG"]
+user    = os.environ["HARBOR_API_USER"]
+pw      = os.environ["HARBOR_API_PASS"]
+cafile  = os.environ["HARBOR_CA_PATH"]
+
+def get_digest(tag):
+    url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{tag}"
+    req = urllib.request.Request(url)
+    auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    req.add_header("Authorization", f"Basic {auth}")
+    with urllib.request.urlopen(req, timeout=15, cafile=cafile) as resp:
+        return json.loads(resp.read())["digest"]
+
+try:
+    cand_digest  = get_digest(cand)
+    final_digest = get_digest(final)
+except Exception as e:
+    print(f"Digest 조회 실패: {e}")
+    raise SystemExit(1)
+
+if cand_digest != final_digest:
+    print(f"DIGEST MISMATCH: candidate={cand_digest} final={final_digest}")
+    raise SystemExit(1)
+
+print(f"Digest 일치 확인: {final_digest}")
+
+# PASS 경로 확정 흐름: Digest 일치 확인 후 scan-* Candidate 즉시 삭제
+del_url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{cand}"
+req = urllib.request.Request(del_url, method="DELETE")
+auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+req.add_header("Authorization", f"Basic {auth}")
+try:
+    with urllib.request.urlopen(req, timeout=15, cafile=cafile) as resp:
+        print(f"Candidate 삭제 완료: {resp.status}")
+except urllib.error.HTTPError as e:
+    # 삭제 실패는 Final Tag 자체의 무결성 문제가 아니므로 fail-closed 대상은 아님.
+    # 다만 정리가 안 됐다는 사실은 남겨서, Harbor Retention Policy 쪽에서
+    # 뒤늦게라도 정리되게 한다 (팀 확정: Retention 정책은 Ansible/Harbor 쪽 관리).
+    print(f"Candidate 삭제 실패(무시 가능, Retention으로 정리 예정): {e.code}")
+PYEOF
+                        '''
+                    }
+                }
             }
         }
     }
 
     post {
         failure {
-            echo "Image Pipeline 실패: ${env.CANDIDATE_TAG ?: 'N/A'} / ${env.FINAL_TAG ?: 'N/A'}"
+            // FAIL 경로 확정 흐름: Final Tag 생성 안 함, GitOps 변경 안 함,
+            // scan-* Candidate는 즉시 삭제하지 않고 Retention 대상으로 보존한다.
+            // Retention 기간/개수 및 정리 방식(Harbor Tag Retention Policy 권장,
+            // Ansible로 선언적 관리)은 팀 확인 후 별도 확정 예정 — 이 파이프라인은
+            // FAIL 시 Candidate를 건드리지 않는 것으로 충분하다.
+            echo "Image Pipeline 실패: ${env.CANDIDATE_TAG ?: 'N/A'} / ${env.FINAL_TAG ?: 'N/A'} (scan-* Candidate는 삭제하지 않고 보존, Retention 정책으로 추후 정리 예정)"
         }
         success {
-            echo "Image Pipeline 성공: ${env.FINAL_TAG} Promote 완료"
+            echo "Image Pipeline 성공: ${env.FINAL_TAG} Promote 완료, Candidate(${env.CANDIDATE_TAG}) 정리 완료"
         }
     }
 }
