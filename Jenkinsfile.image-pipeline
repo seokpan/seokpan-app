@@ -1,24 +1,65 @@
 // ============================================================================
 // seokpan-app :: Image Pipeline (main branch)
-// 목적: main push 시 Build -> SBOM/Scan -> Harbor Push -> Tag Promote
-// 관련 Issue: #58 (Jenkins Image Pipeline)
+// 목적: main push 시 P1 재검증 -> Backend/Frontend Build -> SBOM/Scan -> Harbor
+//       Push -> Tag Promote 전체 흐름 (Issue #58 P2)
+// 관련 Issue: #58 (main 브랜치 Image Pipeline)
 // 담당: 최유준 (Delivery & Observability)
 // 작성 날짜: 2026-09-10
-// 수정 날짜: 2026-09-10 (팀 확정 사항 반영: Guard 실패 조건, SBOM native
-//   attestation 우선 검증 방침, Scan CRITICAL/HIGH-with-fix 비대칭 정책,
-//   PASS/FAIL Candidate 처리 흐름, Promote 후 Digest 일치 검증 추가)
+// 수정 날짜: 2026-09-10 (2차, 팀 리뷰 반영)
+//   - [수정] Cleanup이 Artifact 전체를 지우던 버그 수정. Promote 이후 Candidate와
+//     Final Tag는 같은 digest(같은 Artifact)를 가리키므로, 기존
+//     DELETE /artifacts/{cand} 는 방금 만든 최종 git-* Tag의 Artifact까지 지울
+//     수 있었음. Tag 전용 삭제 엔드포인트(/artifacts/{ref}/tags/{tag_name})로 교체.
+//   - [수정] SBOM/Scan 스테이지를 echo(비차단) -> error(fail-closed)로 전환.
+//     미구현 상태에서 Promote까지 도달해 미검증 이미지가 Immutable로 고정되는
+//     사고를 구조적으로 차단.
+//   - [수정] 저장소 루트 단일 이미지 빌드 -> Backend/Frontend 분리 빌드로 재설계
+//     (Issue #58 원문 기준 backend/, frontend/ 두 Dockerfile 계약 반영).
+//     Harbor repository 이름은 seokpan-app-backend / seokpan-app-frontend로
+//     가정 — Issue #47/PR #48 기준과 다르면 확인 필요.
+//   - [보류] P1 재검증(Lint/Test/npm audit 재실행) 스테이지는 이번 수정 범위
+//     밖이라 fail-closed placeholder로만 추가. Health Smoke Test는 Issue #58
+//     본문에 "실행 방법 미설계"로 명시되어 있어 비차단 TODO로 유지.
+//     Commit-Build-Tag-Digest 연결 기록도 이번 범위 밖, TODO만 남김.
+// 수정 날짜: 2026-09-10 (3차) — Scan Stage 실제 구현.
+//   Harbor 내장 Trivy 스캐너를 API로 트리거(POST .../scan) -> 완료 폴링
+//   (GET ...?with_scan_overview=true) -> 정규화 리포트 조회
+//   (GET .../additions/vulnerabilities) -> CRITICAL 전부 실패 /
+//   HIGH+fix_version 존재 시 실패 정책을 코드로 그대로 구현.
+//   [전제, 확인 필요] seokpan 프로젝트에 Trivy 스캐너가 실제로 등록되어
+//   있는지 아직 미확인 — 미등록 시 스캔 트리거 또는 폴링 타임아웃 단계에서
+//   fail-closed로 걸림 (조용히 통과되지는 않음).
+//
+// 수정 날짜: 2026-09-10 (4차) — Scan Stage를 Harbor 내장 스캐너 API 방식에서
+//   Trivy CLI 직접 실행 방식으로 전환. Harbor에 Trivy Adapter가 등록되어
+//   있지 않음을 확인(docker ps에 컨테이너 자체가 없음) → 공유 인프라인
+//   Harbor 스택 변경 대신, Issue #58 원문이 명시한 "별도 Scanner로 원격
+//   스캔" 방식 채택. ci-python 이미지(cicd/ci-images/python/Dockerfile)에
+//   Trivy 바이너리 COPY 추가, 인증은 기존 harbor-robot-account Credential
+//   재사용, CA는 buildkit과 동일하게 SSL_CERT_FILE로 지정.
+//   [확인 필요] Trivy DB 다운로드용 외부 egress 허용 여부, ci-python 새
+//   digest 확정 후 JCasC python 컨테이너 image 반영 여부.
 //
 // 주의:
 //   - 이 파일은 App #62의 PR 검사용 Jenkinsfile과 별개다.
 //     App #62 -> buildkit-rootless-pr (Credential 없음, Push 불가)
 //     본 파일 -> buildkit-rootless   (Credential 있음, Push 가능)
 //   - Guard Stage 200(최종 태그 이미 존재) 케이스는 "실패 처리"로 확정됨
-//     (중복 실행 방지). 재사용/스킵 정책 아님. 200/404 외 모든 응답
-//     (401/403/5xx/Timeout/DNS/TLS/파싱 실패 포함)도 조회 실패로 간주해
-//     fail-closed 처리 (Guard Stage 파이썬 스크립트의 except Exception 분기).
-//   - 남은 TODO(팀 확인 진행 중): SBOM native attestation 실제 동작 검증,
-//     Vulnerability Scanner 제품 선정, FAIL Candidate Retention 기간/개수.
+//     (중복 실행 방지). 200/404 외 모든 응답(401/403/5xx/Timeout/DNS/TLS/파싱
+//     실패 포함)도 조회 실패로 간주해 fail-closed 처리.
+//   - 남은 TODO(팀 확인/설계 진행 중): P1 재검증 스테이지 실제 구현,
+//     SBOM native attestation 실제 동작 검증, Health Smoke Test 실행 방식
+//     설계, FAIL Candidate Retention 기간/개수, Commit-Build-Tag-Digest
+//     연결 기록 방식, ci-python 이미지의 Trivy digest 확정 및 JCasC 반영,
+//     Trivy DB 다운로드용 클러스터 egress 허용 여부 확인.
 // ============================================================================
+
+// Backend/Frontend 두 컴포넌트를 순회하며 Guard/Build/SBOM/Scan/Promote/Cleanup을
+// 반복 적용하기 위한 목록. 순서 자체에 의미는 없음.
+def COMPONENT_REPO = [
+    backend : 'seokpan-app-backend',
+    frontend: 'seokpan-app-frontend'
+]
 
 pipeline {
     agent {
@@ -30,20 +71,17 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
-        timeout(time: 45, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     environment {
-        HARBOR_HOST       = 'harbor.seokpan.soldesk.store'
-        HARBOR_PROJECT    = 'seokpan'
-        IMAGE_REPO        = 'seokpan-app'
-        HARBOR_API_CRED   = 'harbor-api-robot-account'      // robot$seokpan+seokpan-api (Jenkins Credential)
+        HARBOR_HOST     = 'harbor.seokpan.soldesk.store'
+        HARBOR_PROJECT  = 'seokpan'
+        HARBOR_API_CRED = 'harbor-api-robot-account'   // robot$seokpan+seokpan-api (Jenkins Credential)
         // BuildKit push 인증(robot$seokpan+seokpan-ci)은 Jenkins Credential이 아니라
         // PodTemplate(harbor-robot-dockerconfig secretVolume)이 buildkit 컨테이너의
-        // /home/user/.docker에 이미 직접 마운트해둠 (DOCKER_CONFIG env도 같은 경로로 세팅됨).
-        // 따라서 withCredentials로 별도로 끌어올 필요/대상 자체가 없음.
-        HARBOR_CA_PATH    = '/etc/buildkit/certs/ca.crt'   // harbor-ca-cert configMapVolume 실제 마운트 경로
-                                                            // (jenkins-jcasc-configmap.yaml 기준, buildkit/python/node 전체 컨테이너 공통)
+        // /home/user/.docker에 이미 직접 마운트해둠. withCredentials 불필요.
+        HARBOR_CA_PATH  = '/etc/buildkit/certs/ca.crt' // harbor-ca-cert configMapVolume 실제 마운트 경로
     }
 
     stages {
@@ -62,10 +100,24 @@ pipeline {
         }
 
         // --------------------------------------------------------------
-        // Guard Stage: 최종 태그 존재 여부 3-way 분기
+        // TODO(이번 수정 범위 밖, Issue #58 완료 기준의 블로킹 항목):
+        // main의 보호된 Commit을 다시 Checkout하여 Backend/Frontend Lint & Test,
+        // npm audit을 재실행해야 함. 실패 시 이후 Build로 진행되면 안 됨.
+        // 아직 구현 전이므로 fail-closed로 막아 "미검증 상태로 통과"를
+        // 방지한다 (echo가 아니라 error() 사용).
+        // --------------------------------------------------------------
+        stage('P1 Revalidation (미구현)') {
+            steps {
+                error("P1 재검증(Lint/Test/npm audit 재실행) 스테이지 미구현. Issue #58 완료 기준 항목이라 구현 전까지는 fail-closed로 중단합니다.")
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Guard Stage: Backend/Frontend 각각 최종 태그 존재 여부 3-way 분기
         //   200 -> 실패 처리 (중복 실행 방지, 확정된 정책)
         //   404 -> 정상 진행
         //   그 외 -> fail-closed로 중단
+        // 두 컴포넌트 중 하나라도 막히면 전체 파이프라인을 중단한다.
         // --------------------------------------------------------------
         stage('Guard: Final Tag Check') {
             steps {
@@ -76,20 +128,21 @@ pipeline {
                         passwordVariable: 'HARBOR_API_PASS'
                     )]) {
                         script {
-                            def status = sh(
-                                script: '''
-                                    python3 - <<'PYEOF'
+                            COMPONENT_REPO.each { component, repo ->
+                                env.CURRENT_REPO = repo
+                                def status = sh(
+                                    script: '''
+                                        python3 - <<'PYEOF'
 import os, sys, urllib.request, urllib.error, base64
 
-host    = os.environ["HARBOR_HOST"]
-project = os.environ["HARBOR_PROJECT"]
-repo    = os.environ["IMAGE_REPO"]
-tag     = os.environ["FINAL_TAG"]
-user    = os.environ["HARBOR_API_USER"]
-pw      = os.environ["HARBOR_API_PASS"]
+host  = os.environ["HARBOR_HOST"]
+proj  = os.environ["HARBOR_PROJECT"]
+repo  = os.environ["CURRENT_REPO"]
+tag   = os.environ["FINAL_TAG"]
+user  = os.environ["HARBOR_API_USER"]
+pw    = os.environ["HARBOR_API_PASS"]
 
-url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{tag}"
-
+url = f"https://{host}/api/v2.0/projects/{proj}/repositories/{repo}/artifacts/{tag}"
 req = urllib.request.Request(url)
 auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
 req.add_header("Authorization", f"Basic {auth}")
@@ -104,18 +157,19 @@ except Exception as e:
     print(str(e), file=sys.stderr)
     print("-1")
 PYEOF
-                                ''',
-                                returnStdout: true
-                            ).trim()
+                                    ''',
+                                    returnStdout: true
+                                ).trim()
 
-                            echo "Guard Stage HTTP status: ${status}"
+                                echo "Guard Stage [${component}/${repo}] HTTP status: ${status}"
 
-                            if (status == '200') {
-                                error("Guard Stage: 최종 태그 ${env.FINAL_TAG} 가 이미 존재합니다. 중복 실행 방지를 위해 파이프라인을 중단합니다.")
-                            } else if (status == '404') {
-                                echo "Guard Stage: 최종 태그 없음, 정상 진행합니다."
-                            } else {
-                                error("Guard Stage: 예상치 못한 응답(${status}). fail-closed 정책에 따라 파이프라인을 중단합니다.")
+                                if (status == '200') {
+                                    error("Guard Stage: [${component}] 최종 태그 ${env.FINAL_TAG} 가 이미 존재합니다 (repo=${repo}). 중복 실행 방지를 위해 중단합니다.")
+                                } else if (status == '404') {
+                                    echo "Guard Stage [${component}]: 최종 태그 없음, 정상 진행합니다."
+                                } else {
+                                    error("Guard Stage: [${component}] 예상치 못한 응답(${status}). fail-closed 정책에 따라 중단합니다.")
+                                }
                             }
                         }
                     }
@@ -123,82 +177,133 @@ PYEOF
             }
         }
 
-        stage('Build & Push Candidate') {
+        // --------------------------------------------------------------
+        // Backend/Frontend 각각 별도 context/Dockerfile로 빌드 & Push.
+        // Harbor repository는 컴포넌트별로 분리(seokpan-app-backend/-frontend).
+        // --------------------------------------------------------------
+        stage('Build & Push Candidate (Backend/Frontend)') {
             steps {
                 container('buildkit') {
-                    // docker config.json은 harbor-robot-dockerconfig secretVolume이
-                    // 이미 /home/user/.docker에 마운트돼 있고 DOCKER_CONFIG env도 동일 경로로
-                    // 세팅돼 있음 (jenkins-jcasc-configmap.yaml 기준). 별도 자격증명 바인딩 불필요.
-                    // SSL_CERT_FILE 또한 PodTemplate envVars에서 /etc/buildkit/certs/ca.crt로
-                    // 이미 세팅돼 있으므로 여기서 재설정하지 않음(HARBOR_CA_PATH와 값 일치 확인용으로만 유지).
-                    sh '''
-                        buildctl-daemonless.sh build \
-                          --frontend dockerfile.v0 \
-                          --local context=. \
-                          --local dockerfile=. \
-                          --output type=image,name=${HARBOR_HOST}/${HARBOR_PROJECT}/${IMAGE_REPO}:${CANDIDATE_TAG},push=true
-                    '''
-                }
-            }
-        }
-
-        // --------------------------------------------------------------
-        // 팀 확정 방침(2026-09-10): 별도 도구(syft 등)를 먼저 정하지 않고,
-        // BuildKit native SBOM/Provenance attestation을 이 rootless 환경에서
-        // 먼저 실제 검증한다. 정상 동작하면 그대로 사용, 안 되면 그때
-        // Sidecar/별도 도구를 검토한다 (아직 검증 전, TODO 유지).
-        // 검증 시 명령 성공 여부뿐 아니라, 생성된 SBOM/Provenance가 해당
-        // Candidate 이미지에 실제로 연결되어 Harbor에 저장되고 재조회 가능한지도
-        // 함께 확인해야 함 (팀 코멘트 기준).
-        // --------------------------------------------------------------
-        stage('SBOM & Provenance (native attestation 검증 예정)') {
-            steps {
-                container('buildkit') {
-                    echo "TODO: BuildKit native attestation 검증 필요 (--output ...,attest:sbom=...,attest:provenance=...)"
-                    // 예시(검증 전, 뼈대):
-                    // buildctl-daemonless.sh build \
-                    //   --frontend dockerfile.v0 --local context=. --local dockerfile=. \
-                    //   --output type=image,name=...:${CANDIDATE_TAG},push=true \
-                    //   --attest type=sbom \
-                    //   --attest type=provenance,mode=max
-                    // 검증 후: Harbor에서 해당 태그의 attestation manifest가 재조회되는지 확인
-                }
-            }
-        }
-
-        // --------------------------------------------------------------
-        // 팀 확정 방침(2026-09-10):
-        //   차단 정책 - CRITICAL: fix 여부 무관 실패 / HIGH: 수정 가능(fix 존재)한
-        //   경우만 실패 / 파이프라인 내 임의 예외처리 금지.
-        //   Scanner 제품(Trivy/Grype 등)은 아직 미확정 — TODO 유지.
-        //   단, 위 정책이 "HIGH는 fix 유무로 갈라진다"는 비대칭 조건이라
-        //   단순 severity 필터(--severity HIGH,CRITICAL)만으로는 구현 불가.
-        //   Scanner 선택 시 취약점 단위로 fix 존재 여부를 머신 리더블하게
-        //   제공하는지(JSON의 FixedVersion / fix.state 등) 반드시 확인 필요.
-        //   확정되면 JSON 결과를 받아 심각도별로 직접 분기하는 커스텀 파싱으로 구현.
-        // --------------------------------------------------------------
-        stage('Scan') {
-            steps {
-                container('python') {
-                    withCredentials([usernamePassword(
-                        credentialsId: env.HARBOR_API_CRED,
-                        usernameVariable: 'HARBOR_API_USER',
-                        passwordVariable: 'HARBOR_API_PASS'
-                    )]) {
-                        echo "TODO: Scanner 제품 확정 필요 (Trivy/Grype 등, CRITICAL/HIGH-with-fix 비대칭 정책 구현 가능해야 함)"
-                        // 예시(확정 전, 뼈대):
-                        // 1) Scanner로 ${CANDIDATE_TAG} 이미지 스캔, JSON 출력
-                        // 2) CRITICAL 존재 시 무조건 실패
-                        // 3) HIGH 중 fix가 있는 항목이 하나라도 있으면 실패
-                        // 4) 위 조건 미해당 시 통과 (임의 예외처리 금지)
+                    script {
+                        COMPONENT_REPO.each { component, repo ->
+                            sh """
+                                buildctl-daemonless.sh build \\
+                                  --frontend dockerfile.v0 \\
+                                  --local context=./${component} \\
+                                  --local dockerfile=./${component} \\
+                                  --output type=image,name=${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.CANDIDATE_TAG},push=true
+                            """
+                        }
                     }
                 }
             }
         }
 
         // --------------------------------------------------------------
-        // Promote: Candidate 태그가 가리키는 아티팩트에 최종 태그(git-*)를
-        // 추가한다 (재빌드/재푸시 없음, 동일 digest에 태그만 하나 더 붙음).
+        // 팀 확정 방침: BuildKit native SBOM/Provenance attestation을 이
+        // rootless 환경에서 먼저 검증 후 채택 여부 결정. 아직 검증 전이므로
+        // Promote 도달을 막기 위해 error()로 fail-closed 처리.
+        // --------------------------------------------------------------
+        stage('SBOM & Provenance (미검증)') {
+            steps {
+                container('buildkit') {
+                    error("BuildKit native attestation 검증 전. 검증 완료 및 구현 전까지 fail-closed로 Promote 도달을 차단합니다.")
+                    // 예시(검증 후 대체 예정):
+                    // buildctl-daemonless.sh build ... --attest type=sbom --attest type=provenance,mode=max
+                }
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Scan: Harbor를 거치지 않고 Trivy CLI로 Candidate 이미지를 원격
+        // 스캔한다 (Issue #58 원문: "Trivy/Grype 등 별도 Scanner로 Candidate
+        // Tag를 원격 스캔"). Harbor 스캐너 등록/공유 인프라 변경이 전혀
+        // 필요 없다 — Trivy 바이너리는 ci-python 이미지에 COPY로 포함됨
+        // (Dockerfile.ci-python, digest는 팀에서 직접 pull하여 확정).
+        //
+        // 인증은 기존 harbor-robot-account(robot$seokpan+seokpan-ci,
+        // pull 권한만 필요) Jenkins Credential을 그대로 재사용 — 새 Credential
+        // 불필요. CA는 buildkit 컨테이너와 동일하게 Pod 레벨로 마운트된
+        // harbor-ca-cert(/etc/buildkit/certs/ca.crt)를 SSL_CERT_FILE로
+        // 지정해 Go 표준 라이브러리가 인식하게 한다.
+        //
+        // [확인 필요] Trivy가 취약점 DB(ghcr.io/aquasecurity/trivy-db)를
+        // 내려받으려면 cicd 네임스페이스의 buildkit-rootless Pod이 외부
+        // 인터넷 egress를 쓸 수 있어야 함. 막혀있으면 이 스테이지가 DB
+        // 다운로드 단계에서 fail-closed로 걸린다(에러 메시지로 원인 구분 가능).
+        //
+        // 팀 확정 정책(임의 예외처리 없이 그대로 구현):
+        //   - CRITICAL: fix 존재 여부 무관 무조건 실패
+        //   - HIGH: FixedVersion이 존재하는(=고칠 수 있는) 항목이 하나라도
+        //     있으면 실패
+        //   - 위 조건에 해당하지 않으면 통과
+        // --------------------------------------------------------------
+        stage('Scan') {
+            steps {
+                container('python') {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'harbor-robot-account',
+                        usernameVariable: 'HARBOR_ROBOT_USER',
+                        passwordVariable: 'HARBOR_ROBOT_PASS'
+                    )]) {
+                        script {
+                            COMPONENT_REPO.each { component, repo ->
+                                env.CURRENT_REPO = repo
+                                sh '''
+                                    set -eu
+                                    export SSL_CERT_FILE="${HARBOR_CA_PATH}"
+                                    IMAGE_REF="${HARBOR_HOST}/${HARBOR_PROJECT}/${CURRENT_REPO}:${CANDIDATE_TAG}"
+                                    REPORT_FILE="/tmp/trivy-${CURRENT_REPO}.json"
+
+                                    trivy image \\
+                                      --format json \\
+                                      --severity CRITICAL,HIGH \\
+                                      --exit-code 0 \\
+                                      --username "${HARBOR_ROBOT_USER}" \\
+                                      --password "${HARBOR_ROBOT_PASS}" \\
+                                      --cache-dir /tmp/trivy-cache \\
+                                      --output "${REPORT_FILE}" \\
+                                      "${IMAGE_REF}"
+
+                                    python3 - "${REPORT_FILE}" "${CURRENT_REPO}" <<'PYEOF'
+import sys, json
+
+report_file, repo = sys.argv[1], sys.argv[2]
+
+with open(report_file) as f:
+    data = json.load(f)
+
+vulns = []
+for result in (data.get("Results") or []):
+    vulns.extend(result.get("Vulnerabilities") or [])
+
+critical = [v for v in vulns if str(v.get("Severity", "")).upper() == "CRITICAL"]
+high_fixable = [
+    v for v in vulns
+    if str(v.get("Severity", "")).upper() == "HIGH" and v.get("FixedVersion")
+]
+
+print(f"[{repo}] CRITICAL={len(critical)}, HIGH(fix 있음)={len(high_fixable)}, 전체={len(vulns)}")
+
+if critical or high_fixable:
+    for v in (critical + high_fixable):
+        print(f"  - {v.get('VulnerabilityID')} severity={v.get('Severity')} pkg={v.get('PkgName')} fixed={v.get('FixedVersion')}")
+    print(f"[{repo}] Scan 차단 정책 위반 - Promote 진행 불가")
+    sys.exit(1)
+
+print(f"[{repo}] Scan 통과")
+PYEOF
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Promote: 컴포넌트별 Candidate 태그가 가리키는 아티팩트에 최종
+        // 태그(git-*)를 추가한다 (재빌드/재푸시 없음).
         // --------------------------------------------------------------
         stage('Promote') {
             steps {
@@ -208,19 +313,22 @@ PYEOF
                         usernameVariable: 'HARBOR_API_USER',
                         passwordVariable: 'HARBOR_API_PASS'
                     )]) {
-                        sh '''
-                            python3 - <<'PYEOF'
+                        script {
+                            COMPONENT_REPO.each { component, repo ->
+                                env.CURRENT_REPO = repo
+                                sh '''
+                                    python3 - <<'PYEOF'
 import os, json, urllib.request, urllib.error, base64
 
-host    = os.environ["HARBOR_HOST"]
-project = os.environ["HARBOR_PROJECT"]
-repo    = os.environ["IMAGE_REPO"]
-cand    = os.environ["CANDIDATE_TAG"]
-final   = os.environ["FINAL_TAG"]
-user    = os.environ["HARBOR_API_USER"]
-pw      = os.environ["HARBOR_API_PASS"]
+host  = os.environ["HARBOR_HOST"]
+proj  = os.environ["HARBOR_PROJECT"]
+repo  = os.environ["CURRENT_REPO"]
+cand  = os.environ["CANDIDATE_TAG"]
+final = os.environ["FINAL_TAG"]
+user  = os.environ["HARBOR_API_USER"]
+pw    = os.environ["HARBOR_API_PASS"]
 
-url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{cand}/tags"
+url = f"https://{host}/api/v2.0/projects/{proj}/repositories/{repo}/artifacts/{cand}/tags"
 body = json.dumps({"name": final}).encode()
 
 req = urllib.request.Request(url, data=body, method="POST")
@@ -230,25 +338,31 @@ req.add_header("Content-Type", "application/json")
 
 try:
     with urllib.request.urlopen(req, timeout=15, cafile=os.environ["HARBOR_CA_PATH"]) as resp:
-        print(f"Promote OK: {resp.status}")
+        print(f"Promote OK [{repo}]: {resp.status}")
 except urllib.error.HTTPError as e:
-    print(f"Promote FAILED: {e.code} {e.read().decode()}")
+    print(f"Promote FAILED [{repo}]: {e.code} {e.read().decode()}")
     raise SystemExit(1)
 PYEOF
-                        '''
+                                '''
+                            }
+                        }
                     }
                 }
             }
         }
 
         // --------------------------------------------------------------
-        // Digest 일치 검증 + PASS 경로 Candidate 즉시 삭제
-        // (팀 확정 흐름: Promote -> Digest 일치 확인 -> scan-* Candidate 삭제)
-        // 동일 아티팩트에 태그만 추가하는 거라 이론상 불일치가 나올 수 없지만,
-        // Promote 이후 GC/경합 등으로 final 태그가 다른 digest를 가리키게 되는
-        // 상황을 배제할 수 없으므로 반드시 확인한다. 불일치 시 git-*는 이미
-        // Immutable이라 되돌릴 수 없는 상태이므로 fail-closed로 알림 목적의
-        // 실패 처리만 하고, 실제 롤백은 팀 확인 후 수동 대응한다.
+        // Digest 일치 검증 + PASS 경로 Candidate 태그만 삭제.
+        //
+        // [수정, 팀 리뷰 반영] 기존에는 DELETE /artifacts/{cand} 를 호출해
+        // digest(Artifact) 자체를 지웠음. Promote 이후 Candidate/Final은
+        // 같은 digest를 가리키므로 이 호출은 방금 만든 git-* Final Tag의
+        // Artifact까지 함께 지울 수 있는 심각한 버그였음.
+        // Harbor의 Tag 전용 삭제 엔드포인트
+        //   DELETE /artifacts/{reference}/tags/{tag_name}
+        // 로 교체 — reference는 살아남는 final 태그를 사용하고(같은
+        // Artifact를 가리키므로 조회 가능), tag_name에 candidate 태그만
+        // 지정해 scan-* 태그만 제거하고 Artifact/Final Tag는 그대로 둔다.
         // --------------------------------------------------------------
         stage('Verify Digest & Cleanup Candidate') {
             steps {
@@ -258,21 +372,24 @@ PYEOF
                         usernameVariable: 'HARBOR_API_USER',
                         passwordVariable: 'HARBOR_API_PASS'
                     )]) {
-                        sh '''
-                            python3 - <<'PYEOF'
+                        script {
+                            COMPONENT_REPO.each { component, repo ->
+                                env.CURRENT_REPO = repo
+                                sh '''
+                                    python3 - <<'PYEOF'
 import os, json, urllib.request, urllib.error, base64
 
-host    = os.environ["HARBOR_HOST"]
-project = os.environ["HARBOR_PROJECT"]
-repo    = os.environ["IMAGE_REPO"]
-cand    = os.environ["CANDIDATE_TAG"]
-final   = os.environ["FINAL_TAG"]
-user    = os.environ["HARBOR_API_USER"]
-pw      = os.environ["HARBOR_API_PASS"]
-cafile  = os.environ["HARBOR_CA_PATH"]
+host  = os.environ["HARBOR_HOST"]
+proj  = os.environ["HARBOR_PROJECT"]
+repo  = os.environ["CURRENT_REPO"]
+cand  = os.environ["CANDIDATE_TAG"]
+final = os.environ["FINAL_TAG"]
+user  = os.environ["HARBOR_API_USER"]
+pw    = os.environ["HARBOR_API_PASS"]
+cafile = os.environ["HARBOR_CA_PATH"]
 
 def get_digest(tag):
-    url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{tag}"
+    url = f"https://{host}/api/v2.0/projects/{proj}/repositories/{repo}/artifacts/{tag}"
     req = urllib.request.Request(url)
     auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
     req.add_header("Authorization", f"Basic {auth}")
@@ -283,47 +400,59 @@ try:
     cand_digest  = get_digest(cand)
     final_digest = get_digest(final)
 except Exception as e:
-    print(f"Digest 조회 실패: {e}")
+    print(f"[{repo}] Digest 조회 실패: {e}")
     raise SystemExit(1)
 
 if cand_digest != final_digest:
-    print(f"DIGEST MISMATCH: candidate={cand_digest} final={final_digest}")
+    print(f"[{repo}] DIGEST MISMATCH: candidate={cand_digest} final={final_digest}")
     raise SystemExit(1)
 
-print(f"Digest 일치 확인: {final_digest}")
+print(f"[{repo}] Digest 일치 확인: {final_digest}")
 
-# PASS 경로 확정 흐름: Digest 일치 확인 후 scan-* Candidate 즉시 삭제
-del_url = f"https://{host}/api/v2.0/projects/{project}/repositories/{repo}/artifacts/{cand}"
+# Tag 전용 삭제: reference=final 태그(살아남는 태그, 같은 Artifact),
+# tag_name=candidate 태그. Artifact 자체는 건드리지 않는다.
+del_url = f"https://{host}/api/v2.0/projects/{proj}/repositories/{repo}/artifacts/{final}/tags/{cand}"
 req = urllib.request.Request(del_url, method="DELETE")
 auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
 req.add_header("Authorization", f"Basic {auth}")
 try:
     with urllib.request.urlopen(req, timeout=15, cafile=cafile) as resp:
-        print(f"Candidate 삭제 완료: {resp.status}")
+        print(f"[{repo}] Candidate 태그 삭제 완료: {resp.status}")
 except urllib.error.HTTPError as e:
-    # 삭제 실패는 Final Tag 자체의 무결성 문제가 아니므로 fail-closed 대상은 아님.
-    # 다만 정리가 안 됐다는 사실은 남겨서, Harbor Retention Policy 쪽에서
-    # 뒤늦게라도 정리되게 한다 (팀 확정: Retention 정책은 Ansible/Harbor 쪽 관리).
-    print(f"Candidate 삭제 실패(무시 가능, Retention으로 정리 예정): {e.code}")
+    # 삭제 실패는 Final Tag/Artifact 무결성과 무관하므로 fail-closed 대상 아님.
+    # 남은 태그는 Harbor Retention Policy로 추후 정리 예정.
+    print(f"[{repo}] Candidate 태그 삭제 실패(무시 가능, Retention으로 정리 예정): {e.code}")
 PYEOF
-                        '''
+                                '''
+                            }
+                        }
                     }
                 }
+            }
+        }
+
+        // --------------------------------------------------------------
+        // TODO(비차단, Issue #58 본문에 "실행 방법 미설계"로 명시됨):
+        // non-root 실행 검증 + Health Smoke Test. K8s Job 등 실행 방식이
+        // 아직 팀 내 설계되지 않았으므로 SBOM/Scan과 달리 fail-closed로
+        // 막지 않고 echo만 남긴다. 설계 확정되는 대로 별도 구현.
+        // --------------------------------------------------------------
+        stage('Health Smoke Test (설계 대기)') {
+            steps {
+                echo "TODO: non-root 실행 검증 및 Health Smoke Test 실행 방식 설계 필요 (Issue #58 명시, 아직 미설계 - 비차단)"
             }
         }
     }
 
     post {
         failure {
-            // FAIL 경로 확정 흐름: Final Tag 생성 안 함, GitOps 변경 안 함,
-            // scan-* Candidate는 즉시 삭제하지 않고 Retention 대상으로 보존한다.
-            // Retention 기간/개수 및 정리 방식(Harbor Tag Retention Policy 권장,
-            // Ansible로 선언적 관리)은 팀 확인 후 별도 확정 예정 — 이 파이프라인은
-            // FAIL 시 Candidate를 건드리지 않는 것으로 충분하다.
+            // FAIL 경로 확정 흐름: Final Tag 미생성, GitOps 변경 없음,
+            // scan-* Candidate는 즉시 삭제하지 않고 Retention 대상으로 보존.
+            // Retention 기간/개수 및 정리 방식은 팀 확인 후 별도 확정 예정.
             echo "Image Pipeline 실패: ${env.CANDIDATE_TAG ?: 'N/A'} / ${env.FINAL_TAG ?: 'N/A'} (scan-* Candidate는 삭제하지 않고 보존, Retention 정책으로 추후 정리 예정)"
         }
         success {
-            echo "Image Pipeline 성공: ${env.FINAL_TAG} Promote 완료, Candidate(${env.CANDIDATE_TAG}) 정리 완료"
+            echo "Image Pipeline 성공: ${env.FINAL_TAG} Promote 완료 (backend/frontend), Candidate(${env.CANDIDATE_TAG}) 정리 완료"
         }
     }
 }
