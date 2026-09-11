@@ -68,27 +68,35 @@ COPY --from=builder --chown=seokpan:seokpan /app/src /app/src
 COPY --from=builder --chown=seokpan:seokpan /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
 
-# [수정, 2026-09-11 2차] 1차 시도가 조용히 실패한 것을 확인.
+# [수정, 2026-09-11 3차] 진단 결과 확인 완료.
 #
-# 1) perl-base: apt는 Essential 패키지 제거 시 -y만으로는 부족하고
-#    --allow-remove-essential이 추가로 필요함(없으면 경고만 찍고 실제로는
-#    제거 안 됨 — 1차 빌드 로그에 "Removing perl-base..." 실행 로그가
-#    없었던 것으로 확인). 또한 실패를 `2>/dev/null;`로 숨기고 다음 단계로
-#    넘어가게 했던 게 "조용한 실패"를 감춘 원인이라 제거 — 이제 실패하면
-#    빌드 자체가 실패하도록 함(의도대로 안 지워지면 바로 드러나야 함).
+# msgpack: pip에 vendored됨(pip/_vendor/msgpack) — 최상위 import로는 안
+#   잡혀서 1~2차 조건부 체크가 계속 스킵됐던 것. 앱 의존성이 아니라
+#   pip 내부 구현체.
+# setuptools: 실제 패키지 위치를 find로 못 찾음(cffi의 무관한 헬퍼 파일만
+#   검출됨) — pip/ensurepip 생태계 어딘가에 있을 가능성이 높다고 보고
+#   pip과 함께 정리.
 #
-# 2) setuptools/msgpack: "import 가능하면 업그레이드" 조건이 1차에서
-#    False로 나온 것으로 보임(Trivy 결과가 1차와 동일) — 정확한 설치
-#    위치를 특정 못 한 상태. 추측으로 또 고치는 대신, 실제 위치를 빌드
-#    로그에 출력하는 진단 커맨드로 먼저 교체함. 이 결과를 보고 다음
-#    수정을 정확하게 할 것.
+# 결론: 런타임 컨테이너는 pip이 전혀 필요 없음(빌드 시점에 uv로 .venv에
+# 이미 설치 완료, 실행은 .venv/bin/uvicorn 직접 호출, HEALTHCHECK도 표준
+# urllib만 사용). perl-base와 같은 논리 — "예외 처리"가 아니라 애초에
+# 불필요한 도구를 제거하는 것. pip을 통째로 지우면 그 안의 msgpack도
+# 함께 사라짐. 같은 RUN 안에서 제거 후 즉시 재확인까지 수행해 조용한
+# 실패를 방지함.
 RUN apt-get update && \
     apt-get purge -y --allow-remove-essential --auto-remove perl-base && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    echo "=== msgpack/setuptools 실제 위치 진단 ===" && \
-    (find / -xdev \( -iname "*msgpack*" -o -iname "*setuptools*" \) 2>/dev/null | grep -v '^/proc' || echo "(파일 없음)") && \
-    echo "=== python3 사이트 패키지 경로 ===" && \
-    python3 -c "import sys; print('\n'.join(sys.path))"
+    echo "=== pip/setuptools/wheel 제거 (런타임 불필요, msgpack은 pip 내부 vendored) ===" && \
+    rm -rf /usr/local/lib/python3.13/site-packages/pip \
+           /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+           /usr/local/lib/python3.13/site-packages/setuptools* \
+           /usr/local/lib/python3.13/site-packages/pkg_resources \
+           /usr/local/lib/python3.13/site-packages/wheel* \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 && \
+    echo "=== 제거 후 재확인 (여기서 뭔가 나오면 아직 안 지워진 것) ===" && \
+    (find / -xdev \( -iname "*msgpack*" -o -iname "*setuptools*" \) 2>/dev/null | grep -v '^/proc' || echo "(흔적 없음 - 제거 성공)") && \
+    echo "=== venv 밖에서 python3가 여전히 정상 동작하는지 확인 ===" && \
+    python3 --version
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
