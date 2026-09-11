@@ -785,7 +785,9 @@ PYEOF
                                 podTemplate(
                                     label: label,
                                     namespace: 'cicd',
-                                    imagePullSecrets: [[name: 'harbor-pull-secret']],
+                                    // [수정, Sandbox/타입 불일치 대응] Scripted podTemplate()의
+                                    // imagePullSecrets 파라미터는 List<String>(이름만)을 받음.
+                                    imagePullSecrets: ['harbor-pull-secret'],
                                     yaml: """
                                         apiVersion: v1
                                         kind: Pod
