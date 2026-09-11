@@ -149,14 +149,12 @@ pipeline {
             agent { kubernetes { inheritFrom 'buildkit-rootless' } }
             steps {
                 script {
-                    /*  
                     if (env.CHANGE_ID) {
                         error("이 Pipeline은 PR 컨텍스트(CHANGE_ID=${env.CHANGE_ID})에서 실행되면 안 됩니다.")
                     }
                     if (env.BRANCH_NAME != 'main') {
-                       error("이 Pipeline은 main 브랜치 전용입니다 (현재 BRANCH_NAME=${env.BRANCH_NAME}).")
+                        error("이 Pipeline은 main 브랜치 전용입니다 (현재 BRANCH_NAME=${env.BRANCH_NAME}).")
                     }
-                    */
                     echo "Branch Guard 통과: BRANCH_NAME=main, PR 컨텍스트 아님"
 
                     // [수정, App Jenkinsfile v3.1 대조 반영] sh('git rev-parse HEAD') 대신
@@ -173,7 +171,6 @@ pipeline {
                     env.MAIN_SHA_12    = env.SEOKPAN_GIT_SHA.take(12)
                     env.CANDIDATE_TAG  = "scan-${env.MAIN_SHA_12}-${env.BUILD_NUMBER}"
                     env.FINAL_TAG      = "git-${env.MAIN_SHA_12}"
-                    env.P1_PASSED = 'true' 
                     echo "Commit: ${env.SEOKPAN_GIT_SHA}"
                     echo "RUN_ID: ${env.SEOKPAN_CI_RUN_ID}"
                     echo "Candidate tag: ${env.CANDIDATE_TAG} / Final tag: ${env.FINAL_TAG}"
@@ -189,10 +186,6 @@ pipeline {
         // Pipeline은 상위 stage 실패 시 하위 stage를 자동 skip).
         // --------------------------------------------------------------
         stage('P1 Revalidation (App CI Check on main)') {
-            steps {
-                echo "TEMP-TEST-ONLY: P1 Revalidation 임시 스킵"
-            }
-            /*
             agent { kubernetes { inheritFrom 'app-ci-check' } }
             environment {
                 // [반영] App Jenkinsfile v3.1과 동일. verify_ci.py 등이 HOME 기준으로
@@ -204,6 +197,8 @@ pipeline {
                     steps {
                         container('app-ci') {
                             script {
+                                // main의 최신 상태를 다시 받는 게 아니라, Branch Guard &
+                                // Prepare에서 고정한 정확히 같은 Commit을 재확인 Checkout.
                                 def scmVars = checkout scm
                                 if (scmVars.GIT_COMMIT != env.SEOKPAN_GIT_SHA) {
                                     error("Commit mismatch on app-ci-check agent: expected ${env.SEOKPAN_GIT_SHA}, got ${scmVars.GIT_COMMIT}")
@@ -215,6 +210,9 @@ pipeline {
                     }
                 }
 
+                // [수정] App Jenkinsfile v3.1 원본 그대로 반영 — 제 이전 재구성은
+                // 동작이 반대였음(기존 캐시 있으면 스킵 vs 원본은 에러로 중단,
+                // write-test 성공 시 무시 vs 원본은 명시적 실패).
                 stage('Prepare Browser Cache') {
                     steps {
                         container('app-ci') {
@@ -224,6 +222,7 @@ pipeline {
                                     SRC="/opt/playwright-cache"
                                     DEST=".browser-cache"
 
+                                    # 새 작업 공간에 예상외 캐시가 있으면 덮어쓰거나 삭제하지 않고 중단
                                     if [ -e "$DEST" ] || [ -L "$DEST" ]; then
                                         echo "ERROR: $DEST already exists in a fresh workspace. Aborting." >&2
                                         exit 1
@@ -281,6 +280,8 @@ pipeline {
                     steps {
                         container('app-ci') {
                             dir('frontend') {
+                                // verify:ci가 Format/Lint/TypeCheck/도구시험/기능시험/Build/Audit까지
+                                // 전부 포함 (npm audit 별도 스텝 불필요, ci-verification.md 확인됨)
                                 sh 'npm run verify:ci -- --run-id ${SEOKPAN_CI_RUN_ID}'
                             }
                         }
@@ -312,10 +313,12 @@ pipeline {
                         container('app-ci') {
                             dir('backend') {
                                 script {
+                                    // 집계 "시도" 여부를 호출 전에 기록 - post에서 재집계하지 않음
                                     env.P1_AGGREGATE_ATTEMPTED = 'true'
                                     sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
                                 }
                             }
+                            // 정상 경로는 엄격하게: 비어있으면 그 자체로 실패 (allowEmptyArchive 없음)
                             archiveArtifacts(
                                 artifacts: "test-results/${env.SEOKPAN_CI_RUN_ID}/**",
                                 fingerprint: true
@@ -347,9 +350,9 @@ pipeline {
                     }
                 }
             }
-            */
         }
 
+        // --------------------------------------------------------------
         // Harbor 작업 그룹: buildkit-rootless 하나의 Pod을 공유하며
         // Guard -> Build&Push(+digest 캡처) -> SBOM(미검증) -> Scan ->
         // Promote -> Verify&Cleanup -> Health Smoke -> Evidence 순서로
@@ -495,7 +498,17 @@ PYEOF
                                             ''',
                                             returnStdout: true
                                         ).trim()
-                                        env["CAND_DIGEST_${component}"] = digest
+                                        // [수정, Sandbox 차단 대응] env["동적키"] = 값 형태는
+                                        // Jenkins Groovy Sandbox가 DefaultGroovyMethods.putAt을
+                                        // 승인 목록에서 막아 RejectedAccessException을 던짐
+                                        // (Tmp Job 실행에서 실제 확인됨). env는 일반 Map이 아니라
+                                        // 동적 대괄호 대입 자체가 안전 목록에 없음 — 컴포넌트가
+                                        // backend/frontend 둘뿐이므로 고정 이름 두 개로 대체.
+                                        if (component == 'backend') {
+                                            env.CAND_DIGEST_BACKEND = digest
+                                        } else if (component == 'frontend') {
+                                            env.CAND_DIGEST_FRONTEND = digest
+                                        }
                                         echo "[${repo}] push-time digest: ${digest}"
                                     }
                                 }
@@ -507,7 +520,7 @@ PYEOF
                 stage('SBOM & Provenance (미검증)') {
                     steps {
                         container('buildkit') {
-                            echo("SBOM 스킵 - 임시 테스트")
+                            error("BuildKit native attestation 검증 전. fail-closed로 중단합니다.")
                         }
                     }
                 }
@@ -619,7 +632,7 @@ PYEOF
                                     def cleanupResults = [:]
                                     COMPONENT_REPO.each { component, repo ->
                                         env.CURRENT_REPO = repo
-                                        env.CURRENT_CAND_DIGEST = env["CAND_DIGEST_${component}"]
+                                        env.CURRENT_CAND_DIGEST = (component == 'backend') ? env.CAND_DIGEST_BACKEND : env.CAND_DIGEST_FRONTEND
                                         def output = sh(
                                             script: '''
                                                 python3 - <<'PYEOF'
@@ -849,7 +862,7 @@ except Exception as e:
                                             harbor_repo    : repo,
                                             candidate_tag  : env.CANDIDATE_TAG,
                                             final_tag      : env.FINAL_TAG,
-                                            push_time_digest: env["CAND_DIGEST_${component}"],
+                                            push_time_digest: (component == 'backend') ? env.CAND_DIGEST_BACKEND : env.CAND_DIGEST_FRONTEND,
                                             cleanup_status : env.CLEANUP_SUMMARY
                                         ]]
                                     },
