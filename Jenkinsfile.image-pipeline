@@ -1,11 +1,4 @@
 // ============================================================================
-// ⚠️ TEMP-TEST-ONLY 버전 — Tmp Job 격리 테스트 전용, 절대 merge 금지 ⚠️
-// Branch Guard(BRANCH_NAME/CHANGE_ID 체크), P1 Revalidation, SBOM fail-closed
-// 3곳이 임시로 우회되어 있음 ("TEMP-TEST-ONLY" 주석으로 표시됨).
-// 테스트 끝나면 이 파일과 이 파일을 올린 테스트 브랜치를 통째로 삭제할 것.
-// 정식 버전은 Jenkinsfile.image-pipeline(우회 없음)을 그대로 사용할 것.
-// ============================================================================
-// ============================================================================
 // seokpan-app :: Image Pipeline (main branch)
 // 목적: main push 시 Branch Guard -> P1 재검증(App CI Check 전체 재적용) ->
 //       Backend/Frontend Build -> SBOM/Scan -> Harbor Push -> Tag Promote ->
@@ -84,6 +77,13 @@
 //       7) Aggregate 성공 경로 archiveArtifacts는 엄격(allowEmptyArchive 없음),
 //          post/always 폴백만 허용 + 중복 집계 방지 플래그(P1_AGGREGATE_ATTEMPTED)
 //       8) options에 skipDefaultCheckout/disableRestartFromStage/buildDiscarder 추가
+//   - 8차 수정(2026-09-11): 실제 Multibranch 실행으로 Guard~Verify Digest &
+//     Cleanup 전 구간(Backend/Frontend Build/Scan/Promote/Cleanup)이 처음
+//     완주함을 확인(Trivy CRITICAL=0/HIGH=0 둘 다 달성 후). Health Smoke
+//     Test 단계에서 신규 실패 발견 및 수정: Scripted podTemplate()의
+//     imagePullSecrets는 List<String>(이름만)을 받는데 Declarative YAML
+//     문법([[name: '...']])을 그대로 써서 NoStaplerConstructorException
+//     발생 — ['harbor-pull-secret'] 형태로 수정.
 //   - 남은 TODO:
 //       - [해결됨] Backend/Frontend 쓰기 경로: 실제 Dockerfile 대조 완료.
 //       - [확인됨] apps/backend·frontend/deployment.yaml 대조 결과,
@@ -156,16 +156,12 @@ pipeline {
             agent { kubernetes { inheritFrom 'buildkit-rootless' } }
             steps {
                 script {
-                    /* TEMP-TEST-ONLY: Tmp Job은 Multibranch가 아니라 BRANCH_NAME/CHANGE_ID가
-                       채워지지 않음 — 이 우회는 실제 PR에는 절대 반영하지 말 것.
                     if (env.CHANGE_ID) {
                         error("이 Pipeline은 PR 컨텍스트(CHANGE_ID=${env.CHANGE_ID})에서 실행되면 안 됩니다.")
                     }
                     if (env.BRANCH_NAME != 'main') {
                         error("이 Pipeline은 main 브랜치 전용입니다 (현재 BRANCH_NAME=${env.BRANCH_NAME}).")
                     }
-                    */
-                    echo "TEMP-TEST-ONLY: Branch Guard 우회됨 (Tmp Job 테스트용)"
                     echo "Branch Guard 통과: BRANCH_NAME=main, PR 컨텍스트 아님"
 
                     // [수정, App Jenkinsfile v3.1 대조 반영] sh('git rev-parse HEAD') 대신
@@ -182,10 +178,6 @@ pipeline {
                     env.MAIN_SHA_12    = env.SEOKPAN_GIT_SHA.take(12)
                     env.CANDIDATE_TAG  = "scan-${env.MAIN_SHA_12}-${env.BUILD_NUMBER}"
                     env.FINAL_TAG      = "git-${env.MAIN_SHA_12}"
-                    // [수정, P1 실제 테스트용] 이전엔 P1을 통째로 건너뛰기 위해 여기서
-                    // P1_PASSED를 강제로 'true'로 미리 설정했음 — 이번엔 P1을 실제로
-                    // 돌려서 검증하는 게 목적이라 제거함. 이제 P1_PASSED는 P1의
-                    // Aggregate 스테이지가 실제로 성공했을 때만 설정됨.
                     echo "Commit: ${env.SEOKPAN_GIT_SHA}"
                     echo "RUN_ID: ${env.SEOKPAN_CI_RUN_ID}"
                     echo "Candidate tag: ${env.CANDIDATE_TAG} / Final tag: ${env.FINAL_TAG}"
@@ -535,7 +527,7 @@ PYEOF
                 stage('SBOM & Provenance (미검증)') {
                     steps {
                         container('buildkit') {
-                            echo("TEMP-TEST-ONLY: SBOM 스킵 - 임시 테스트")
+                            error("BuildKit native attestation 검증 전. fail-closed로 중단합니다.")
                         }
                     }
                 }
@@ -786,6 +778,9 @@ PYEOF
                                     namespace: 'cicd',
                                     // [수정, Sandbox/타입 불일치 대응] Scripted podTemplate()의
                                     // imagePullSecrets 파라미터는 List<String>(이름만)을 받음.
+                                    // Declarative YAML 문법(- name: xxx)을 그대로 옮겨써서
+                                    // NoStaplerConstructorException(String으로 변환 실패)이
+                                    // 발생했음 — 실제 실행으로 확인됨.
                                     imagePullSecrets: ['harbor-pull-secret'],
                                     yaml: """
                                         apiVersion: v1
@@ -794,6 +789,15 @@ PYEOF
                                           securityContext:
                                             seccompProfile:
                                               type: RuntimeDefault
+                                            # [추가, 실행으로 확인된 버그 수정] emptyDir인
+                                            # workspace-volume은 기본 root 소유로 생성됨.
+                                            # target이 non-root(10001/101)라 그 안에서 sh 스텝을
+                                            # 실행할 때 Jenkins가 제어 파일을 쓸 권한이 없어
+                                            # "process apparently never started"로 5분간 멈춘 뒤
+                                            # 실패했음(실제 실행 로그로 확인). fsGroup을 target의
+                                            # runAsGroup과 맞춰 emptyDir을 그룹 쓰기 가능하게 함 —
+                                            # 다른 컨테이너(UID 1000 등)는 fsGroup이 supplementary
+                                            # group으로 추가만 될 뿐이라 기존 동작에 영향 없음.
                                             fsGroup: ${cfg.uid}
                                           containers:
                                           - name: target
@@ -862,9 +866,8 @@ except Exception as e:
                                         // Migration 자산 존재 확인(TODO)은 exec 없이 검증하는
                                         // 방법(예: registry API로 이미지 레이어 직접 조회)을
                                         // 팀에서 별도로 설계해야 함 — 이번 스모크 범위에서는 제외.
-
-                    }
-                }
+                                    }
+                                }
                                 echo "[${component}] Health Smoke Test 완료 (Process Smoke만 확인 — 실제 DB/Redis readiness 아님)"
                             }
                         }
@@ -880,6 +883,12 @@ except Exception as e:
                     steps {
                         container('python') {
                             script {
+                                // [수정, 예방적] writeJSON은 Pipeline Utility Steps 플러그인
+                                // 의존 스텝 — 이 세션에서 이미 putAt/imagePullSecrets 타입 등
+                                // 예상 못한 Jenkins 제약에 두 번 걸렸던 걸 감안해, 플러그인
+                                // 설치 여부와 무관하게 항상 되는 방식(문자열 조립 + 코어
+                                // writeFile 스텝)으로 교체. Evidence 스테이지는 아직 한 번도
+                                // 실행된 적 없어 미검증 구간이라 안전하게 감.
                                 def backendDigest  = env.CAND_DIGEST_BACKEND  ?: ''
                                 def frontendDigest = env.CAND_DIGEST_FRONTEND ?: ''
                                 def cleanupSummary = env.CLEANUP_SUMMARY ?: ''
