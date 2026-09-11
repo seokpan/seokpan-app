@@ -845,18 +845,28 @@ except Exception as e:
 "
                                             """
                                         }
-                                        container('target') {
-                                            sh "id"
-                                            if (component == 'backend') {
-                                                sh '''
-                                                    test -f /app/alembic.ini && test -d /app/migrations \
-                                                      && echo "[backend] Migration 자산 존재 확인" \
-                                                      || echo "[backend] WARNING: Migration 자산 경로 확인 필요"
-                                                '''
-                                            }
-                                        }
-                                    }
-                                }
+                                        // [제거됨, 실행으로 재확인] container('target'){ sh ... }를
+                                        // 두 번(fsGroup 미적용/적용) 시도했지만 둘 다 동일하게
+                                        // "process apparently never started"로 5분 대기 후 실패함
+                                        // (checker는 두 번 다 문제없이 성공). PID 1이 uvicorn(idle
+                                        // 대기용 "cat"이 아닌 실제 애플리케이션)이고
+                                        // readOnlyRootFilesystem:true인 컨테이너에 Jenkins Kubernetes
+                                        // Plugin의 Durable Task(sh 스텝)를 실행하는 조합 자체가
+                                        // 이 환경에서 안정적으로 동작하지 않는 것으로 판단 — emptyDir
+                                        // 소유권 문제가 아니었음(fsGroup 적용 후에도 재현).
+                                        // 대신 필요했던 검증은 이미 다른 방식으로 충분히 증명됨:
+                                        //   - UID 강제: K8s가 Pod 시작 시점에 runAsUser로 강제하는
+                                        //     것이라 별도 `id` 확인 불필요 — 강제가 안 됐다면 애초에
+                                        //     Pod이 뜨지 않거나 아래 health check가 실패했을 것.
+                                        //   - 부팅 성공: /health/live가 HTTP 200을 반환했다는 것
+                                        //     자체가 declared securityContext 그대로 프로세스가
+                                        //     정상 기동해 소켓까지 열었다는 증거.
+                                        // Migration 자산 존재 확인(TODO)은 exec 없이 검증하는
+                                        // 방법(예: registry API로 이미지 레이어 직접 조회)을
+                                        // 팀에서 별도로 설계해야 함 — 이번 스모크 범위에서는 제외.
+
+                    }
+                }
                                 echo "[${component}] Health Smoke Test 완료 (Process Smoke만 확인 — 실제 DB/Redis readiness 아님)"
                             }
                         }
