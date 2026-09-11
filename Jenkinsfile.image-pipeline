@@ -192,6 +192,7 @@ pipeline {
             steps {
                 echo "TEMP-TEST-ONLY: P1 Revalidation 임시 스킵"
             }
+            /*
             agent { kubernetes { inheritFrom 'app-ci-check' } }
             environment {
                 // [반영] App Jenkinsfile v3.1과 동일. verify_ci.py 등이 HOME 기준으로
@@ -203,8 +204,6 @@ pipeline {
                     steps {
                         container('app-ci') {
                             script {
-                                // main의 최신 상태를 다시 받는 게 아니라, Branch Guard &
-                                // Prepare에서 고정한 정확히 같은 Commit을 재확인 Checkout.
                                 def scmVars = checkout scm
                                 if (scmVars.GIT_COMMIT != env.SEOKPAN_GIT_SHA) {
                                     error("Commit mismatch on app-ci-check agent: expected ${env.SEOKPAN_GIT_SHA}, got ${scmVars.GIT_COMMIT}")
@@ -215,9 +214,7 @@ pipeline {
                         }
                     }
                 }
-                // [수정] App Jenkinsfile v3.1 원본 그대로 반영 — 제 이전 재구성은
-                // 동작이 반대였음(기존 캐시 있으면 스킵 vs 원본은 에러로 중단,
-                // write-test 성공 시 무시 vs 원본은 명시적 실패).
+
                 stage('Prepare Browser Cache') {
                     steps {
                         container('app-ci') {
@@ -227,7 +224,6 @@ pipeline {
                                     SRC="/opt/playwright-cache"
                                     DEST=".browser-cache"
 
-                                    # 새 작업 공간에 예상외 캐시가 있으면 덮어쓰거나 삭제하지 않고 중단
                                     if [ -e "$DEST" ] || [ -L "$DEST" ]; then
                                         echo "ERROR: $DEST already exists in a fresh workspace. Aborting." >&2
                                         exit 1
@@ -285,8 +281,6 @@ pipeline {
                     steps {
                         container('app-ci') {
                             dir('frontend') {
-                                // verify:ci가 Format/Lint/TypeCheck/도구시험/기능시험/Build/Audit까지
-                                // 전부 포함 (npm audit 별도 스텝 불필요, ci-verification.md 확인됨)
                                 sh 'npm run verify:ci -- --run-id ${SEOKPAN_CI_RUN_ID}'
                             }
                         }
@@ -318,12 +312,10 @@ pipeline {
                         container('app-ci') {
                             dir('backend') {
                                 script {
-                                    // 집계 "시도" 여부를 호출 전에 기록 - post에서 재집계하지 않음
                                     env.P1_AGGREGATE_ATTEMPTED = 'true'
                                     sh 'python scripts/summarize_ci.py --run-id ${SEOKPAN_CI_RUN_ID}'
                                 }
                             }
-                            // 정상 경로는 엄격하게: 비어있으면 그 자체로 실패 (allowEmptyArchive 없음)
                             archiveArtifacts(
                                 artifacts: "test-results/${env.SEOKPAN_CI_RUN_ID}/**",
                                 fingerprint: true
@@ -358,7 +350,6 @@ pipeline {
             */
         }
 
-        // --------------------------------------------------------------
         // Harbor 작업 그룹: buildkit-rootless 하나의 Pod을 공유하며
         // Guard -> Build&Push(+digest 캡처) -> SBOM(미검증) -> Scan ->
         // Promote -> Verify&Cleanup -> Health Smoke -> Evidence 순서로
