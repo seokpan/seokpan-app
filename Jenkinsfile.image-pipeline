@@ -182,7 +182,10 @@ pipeline {
                     env.MAIN_SHA_12    = env.SEOKPAN_GIT_SHA.take(12)
                     env.CANDIDATE_TAG  = "scan-${env.MAIN_SHA_12}-${env.BUILD_NUMBER}"
                     env.FINAL_TAG      = "git-${env.MAIN_SHA_12}"
-                    env.P1_PASSED      = 'true' // TEMP-TEST-ONLY: P1을 통째로 건너뛰므로 강제 설정
+                    // [수정, P1 실제 테스트용] 이전엔 P1을 통째로 건너뛰기 위해 여기서
+                    // P1_PASSED를 강제로 'true'로 미리 설정했음 — 이번엔 P1을 실제로
+                    // 돌려서 검증하는 게 목적이라 제거함. 이제 P1_PASSED는 P1의
+                    // Aggregate 스테이지가 실제로 성공했을 때만 설정됨.
                     echo "Commit: ${env.SEOKPAN_GIT_SHA}"
                     echo "RUN_ID: ${env.SEOKPAN_CI_RUN_ID}"
                     echo "Candidate tag: ${env.CANDIDATE_TAG} / Final tag: ${env.FINAL_TAG}"
@@ -198,10 +201,6 @@ pipeline {
         // Pipeline은 상위 stage 실패 시 하위 stage를 자동 skip).
         // --------------------------------------------------------------
         stage('P1 Revalidation (App CI Check on main)') {
-            steps {
-                echo "TEMP-TEST-ONLY: P1 Revalidation 임시 스킵"
-            }
-            /* TEMP-TEST-ONLY: 아래 원본 내용은 비활성화됨, 실제 PR에는 절대 반영 금지
             agent { kubernetes { inheritFrom 'app-ci-check' } }
             environment {
                 // [반영] App Jenkinsfile v3.1과 동일. verify_ci.py 등이 HOME 기준으로
@@ -366,7 +365,6 @@ pipeline {
                     }
                 }
             }
-            */
         }
 
         // --------------------------------------------------------------
