@@ -1,114 +1,38 @@
 // ============================================================================
-// seokpan-app :: Image Pipeline (main branch)
-// 목적: main push 시 Branch Guard -> P1 재검증(App CI Check 전체 재적용) ->
-//       Backend/Frontend Build -> SBOM/Scan -> Harbor Push -> Tag Promote ->
-//       Health Smoke -> Evidence 기록 (Issue #58 P2)
-// 관련 Issue: #58 (main 브랜치 Image Pipeline, 현재 open 상태)
-// 담당: 최유준 (Delivery & Observability)
-// 작성 날짜: 2026-09-10
-// 수정 날짜: 2026-09-10 (6차) — 팀 결정(①~⑤) + docs/ci-verification.md +
-//   Issue #40 GitOps 경계 확인 반영. 이전 5차 수정(Python 3.13 SSL, main-only
-//   Guard, push-time digest, cleanup 정확 보고, backend/frontend 이름)은
-//   그대로 유지하고 아래를 추가/재구성함.
+// seokpan-app :: main Image Pipeline
 //
-//   [구조 변경] agent none으로 전환. 최상위에서 단일 buildkit-rootless
-//   Agent를 쓰던 구조를 버리고, App main Jenkinsfile과 동일한 패턴(다른
-//   Agent가 같은 Commit을 다시 Checkout, 같은 RUN_ID 공유)으로 재구성:
-//     - P1 Revalidation: app-ci-check/app-ci 재사용 (buildkit-rootless에
-//       uv/npm/playwright 재설치 안 함, 팀 결정 ①)
-//     - Harbor 작업(Guard~Verify/Cleanup): buildkit-rootless 그대로 유지
+// Issue #58 P2:
+//   main Commit
+//     -> P1 Revalidation
+//     -> Backend/Frontend Candidate Build + native SBOM/Provenance
+//     -> Candidate Push-time Digest
+//     -> Trivy Scan
+//     -> Candidate Health Process Smoke
+//     -> Final git-* Promote
+//     -> Final Digest Verify
+//     -> Candidate scan-* Tag-only Cleanup
+//     -> image-metadata.json Evidence
 //
-//   [P1 재구성] docs/ci-verification.md 기준으로, "Lint/Test만"이 아니라
-//   기존 App CI Check 6단계(Backend Verify -> OpenAPI Export -> Frontend
-//   Verify[Audit 포함] -> Browser UI -> Browser Full -> Aggregate) 전체를
-//   main pinned commit에 재적용하고 summarize_ci.py exit 0을 요구하도록
-//   변경. npm run verify:ci가 이미 마지막 단계로 npm audit을 포함하므로
-//   별도 audit 스텝 불필요.
+// Fail-closed:
+//   - PR context / non-main 실행 금지
+//   - P1 실패 시 Image 작업 금지
+//   - CRITICAL 또는 fixable HIGH 발견 시 Promote 금지
+//   - Candidate Health Smoke 실패 시 Promote 금지
+//   - Harbor API / Guard / Digest 오류 시 중단
 //
-//   [Health Smoke 추가, 팀 결정 ②] K8s Job이 아니라 Jenkins Kubernetes
-//   Plugin의 podTemplate/node를 그대로 재사용하는 일회성 Pod 방식 채택.
-//   이유: 새 RBAC/ServiceAccount를 추가하지 않아도 됨 — Jenkins Controller가
-//   이미 Agent Pod을 만들 때 쓰는 것과 동일한 메커니즘이라 "임의의 Cluster
-//   변경 권한을 새로 주는" 것이 아님. 대상 컨테이너(backend/frontend 이미지)는
-//   원래 CMD 그대로 기동시키고, 별도 checker 컨테이너(ci-python 이미지, 같은
-//   Pod 네트워크 네임스페이스)에서 python3 urllib로 헬스체크. Pod은 podTemplate
-//   node 블록 종료 시 자동 정리(성공/실패 무관, 기본 podRetention).
-//   UID(10001/101)·포트(8000/8080)·경로(/health/live)는 ci-verification.md
-//   수치를 그대로 사용. non-production Process Smoke이며 실제 DB/Redis
-//   readiness가 아님을 로그에 명시 (문서의 판정 기준 그대로 반영).
+// GitOps:
+//   검증된 Image/Digest Evidence 생성까지만 담당한다.
+//   GitOps Branch/Manifest/Commit/Push/PR 및 Cluster 직접 변경은 하지 않는다.
 //
-//   [Evidence 기록 추가, 팀 결정 ④] image-metadata.json을 Jenkins Build
-//   Artifact로 archiveArtifacts. Full Commit SHA, Build URL/번호/RUN_ID,
-//   Backend/Frontend 각각의 Candidate/Final Tag, Push 시점/Final Digest,
-//   Scan 결과 요약, Health Smoke 결과를 포함. P1 test-results/도 함께 보존.
+// Health Smoke:
+//   target 컨테이너 내부 Jenkins Durable Task(sh)는 실제 Tmp Job에서
+//   실패가 재현되어 사용하지 않는다.
+//   원래 CMD로 기동된 target을 같은 Pod의 checker가
+//   /health/live HTTP 200으로 검증한다.
 //
-//   [GitOps 경계 확정, 팀 결정 ⑤] #58은 위 흐름까지만 담당하고 GitOps
-//   Branch/Manifest/Commit/PR 자동 생성은 하지 않음 (Issue #40 인계 경계).
-//   image-metadata.json이 바로 그 "인계 자료"이며, 실제 apps/backend·
-//   frontend Desired State 변경은 별도 GitOps 작업(승인 후 PR)에서 수행.
-//   이전 버전에 있던 "GitOps 연결 고리 미확인" TODO는 제거 — 범위 아님이
-//   팀 결정으로 확정됨.
-//
-//   [미해결로 명시 유지] FAIL Candidate Retention 기간/개수는 팀 결정 ③
-//   기준으로도 아직 확정값 없음(Harbor 여유 용량·빌드 빈도 실측 필요) —
-//   Jenkinsfile이 아니라 seokpan-infra Ansible(Harbor Retention Policy)
-//   쪽 별도 작업이라 이 파일 범위 밖. 제안값(5개)은 실측 전 잠정치.
-//
-// 주의:
-//   - 이 파일은 App #62의 PR 검사용 Jenkinsfile과 별개 Job/Script Path다.
-//   - Guard Stage 200/404/기타 fail-closed 분기는 5차와 동일하게 유지.
-//   - Scan은 Harbor 내장 스캐너가 아니라 Trivy CLI(ci-python 이미지 내장)
-//     직접 실행 방식 (Harbor에 Trivy Adapter 미등록 확인됨).
-//   - 7차 수정(2026-09-10): 실제 병합된 App main Jenkinsfile(v3.1) 원본을
-//     확보해 대조, 다음을 교정함 —
-//       1) [해결됨] "Prepare Browser Cache"는 실제 원본 스크립트로 교체
-//          완료 (기존 재구성본은 동작이 반대였음: 캐시 기존 존재 시 스킵
-//          -> 원본은 에러 중단, write-test 성공 시 무시 -> 원본은 명시적 실패)
-//       2) 환경변수 이름을 App 쪽 실제 계약과 통일: SEOKPAN_GIT_SHA,
-//          SEOKPAN_CI_RUN_ID (임의 이름 RUN_ID/MAIN_SHA_FULL 대신)
-//       3) RUN_ID 컨벤션도 App과 동일한 "a09-<build>-<sha12>" 그대로 사용
-//          (별도 Job이라 test-results/ 경로 충돌 위험 자체가 없어 접두사
-//          분리가 불필요했음 — 이전 "img-" 접두사 분리는 과잉 대응이었음)
-//       4) agent 선언을 label(Deprecated) -> inheritFrom(공식 권장)으로 교체
-//       5) 두 번째 Agent 그룹(Harbor 작업)의 Checkout을 단순 checkout scm에서
-//          Pinned SHA 명시 + 불일치 시 error()로 교체 (App 쪽 Build Verify와 동일)
-//       6) P1_PASSED 명시적 플래그 + currentBuild.currentResult 이중 확인
-//          가드를 Harbor 작업 그룹 진입 조건으로 추가
-//       7) Aggregate 성공 경로 archiveArtifacts는 엄격(allowEmptyArchive 없음),
-//          post/always 폴백만 허용 + 중복 집계 방지 플래그(P1_AGGREGATE_ATTEMPTED)
-//       8) options에 skipDefaultCheckout/disableRestartFromStage/buildDiscarder 추가
-//   - 8차 수정(2026-09-11): 실제 Multibranch 실행으로 Guard~Verify Digest &
-//     Cleanup 전 구간(Backend/Frontend Build/Scan/Promote/Cleanup)이 처음
-//     완주함을 확인(Trivy CRITICAL=0/HIGH=0 둘 다 달성 후). Health Smoke
-//     Test 단계에서 신규 실패 발견 및 수정: Scripted podTemplate()의
-//     imagePullSecrets는 List<String>(이름만)을 받는데 Declarative YAML
-//     문법([[name: '...']])을 그대로 써서 NoStaplerConstructorException
-//     발생 — ['harbor-pull-secret'] 형태로 수정.
-//   - 남은 TODO:
-//       - [해결됨] Backend/Frontend 쓰기 경로: 실제 Dockerfile 대조 완료.
-//       - [확인됨] apps/backend·frontend/deployment.yaml 대조 결과,
-//         replicas: 0 + "Runtime activation is intentionally blocked
-//         until a real image digest and provider wiring are ready" 주석
-//         확인 — GitOps 연결 경계(팀 결정 ⑤)가 이미 이 방식으로 설계돼
-//         있음이 재확인됨. image-metadata.json이 바로 그 "실제 digest"
-//         인계 자료 역할.
-//       - [해결 불가, 상위에 정의 자체가 없음] Deployment 리소스
-//         request/limit — 실제 apps/backend·frontend/deployment.yaml에
-//         아예 정의돼 있지 않음(아직 미완성 상태). Health Smoke Pod에
-//         맞출 대상이 없어 K8s 기본값 유지, GitOps 쪽에도 나중에 추가가
-//         필요해 보임(이 PR 범위 밖).
-//       - [반영, 여전히 미검증] Backend Health Smoke 부팅 리스크: 실제
-//         backend-config ConfigMap 키를 전부 반영했고, SEOKPAN_ENVIRONMENT는
-//         ConfigMap의 "production"이 아니라 의도적으로 "test"로 지정함
-//         (docs/ci-verification.md의 로컬 시험 관례 + Memory Provider 존재
-//         근거, 실제 DB/Redis 우회 기대). DATABASE_CA_FILE 경로의 실제 파일은
-//         마운트하지 않음 — Settings가 파일 존재를 엄격 검증하면 여기서 죽을
-//         수 있음. 두 DB URL은 여전히 문법만 맞춘 더미값. 전부 실행 전까지는
-//         추론이며 확정 아님.
-//       - [신규, 미구현] docs/ci-verification.md의 Backend 체크리스트에
-//         있는 "종료 처리"(SIGTERM 시 graceful shutdown) 검증은 아직
-//         Health Smoke Stage에 없음. 구현 안 하고 있다는 사실만 명시.
-//       - checker 컨테이너(ci-python) digest는 JCasC 값과 수동 동기화 필요
+// Retention:
+//   현재 Harbor seokpan Project Retention은 미구성.
+//   별도 seokpan-infra 후속 범위에서 결정한다.
 // ============================================================================
 
 def COMPONENT_REPO = [
@@ -131,12 +55,6 @@ pipeline {
         disableRestartFromStage()
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '30'))
-        // 참고용 실측: PR-68 App CI Check 구간(Checkout~Browser UI 실패 지점까지)이
-        // 약 3분 소요됨(16:47:21~16:50:23). Browser Full·Harbor Build/Push/Scan은
-        // 아직 실측 없음. 여전히 "성능 SLA 근거"는 아니고 "무한 행 방지 안전망"
-        // 목적의 잠정치 — 90분으로 상향(기존 App CI Check 전체 + Harbor 작업
-        // 여유 있게 수용). 실측 확보되는 대로 재조정 예정.
-        timeout(time: 90, unit: 'MINUTES')
     }
 
     environment {
@@ -361,7 +279,7 @@ pipeline {
 
         // --------------------------------------------------------------
         // Harbor 작업 그룹: buildkit-rootless 하나의 Pod을 공유하며
-        // Guard -> Build&Push(+digest 캡처) -> SBOM(미검증) -> Scan ->
+        // Guard -> Candidate Build(+SBOM/Provenance, digest) -> Scan -> Candidate Health ->
         // Promote -> Verify&Cleanup -> Health Smoke -> Evidence 순서로
         // 진행. P1이 실패하면 이 그룹 전체가 자동으로 skip됨.
         // --------------------------------------------------------------
@@ -475,6 +393,8 @@ PYEOF
                                               --frontend dockerfile.v0 \\
                                               --local context=./${component} \\
                                               --local dockerfile=./${component} \\
+                                              --opt attest:sbom=generator=docker.io/docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9 \\
+                                              --opt attest:provenance=mode=min \\
                                               --output type=image,name=${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.CANDIDATE_TAG},push=true
                                         """
                                     }
@@ -524,14 +444,6 @@ PYEOF
                     }
                 }
 
-                stage('SBOM & Provenance (미검증)') {
-                    steps {
-                        container('buildkit') {
-                            error("BuildKit native attestation 검증 전. fail-closed로 중단합니다.")
-                        }
-                    }
-                }
-
                 stage('Scan') {
                     steps {
                         container('python') {
@@ -552,6 +464,7 @@ PYEOF
                                                 REPORT_FILE="/tmp/trivy-${CURRENT_REPO}.json"
 
                                                 trivy image \\
+                                                  --scanners vuln \\
                                                   --format json --severity CRITICAL,HIGH --exit-code 0 \\
                                                   --username "${HARBOR_ROBOT_USER}" --password "${HARBOR_ROBOT_PASS}" \\
                                                   --output "${REPORT_FILE}" "${IMAGE_REF}"
@@ -580,10 +493,182 @@ PYEOF
                                         ).trim()
                                         echo output
                                         def m = (output =~ /SCAN_SUMMARY=${repo}=critical:(\d+),high_fixable:(\d+)/)
-                                        scanSummary[repo] = m ? "critical:${m[0][1]},high_fixable:${m[0][2]}" : 'UNKNOWN'
+                                        def summary = m ? "critical:${m[0][1]},high_fixable:${m[0][2]}" : 'UNKNOWN'
+                                        scanSummary[repo] = summary
+
+                                        if (component == 'backend') {
+                                            env.SCAN_BACKEND = summary
+                                        } else if (component == 'frontend') {
+                                            env.SCAN_FRONTEND = summary
+                                        }
                                     }
                                     env.SCAN_SUMMARY = scanSummary.collect { k, v -> "${k}(${v})" }.join(', ')
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Candidate Health Process Smoke:
+                // Scan을 통과한 Candidate Image를 Final Promote 전에 검증한다.
+                // Smoke 실패 시 immutable git-* Final Tag는 생성되지 않는다.
+                // --------------------------------------------------------------
+                stage('Candidate Health Smoke Test') {
+                    steps {
+                        script {
+                            HEALTH_CFG.each { component, cfg ->
+                                def repo = COMPONENT_REPO[component]
+                                def label = "smoke-${component}-${env.BUILD_NUMBER}"
+                                def targetImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.CANDIDATE_TAG}"
+                                def checkerImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/ci-python@sha256:19349910928096e034c1e45b51f3b446e95e152b2525695afe8fc791914b49a5"
+
+                                // [반영, apps/backend·frontend/deployment.yaml 대조]
+                                // 실제 운영 Deployment의 securityContext와 최대한 동일하게 맞춤.
+                                // Backend: runAsNonRoot/runAsGroup/allowPrivilegeEscalation:false/
+                                //   capabilities drop ALL까지 정확히 일치.
+                                // Frontend: 공유해주신 deployment.yaml에는 readOnlyRootFilesystem이
+                                //   명시돼 있지 않았음(replicas:0인 미완성 상태라 아직 안 채워진
+                                //   것일 수 있음) — Dockerfile 주석상 read-only 대응이 되어 있다고
+                                //   했으므로 이쪽은 그대로 true 유지, 실제 Deployment 쪽에 나중에
+                                //   추가되면 그때 다시 대조 필요.
+                                def extraSecCtx = component == 'backend' ? '''
+                                              runAsNonRoot: true
+                                              runAsGroup: ''' + cfg.uid + '''
+                                              allowPrivilegeEscalation: false
+                                              capabilities:
+                                                drop: ["ALL"]''' : '''
+                                              runAsNonRoot: true
+                                              allowPrivilegeEscalation: false
+                                              capabilities:
+                                                drop: ["ALL"]'''
+
+                                // [반영, apps/backend/configmap.yaml + settings.py 대조 완료]
+                                // backend-config의 실제 키를 반영하되, SEOKPAN_ENVIRONMENT만
+                                // ConfigMap의 "production"이 아니라 "test"로 지정 — settings.py의
+                                // Literal["local","test","development","production"]에 "test"가
+                                // 실제로 정의돼 있음을 코드로 확인함(추론이 아니라 확정).
+                                //
+                                // [해결됨, 실행으로 확인] SEOKPAN_ALLOWED_ORIGINS는
+                                // settings.py에서 allowed_origins: tuple[str, ...] 타입임 —
+                                // pydantic-settings는 tuple/list 같은 복합 타입을 env var에서
+                                // JSON으로 파싱하므로 순수 문자열("https://...")을 넣으면
+                                // SettingsError로 죽음(실제 Health Smoke 실행에서 확인됨).
+                                // JSON 배열 형식('["https://..."]')으로 수정 완료.
+                                //
+                                // [확인됨, 리스크 아니었음] identity_database_url/
+                                // game_database_url/database_ca_file/redis_url은 전부
+                                // settings.py에서 `str | None = None`(Optional)임 — 이전에
+                                // 우려했던 "DB URL/CA 파일 없으면 부팅 실패" 리스크는 애초에
+                                // 없었음. 더미 값은 넣어도 무해하지만 없어도 무방.
+                                def extraEnv = component == 'backend' ? '''
+                                            env:
+                                            - name: SEOKPAN_ENVIRONMENT
+                                              value: "test"
+                                            - name: SEOKPAN_LOG_LEVEL
+                                              value: "INFO"
+                                            - name: SEOKPAN_ALLOWED_ORIGINS
+                                              value: '["https://game.seokpan.soldesk.store"]'
+''' : ''
+
+                                podTemplate(
+                                    label: label,
+                                    namespace: 'cicd',
+                                    // [수정, Sandbox/타입 불일치 대응] Scripted podTemplate()의
+                                    // imagePullSecrets 파라미터는 List<String>(이름만)을 받음.
+                                    imagePullSecrets: ['harbor-pull-secret'],
+                                    yaml: """
+                                        apiVersion: v1
+                                        kind: Pod
+                                        spec:
+                                          securityContext:
+                                            seccompProfile:
+                                              type: RuntimeDefault
+                                          containers:
+                                          - name: target
+                                            image: "${targetImage}"
+                                            securityContext:
+                                              runAsUser: ${cfg.uid}
+                                              readOnlyRootFilesystem: true
+${extraSecCtx}
+${extraEnv}
+                                            volumeMounts:
+                                            - name: tmp
+                                              mountPath: /tmp
+                                            # [확인됨, backend/Dockerfile 대조] 별도 쓰기 경로 요구사항 없음.
+                                            # UV_COMPILE_BYTECODE=1로 바이트코드는 빌드 타임에 이미 컴파일되고
+                                            # /health/live는 순수 조회라 런타임 쓰기가 필요 없음. /tmp만
+                                            # 안전망으로 마운트.
+                                          - name: checker
+                                            image: "${checkerImage}"
+                                            command: ["cat"]
+                                            tty: true
+                                          volumes:
+                                          - name: tmp
+                                            emptyDir: {}
+                                    """
+                                ) {
+                                    node(label) {
+                                        container('checker') {
+                                            sh """
+                                                python3 - <<'PYEOF'
+import sys
+import time
+import urllib.request
+
+url = "http://localhost:${cfg.port}${cfg.path}"
+deadline = time.time() + 30
+last_error = None
+
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            if resp.status == 200:
+                print("[${component}] HEALTH=PASS HTTP=200 URL=" + url)
+                sys.exit(0)
+            last_error = RuntimeError(f"HTTP {resp.status}")
+    except Exception as exc:
+        last_error = exc
+
+    time.sleep(2)
+
+print(
+    f"[${component}] HEALTH=FAIL URL={url} last_error={last_error}",
+    file=sys.stderr,
+)
+sys.exit(1)
+PYEOF
+                                            """
+                                        }
+                                        // [제거됨, 실행으로 재확인] target 컨테이너 내부 Jenkins sh 실행을
+                                        // 두 번(fsGroup 미적용/적용) 시도했지만 둘 다 동일하게
+                                        // "process apparently never started"로 5분 대기 후 실패함
+                                        // (checker는 두 번 다 문제없이 성공). PID 1이 uvicorn(idle
+                                        // 대기용 "cat"이 아닌 실제 애플리케이션)이고
+                                        // readOnlyRootFilesystem:true인 컨테이너에 Jenkins Kubernetes
+                                        // Plugin의 Durable Task(sh 스텝)를 실행하는 조합 자체가
+                                        // 이 환경에서 안정적으로 동작하지 않는 것으로 판단 — emptyDir
+                                        // 소유권 문제가 아니었음(fsGroup 적용 후에도 재현).
+                                        // 대신 필요했던 검증은 이미 다른 방식으로 충분히 증명됨:
+                                        //   - UID 강제: K8s가 Pod 시작 시점에 runAsUser로 강제하는
+                                        //     것이라 별도 `id` 확인 불필요 — 강제가 안 됐다면 애초에
+                                        //     Pod이 뜨지 않거나 아래 health check가 실패했을 것.
+                                        //   - 부팅 성공: /health/live가 HTTP 200을 반환했다는 것
+                                        //     자체가 declared securityContext 그대로 프로세스가
+                                        //     정상 기동해 소켓까지 열었다는 증거.
+                                        // Migration 자산 존재 확인은 exec 없이 검증하는
+                                        // 방법(예: registry API로 이미지 레이어 직접 조회)을
+                                        // 팀에서 별도로 설계해야 함 — 이번 스모크 범위에서는 제외.
+
+                    }
+                }
+                                if (component == 'backend') {
+                                    env.HEALTH_BACKEND = 'PASS_PROCESS_SMOKE'
+                                } else if (component == 'frontend') {
+                                    env.HEALTH_FRONTEND = 'PASS_PROCESS_SMOKE'
+                                }
+
+                                echo "[${component}] Candidate Health Process Smoke PASS"
                             }
                         }
                     }
@@ -668,6 +753,7 @@ if final_digest != push_digest:
     print(f"[{repo}] DIGEST MISMATCH: push-time={push_digest} final={final_digest}")
     raise SystemExit(1)
 print(f"[{repo}] Digest 일치 확인 (push-time 기준): {final_digest}")
+print(f"FINAL_DIGEST={repo}={final_digest}")
 
 del_url = f"https://{host}/api/v2.0/projects/{proj}/repositories/{repo}/artifacts/{final}/tags/{cand}"
 req = urllib.request.Request(del_url, method="DELETE")
@@ -684,191 +770,28 @@ PYEOF
                                             returnStdout: true
                                         ).trim()
                                         echo output
-                                        def m = (output =~ /CLEANUP_STATUS=${repo}=(OK|FAILED)/)
-                                        cleanupResults[repo] = m ? m[0][1] : 'UNKNOWN'
+
+                                        def dm = (output =~ /FINAL_DIGEST=${repo}=(sha256:[0-9a-f]+)/)
+                                        if (!dm) {
+                                            error("[${repo}] Final Digest Evidence 추출 실패")
+                                        }
+                                        def finalDigest = dm[0][1]
+
+                                        def cm = (output =~ /CLEANUP_STATUS=${repo}=(OK|FAILED)/)
+                                        def cleanupStatus = cm ? cm[0][1] : 'UNKNOWN'
+
+                                        cleanupResults[repo] = cleanupStatus
+
+                                        if (component == 'backend') {
+                                            env.FINAL_DIGEST_BACKEND = finalDigest
+                                            env.CLEANUP_BACKEND = cleanupStatus
+                                        } else if (component == 'frontend') {
+                                            env.FINAL_DIGEST_FRONTEND = finalDigest
+                                            env.CLEANUP_FRONTEND = cleanupStatus
+                                        }
                                     }
                                     env.CLEANUP_SUMMARY = cleanupResults.collect { k, v -> "${k}=${v}" }.join(', ')
                                 }
-                            }
-                        }
-                    }
-                }
-
-                // --------------------------------------------------------------
-                // Health Smoke Test: Jenkins Kubernetes Plugin의 podTemplate/node를
-                // 재사용한 일회성 Pod. 새 RBAC 불필요(Controller가 이미 갖고 있는
-                // Agent Pod 생성 권한 그대로 사용). 대상 컨테이너는 원래 CMD로
-                // 기동(uvicorn/nginx), 별도 checker 컨테이너(ci-python, 같은 Pod
-                // 네트워크)에서 python3 urllib로 헬스체크. Pod은 node 블록 종료
-                // 시 자동 정리(성공/실패 무관, 기본 podRetention).
-                //
-                // non-production Process Smoke이며 실제 DB/Redis readiness가
-                // 아님 (docs/ci-verification.md 판정 기준 그대로). 기본 CMD가
-                // Migration을 자동 실행하지 않는지도 함께 확인(Backend만).
-                // --------------------------------------------------------------
-                stage('Health Smoke Test') {
-                    steps {
-                        script {
-                            HEALTH_CFG.each { component, cfg ->
-                                def repo = COMPONENT_REPO[component]
-                                def label = "smoke-${component}-${env.BUILD_NUMBER}"
-                                def targetImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.FINAL_TAG}"
-                                // TODO: checker 컨테이너 이미지 digest는 buildkit-rootless
-                                // 템플릿의 python 컨테이너와 동일 digest로 수동 동기화 필요
-                                // (JCasC 값 변경 시 여기도 같이 갱신).
-                                def checkerImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/ci-python:3.13.15-uv0.12.5-trivy-dd2bdc9b6e83"
-
-                                // [반영, apps/backend·frontend/deployment.yaml 대조]
-                                // 실제 운영 Deployment의 securityContext와 최대한 동일하게 맞춤.
-                                // Backend: runAsNonRoot/runAsGroup/allowPrivilegeEscalation:false/
-                                //   capabilities drop ALL까지 정확히 일치.
-                                // Frontend: 공유해주신 deployment.yaml에는 readOnlyRootFilesystem이
-                                //   명시돼 있지 않았음(replicas:0인 미완성 상태라 아직 안 채워진
-                                //   것일 수 있음) — Dockerfile 주석상 read-only 대응이 되어 있다고
-                                //   했으므로 이쪽은 그대로 true 유지, 실제 Deployment 쪽에 나중에
-                                //   추가되면 그때 다시 대조 필요.
-                                def extraSecCtx = component == 'backend' ? '''
-                                              runAsNonRoot: true
-                                              runAsGroup: ''' + cfg.uid + '''
-                                              allowPrivilegeEscalation: false
-                                              capabilities:
-                                                drop: ["ALL"]''' : '''
-                                              runAsNonRoot: true
-                                              allowPrivilegeEscalation: false
-                                              capabilities:
-                                                drop: ["ALL"]'''
-
-                                // [반영, apps/backend/configmap.yaml + settings.py 대조 완료]
-                                // backend-config의 실제 키를 반영하되, SEOKPAN_ENVIRONMENT만
-                                // ConfigMap의 "production"이 아니라 "test"로 지정 — settings.py의
-                                // Literal["local","test","development","production"]에 "test"가
-                                // 실제로 정의돼 있음을 코드로 확인함(추론이 아니라 확정).
-                                //
-                                // [해결됨, 실행으로 확인] SEOKPAN_ALLOWED_ORIGINS는
-                                // settings.py에서 allowed_origins: tuple[str, ...] 타입임 —
-                                // pydantic-settings는 tuple/list 같은 복합 타입을 env var에서
-                                // JSON으로 파싱하므로 순수 문자열("https://...")을 넣으면
-                                // SettingsError로 죽음(실제 Health Smoke 실행에서 확인됨).
-                                // JSON 배열 형식('["https://..."]')으로 수정 완료.
-                                //
-                                // [확인됨, 리스크 아니었음] identity_database_url/
-                                // game_database_url/database_ca_file/redis_url은 전부
-                                // settings.py에서 `str | None = None`(Optional)임 — 이전에
-                                // 우려했던 "DB URL/CA 파일 없으면 부팅 실패" 리스크는 애초에
-                                // 없었음. 더미 값은 넣어도 무해하지만 없어도 무방.
-                                def extraEnv = component == 'backend' ? '''
-                                            env:
-                                            - name: SEOKPAN_ENVIRONMENT
-                                              value: "test"
-                                            - name: SEOKPAN_LOG_LEVEL
-                                              value: "INFO"
-                                            - name: SEOKPAN_ALLOWED_ORIGINS
-                                              value: '["https://game.seokpan.soldesk.store"]'
-                                            - name: SEOKPAN_REDIS_URL
-                                              value: "redis://redis.platform.svc.cluster.local:6379/0"
-                                            - name: SEOKPAN_DATABASE_CA_FILE
-                                              value: "/etc/seokpan/pki/ca.crt"
-                                            - name: SEOKPAN_IDENTITY_DATABASE_URL
-                                              value: "mysql+asyncmy://smoke:smoke@127.0.0.1:3306/smoke_placeholder"
-                                            - name: SEOKPAN_GAME_DATABASE_URL
-                                              value: "mysql+asyncmy://smoke:smoke@127.0.0.1:3306/smoke_placeholder"''' : ''
-
-                                podTemplate(
-                                    label: label,
-                                    namespace: 'cicd',
-                                    // [수정, Sandbox/타입 불일치 대응] Scripted podTemplate()의
-                                    // imagePullSecrets 파라미터는 List<String>(이름만)을 받음.
-                                    // Declarative YAML 문법(- name: xxx)을 그대로 옮겨써서
-                                    // NoStaplerConstructorException(String으로 변환 실패)이
-                                    // 발생했음 — 실제 실행으로 확인됨.
-                                    imagePullSecrets: ['harbor-pull-secret'],
-                                    yaml: """
-                                        apiVersion: v1
-                                        kind: Pod
-                                        spec:
-                                          securityContext:
-                                            seccompProfile:
-                                              type: RuntimeDefault
-                                            # [추가, 실행으로 확인된 버그 수정] emptyDir인
-                                            # workspace-volume은 기본 root 소유로 생성됨.
-                                            # target이 non-root(10001/101)라 그 안에서 sh 스텝을
-                                            # 실행할 때 Jenkins가 제어 파일을 쓸 권한이 없어
-                                            # "process apparently never started"로 5분간 멈춘 뒤
-                                            # 실패했음(실제 실행 로그로 확인). fsGroup을 target의
-                                            # runAsGroup과 맞춰 emptyDir을 그룹 쓰기 가능하게 함 —
-                                            # 다른 컨테이너(UID 1000 등)는 fsGroup이 supplementary
-                                            # group으로 추가만 될 뿐이라 기존 동작에 영향 없음.
-                                            fsGroup: ${cfg.uid}
-                                          containers:
-                                          - name: target
-                                            image: "${targetImage}"
-                                            securityContext:
-                                              runAsUser: ${cfg.uid}
-                                              readOnlyRootFilesystem: true
-${extraSecCtx}
-${extraEnv}
-                                            volumeMounts:
-                                            - name: tmp
-                                              mountPath: /tmp
-                                            # [확인됨, backend/Dockerfile 대조] 별도 쓰기 경로 요구사항 없음.
-                                            # UV_COMPILE_BYTECODE=1로 바이트코드는 빌드 타임에 이미 컴파일되고
-                                            # /health/live는 순수 조회라 런타임 쓰기가 필요 없음. /tmp만
-                                            # 안전망으로 마운트.
-                                          - name: checker
-                                            image: "${checkerImage}"
-                                            command: ["cat"]
-                                            tty: true
-                                          volumes:
-                                          - name: tmp
-                                            emptyDir: {}
-                                    """
-                                ) {
-                                    node(label) {
-                                        container('checker') {
-                                            // TODO(팀 확인 필요, 제 쪽에서 접근 불가): apps/backend·
-                                            // apps/frontend kustomization.yaml의 실제 Deployment
-                                            // resources(request/limit)를 확인해서 이 podTemplate의
-                                            // target 컨테이너에도 동일하게 반영할 것. 비공개 저장소라
-                                            // 이 세션에서 직접 조회하지 못했음 — 지금은 K8s 기본값
-                                            // (미지정)으로 두어, 실제 운영 리소스보다 널널한 조건에서
-                                            // 통과할 위험이 있음(메모리 부족으로 인한 기동 실패를
-                                            // 놓칠 수 있음).
-                                            sh "sleep 8" // target 기동 대기 (readiness probe 대체 임시값)
-                                            sh """
-                                                python3 -c "
-import urllib.request, sys
-try:
-    resp = urllib.request.urlopen('http://localhost:${cfg.port}${cfg.path}', timeout=5)
-    print(f'[${component}] health check: HTTP {resp.status}')
-    sys.exit(0 if resp.status == 200 else 1)
-except Exception as e:
-    print(f'[${component}] health check 실패: {e}')
-    sys.exit(1)
-"
-                                            """
-                                        }
-                                        // [제거됨, 실행으로 재확인] container('target'){ sh ... }를
-                                        // 두 번(fsGroup 미적용/적용) 시도했지만 둘 다 동일하게
-                                        // "process apparently never started"로 5분 대기 후 실패함
-                                        // (checker는 두 번 다 문제없이 성공). PID 1이 uvicorn(idle
-                                        // 대기용 "cat"이 아닌 실제 애플리케이션)이고
-                                        // readOnlyRootFilesystem:true인 컨테이너에 Jenkins Kubernetes
-                                        // Plugin의 Durable Task(sh 스텝)를 실행하는 조합 자체가
-                                        // 이 환경에서 안정적으로 동작하지 않는 것으로 판단 — emptyDir
-                                        // 소유권 문제가 아니었음(fsGroup 적용 후에도 재현).
-                                        // 대신 필요했던 검증은 이미 다른 방식으로 충분히 증명됨:
-                                        //   - UID 강제: K8s가 Pod 시작 시점에 runAsUser로 강제하는
-                                        //     것이라 별도 `id` 확인 불필요 — 강제가 안 됐다면 애초에
-                                        //     Pod이 뜨지 않거나 아래 health check가 실패했을 것.
-                                        //   - 부팅 성공: /health/live가 HTTP 200을 반환했다는 것
-                                        //     자체가 declared securityContext 그대로 프로세스가
-                                        //     정상 기동해 소켓까지 열었다는 증거.
-                                        // Migration 자산 존재 확인(TODO)은 exec 없이 검증하는
-                                        // 방법(예: registry API로 이미지 레이어 직접 조회)을
-                                        // 팀에서 별도로 설계해야 함 — 이번 스모크 범위에서는 제외.
-                                    }
-                                }
-                                echo "[${component}] Health Smoke Test 완료 (Process Smoke만 확인 — 실제 DB/Redis readiness 아님)"
                             }
                         }
                     }
@@ -883,16 +806,20 @@ except Exception as e:
                     steps {
                         container('python') {
                             script {
-                                // [수정, 예방적] writeJSON은 Pipeline Utility Steps 플러그인
-                                // 의존 스텝 — 이 세션에서 이미 putAt/imagePullSecrets 타입 등
-                                // 예상 못한 Jenkins 제약에 두 번 걸렸던 걸 감안해, 플러그인
-                                // 설치 여부와 무관하게 항상 되는 방식(문자열 조립 + 코어
-                                // writeFile 스텝)으로 교체. Evidence 스테이지는 아직 한 번도
-                                // 실행된 적 없어 미검증 구간이라 안전하게 감.
-                                def backendDigest  = env.CAND_DIGEST_BACKEND  ?: ''
-                                def frontendDigest = env.CAND_DIGEST_FRONTEND ?: ''
-                                def cleanupSummary = env.CLEANUP_SUMMARY ?: ''
-                                def scanSummary    = env.SCAN_SUMMARY ?: ''
+                                def backendCandidateDigest  = env.CAND_DIGEST_BACKEND ?: ''
+                                def frontendCandidateDigest = env.CAND_DIGEST_FRONTEND ?: ''
+
+                                def backendFinalDigest  = env.FINAL_DIGEST_BACKEND ?: ''
+                                def frontendFinalDigest = env.FINAL_DIGEST_FRONTEND ?: ''
+
+                                def backendScan  = env.SCAN_BACKEND ?: 'UNKNOWN'
+                                def frontendScan = env.SCAN_FRONTEND ?: 'UNKNOWN'
+
+                                def backendHealth  = env.HEALTH_BACKEND ?: 'UNKNOWN'
+                                def frontendHealth = env.HEALTH_FRONTEND ?: 'UNKNOWN'
+
+                                def backendCleanup  = env.CLEANUP_BACKEND ?: 'UNKNOWN'
+                                def frontendCleanup = env.CLEANUP_FRONTEND ?: 'UNKNOWN'
 
                                 def metadataJson = """{
   "commit_sha_full": "${env.SEOKPAN_GIT_SHA}",
@@ -904,19 +831,26 @@ except Exception as e:
     "backend": {
       "harbor_repo": "backend",
       "candidate_tag": "${env.CANDIDATE_TAG}",
+      "candidate_digest": "${backendCandidateDigest}",
       "final_tag": "${env.FINAL_TAG}",
-      "push_time_digest": "${backendDigest}"
+      "final_digest": "${backendFinalDigest}",
+      "scan": "${backendScan}",
+      "health_smoke": "${backendHealth}",
+      "cleanup_status": "${backendCleanup}"
     },
     "frontend": {
       "harbor_repo": "frontend",
       "candidate_tag": "${env.CANDIDATE_TAG}",
+      "candidate_digest": "${frontendCandidateDigest}",
       "final_tag": "${env.FINAL_TAG}",
-      "push_time_digest": "${frontendDigest}"
+      "final_digest": "${frontendFinalDigest}",
+      "scan": "${frontendScan}",
+      "health_smoke": "${frontendHealth}",
+      "cleanup_status": "${frontendCleanup}"
     }
   },
-  "cleanup_status": "${cleanupSummary}",
-  "scan_summary": "${scanSummary}",
-  "note": "GitOps apps/backend, apps/frontend Desired State 변경은 이 Evidence를 인계받아 별도 작업에서 진행 (Issue #40 경계)"
+  "gitops_change": "NONE",
+  "note": "검증된 Image/Digest는 별도 GitOps 작업으로 인계한다."
 }
 """
                                 writeFile file: 'image-metadata.json', text: metadataJson
