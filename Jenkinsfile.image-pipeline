@@ -748,23 +748,24 @@ PYEOF
                                               capabilities:
                                                 drop: ["ALL"]'''
 
-                                // [반영, apps/backend/configmap.yaml 대조] backend-config의
-                                // 실제 키를 그대로 가져오되, SEOKPAN_ENVIRONMENT만 ConfigMap의
-                                // "production"이 아니라 의도적으로 "test"로 지정한다.
-                                // 근거: docs/ci-verification.md가 로컬 시험에서
-                                // "SEOKPAN_ENVIRONMENT=test만 지정"한다고 명시했고, 코드베이스에
-                                // persistence/memory/* (Memory Provider)가 실제로 존재함을 이전
-                                // 로그에서 확인함 — test 값이 실제 DB/Redis 대신 Memory Provider로
-                                // 전환시킬 가능성이 높다고 추론(미검증, 실행해봐야 확정).
-                                // "non-production Process Smoke, 실제 DB/Redis readiness 아님"
-                                // 이라는 이번 스모크의 원래 취지와도 이 쪽이 더 맞음.
+                                // [반영, apps/backend/configmap.yaml + settings.py 대조 완료]
+                                // backend-config의 실제 키를 반영하되, SEOKPAN_ENVIRONMENT만
+                                // ConfigMap의 "production"이 아니라 "test"로 지정 — settings.py의
+                                // Literal["local","test","development","production"]에 "test"가
+                                // 실제로 정의돼 있음을 코드로 확인함(추론이 아니라 확정).
                                 //
-                                // [경고, 미검증] SEOKPAN_DATABASE_CA_FILE이 가리키는
-                                // /etc/seokpan/pki/ca.crt 파일은 이 스모크 Pod에 실제로
-                                // 마운트하지 않았음(seokpan-internal-ca ConfigMap 미사용).
-                                // Settings가 이 경로의 파일 존재를 엄격 검증(Pydantic FilePath 등)
-                                // 한다면 여기서 죽을 수 있음 — test 모드가 DB 관련 설정 자체를
-                                // 건너뛰길 기대하지만 확정 아님.
+                                // [해결됨, 실행으로 확인] SEOKPAN_ALLOWED_ORIGINS는
+                                // settings.py에서 allowed_origins: tuple[str, ...] 타입임 —
+                                // pydantic-settings는 tuple/list 같은 복합 타입을 env var에서
+                                // JSON으로 파싱하므로 순수 문자열("https://...")을 넣으면
+                                // SettingsError로 죽음(실제 Health Smoke 실행에서 확인됨).
+                                // JSON 배열 형식('["https://..."]')으로 수정 완료.
+                                //
+                                // [확인됨, 리스크 아니었음] identity_database_url/
+                                // game_database_url/database_ca_file/redis_url은 전부
+                                // settings.py에서 `str | None = None`(Optional)임 — 이전에
+                                // 우려했던 "DB URL/CA 파일 없으면 부팅 실패" 리스크는 애초에
+                                // 없었음. 더미 값은 넣어도 무해하지만 없어도 무방.
                                 def extraEnv = component == 'backend' ? '''
                                             env:
                                             - name: SEOKPAN_ENVIRONMENT
@@ -772,7 +773,7 @@ PYEOF
                                             - name: SEOKPAN_LOG_LEVEL
                                               value: "INFO"
                                             - name: SEOKPAN_ALLOWED_ORIGINS
-                                              value: "https://game.seokpan.soldesk.store"
+                                              value: '["https://game.seokpan.soldesk.store"]'
                                             - name: SEOKPAN_REDIS_URL
                                               value: "redis://redis.platform.svc.cluster.local:6379/0"
                                             - name: SEOKPAN_DATABASE_CA_FILE
