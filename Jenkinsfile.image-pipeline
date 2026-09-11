@@ -796,6 +796,7 @@ PYEOF
                                           securityContext:
                                             seccompProfile:
                                               type: RuntimeDefault
+                                            fsGroup: ${cfg.uid}
                                           containers:
                                           - name: target
                                             image: "${targetImage}"
@@ -871,25 +872,37 @@ except Exception as e:
                     steps {
                         container('python') {
                             script {
-                                def metadata = [
-                                    commit_sha_full: env.SEOKPAN_GIT_SHA,
-                                    commit_sha_12  : env.MAIN_SHA_12,
-                                    jenkins_build_url   : env.BUILD_URL,
-                                    jenkins_build_number: env.BUILD_NUMBER,
-                                    run_id: env.SEOKPAN_CI_RUN_ID,
-                                    components: COMPONENT_REPO.collectEntries { component, repo ->
-                                        [(component): [
-                                            harbor_repo    : repo,
-                                            candidate_tag  : env.CANDIDATE_TAG,
-                                            final_tag      : env.FINAL_TAG,
-                                            push_time_digest: (component == 'backend') ? env.CAND_DIGEST_BACKEND : env.CAND_DIGEST_FRONTEND,
-                                            cleanup_status : env.CLEANUP_SUMMARY
-                                        ]]
-                                    },
-                                    scan_summary: env.SCAN_SUMMARY,
-                                    note: "GitOps apps/backend, apps/frontend Desired State 변경은 이 Evidence를 인계받아 별도 작업에서 수행 (Issue #40 경계, #58 범위 아님)"
-                                ]
-                                writeJSON file: 'image-metadata.json', json: metadata, pretty: 4
+                                def backendDigest  = env.CAND_DIGEST_BACKEND  ?: ''
+                                def frontendDigest = env.CAND_DIGEST_FRONTEND ?: ''
+                                def cleanupSummary = env.CLEANUP_SUMMARY ?: ''
+                                def scanSummary    = env.SCAN_SUMMARY ?: ''
+
+                                def metadataJson = """{
+  "commit_sha_full": "${env.SEOKPAN_GIT_SHA}",
+  "commit_sha_12": "${env.MAIN_SHA_12}",
+  "jenkins_build_url": "${env.BUILD_URL}",
+  "jenkins_build_number": "${env.BUILD_NUMBER}",
+  "run_id": "${env.SEOKPAN_CI_RUN_ID}",
+  "components": {
+    "backend": {
+      "harbor_repo": "backend",
+      "candidate_tag": "${env.CANDIDATE_TAG}",
+      "final_tag": "${env.FINAL_TAG}",
+      "push_time_digest": "${backendDigest}"
+    },
+    "frontend": {
+      "harbor_repo": "frontend",
+      "candidate_tag": "${env.CANDIDATE_TAG}",
+      "final_tag": "${env.FINAL_TAG}",
+      "push_time_digest": "${frontendDigest}"
+    }
+  },
+  "cleanup_status": "${cleanupSummary}",
+  "scan_summary": "${scanSummary}",
+  "note": "GitOps apps/backend, apps/frontend Desired State 변경은 이 Evidence를 인계받아 별도 작업에서 진행 (Issue #40 경계)"
+}
+"""
+                                writeFile file: 'image-metadata.json', text: metadataJson
                                 archiveArtifacts artifacts: 'image-metadata.json', fingerprint: true
                                 echo "Evidence 기록 완료: image-metadata.json"
                             }
