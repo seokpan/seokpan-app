@@ -24,6 +24,11 @@
 #
 # Rootless BuildKit(buildctl-daemonless.sh)으로 빌드되는 것을 전제로 하며,
 # Host Docker Socket을 사용하지 않는다(04 문서 11.1절 원칙).
+#
+# [수정, 2026-09-11] Trivy Scan CRITICAL/HIGH 차단 정책 대응 (Issue #58).
+# runtime 스테이지에 perl-base 제거(CVE-2026-13221/42496/8376, CRITICAL,
+# Fixed Version 없음) + setuptools/msgpack 조건부 업그레이드(HIGH, Fixed
+# Version 있음) 추가. 상세 근거는 해당 RUN 라인 바로 위 주석 참고.
 
 # ---------- Stage 1: builder ----------
 FROM python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS builder
@@ -62,6 +67,28 @@ COPY --from=builder --chown=seokpan:seokpan /app/.venv /app/.venv
 COPY --from=builder --chown=seokpan:seokpan /app/src /app/src
 COPY --from=builder --chown=seokpan:seokpan /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
+
+# [추가, 2026-09-11] Trivy Scan CRITICAL/HIGH 차단 정책 대응.
+#
+# 1) perl-base 제거 (CVE-2026-13221/42496/8376, CRITICAL, Fixed Version 없음)
+#    앱이 Perl을 전혀 사용하지 않고, python:3.13.15-slim-trixie 베이스에
+#    Debian 기본 패키지로 딸려온 것일 뿐이라 애초에 이미지에 있을 필요가
+#    없음. "임의 예외처리 금지" 정책과 무관 — 예외를 넣는 게 아니라
+#    불필요한 걸 제거하는 것. Essential 패키지라 제거 시 apt/dpkg 저수준
+#    도구가 깨질 수 있으나, 이 runtime 단계는 이후 apt/dpkg를 전혀 쓰지
+#    않으므로 안전할 것으로 판단 — 다만 실제 빌드로 반드시 재검증할 것.
+#
+# 2) setuptools/msgpack 조건부 업그레이드 (HIGH, Fixed Version 있음:
+#    setuptools>=78.1.1, msgpack>=1.2.1). 이 둘은 uv sync가 설치한 27개
+#    패키지 목록(.venv)에 없어 베이스 이미지 시스템 site-packages 쪽으로
+#    추정됨 — 정확한 출처는 미확인. 무조건 설치하면 원래 없던 패키지를
+#    새로 추가하는 역효과가 날 수 있어, "이미 import 가능한 경우에만"
+#    업그레이드하도록 조건부 처리.
+RUN apt-get update && \
+    apt-get purge -y --auto-remove perl-base 2>/dev/null; \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    (python3 -c "import setuptools" 2>/dev/null && pip install --no-cache-dir --upgrade "setuptools>=78.1.1" || true) && \
+    (python3 -c "import msgpack" 2>/dev/null && pip install --no-cache-dir --upgrade "msgpack>=1.2.1" || true)
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
