@@ -68,27 +68,27 @@ COPY --from=builder --chown=seokpan:seokpan /app/src /app/src
 COPY --from=builder --chown=seokpan:seokpan /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
 
-# [추가, 2026-09-11] Trivy Scan CRITICAL/HIGH 차단 정책 대응.
+# [수정, 2026-09-11 2차] 1차 시도가 조용히 실패한 것을 확인.
 #
-# 1) perl-base 제거 (CVE-2026-13221/42496/8376, CRITICAL, Fixed Version 없음)
-#    앱이 Perl을 전혀 사용하지 않고, python:3.13.15-slim-trixie 베이스에
-#    Debian 기본 패키지로 딸려온 것일 뿐이라 애초에 이미지에 있을 필요가
-#    없음. "임의 예외처리 금지" 정책과 무관 — 예외를 넣는 게 아니라
-#    불필요한 걸 제거하는 것. Essential 패키지라 제거 시 apt/dpkg 저수준
-#    도구가 깨질 수 있으나, 이 runtime 단계는 이후 apt/dpkg를 전혀 쓰지
-#    않으므로 안전할 것으로 판단 — 다만 실제 빌드로 반드시 재검증할 것.
+# 1) perl-base: apt는 Essential 패키지 제거 시 -y만으로는 부족하고
+#    --allow-remove-essential이 추가로 필요함(없으면 경고만 찍고 실제로는
+#    제거 안 됨 — 1차 빌드 로그에 "Removing perl-base..." 실행 로그가
+#    없었던 것으로 확인). 또한 실패를 `2>/dev/null;`로 숨기고 다음 단계로
+#    넘어가게 했던 게 "조용한 실패"를 감춘 원인이라 제거 — 이제 실패하면
+#    빌드 자체가 실패하도록 함(의도대로 안 지워지면 바로 드러나야 함).
 #
-# 2) setuptools/msgpack 조건부 업그레이드 (HIGH, Fixed Version 있음:
-#    setuptools>=78.1.1, msgpack>=1.2.1). 이 둘은 uv sync가 설치한 27개
-#    패키지 목록(.venv)에 없어 베이스 이미지 시스템 site-packages 쪽으로
-#    추정됨 — 정확한 출처는 미확인. 무조건 설치하면 원래 없던 패키지를
-#    새로 추가하는 역효과가 날 수 있어, "이미 import 가능한 경우에만"
-#    업그레이드하도록 조건부 처리.
+# 2) setuptools/msgpack: "import 가능하면 업그레이드" 조건이 1차에서
+#    False로 나온 것으로 보임(Trivy 결과가 1차와 동일) — 정확한 설치
+#    위치를 특정 못 한 상태. 추측으로 또 고치는 대신, 실제 위치를 빌드
+#    로그에 출력하는 진단 커맨드로 먼저 교체함. 이 결과를 보고 다음
+#    수정을 정확하게 할 것.
 RUN apt-get update && \
-    apt-get purge -y --auto-remove perl-base 2>/dev/null; \
+    apt-get purge -y --allow-remove-essential --auto-remove perl-base && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    (python3 -c "import setuptools" 2>/dev/null && pip install --no-cache-dir --upgrade "setuptools>=78.1.1" || true) && \
-    (python3 -c "import msgpack" 2>/dev/null && pip install --no-cache-dir --upgrade "msgpack>=1.2.1" || true)
+    echo "=== msgpack/setuptools 실제 위치 진단 ===" && \
+    (find / -xdev \( -iname "*msgpack*" -o -iname "*setuptools*" \) 2>/dev/null | grep -v '^/proc' || echo "(파일 없음)") && \
+    echo "=== python3 사이트 패키지 경로 ===" && \
+    python3 -c "import sys; print('\n'.join(sys.path))"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
