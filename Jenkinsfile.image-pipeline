@@ -1,4 +1,11 @@
 // ============================================================================
+// ⚠️ TEMP-TEST-ONLY 버전 — Tmp Job 격리 테스트 전용, 절대 merge 금지 ⚠️
+// Branch Guard(BRANCH_NAME/CHANGE_ID 체크), P1 Revalidation, SBOM fail-closed
+// 3곳이 임시로 우회되어 있음 ("TEMP-TEST-ONLY" 주석으로 표시됨).
+// 테스트 끝나면 이 파일과 이 파일을 올린 테스트 브랜치를 통째로 삭제할 것.
+// 정식 버전은 Jenkinsfile.image-pipeline(우회 없음)을 그대로 사용할 것.
+// ============================================================================
+// ============================================================================
 // seokpan-app :: Image Pipeline (main branch)
 // 목적: main push 시 Branch Guard -> P1 재검증(App CI Check 전체 재적용) ->
 //       Backend/Frontend Build -> SBOM/Scan -> Harbor Push -> Tag Promote ->
@@ -149,14 +156,16 @@ pipeline {
             agent { kubernetes { inheritFrom 'buildkit-rootless' } }
             steps {
                 script {
-                    /*
+                    /* TEMP-TEST-ONLY: Tmp Job은 Multibranch가 아니라 BRANCH_NAME/CHANGE_ID가
+                       채워지지 않음 — 이 우회는 실제 PR에는 절대 반영하지 말 것.
                     if (env.CHANGE_ID) {
                         error("이 Pipeline은 PR 컨텍스트(CHANGE_ID=${env.CHANGE_ID})에서 실행되면 안 됩니다.")
                     }
                     if (env.BRANCH_NAME != 'main') {
                         error("이 Pipeline은 main 브랜치 전용입니다 (현재 BRANCH_NAME=${env.BRANCH_NAME}).")
-                    */
                     }
+                    */
+                    echo "TEMP-TEST-ONLY: Branch Guard 우회됨 (Tmp Job 테스트용)"
                     echo "Branch Guard 통과: BRANCH_NAME=main, PR 컨텍스트 아님"
 
                     // [수정, App Jenkinsfile v3.1 대조 반영] sh('git rev-parse HEAD') 대신
@@ -172,8 +181,8 @@ pipeline {
                     env.SEOKPAN_CI_RUN_ID = "a09-${env.BUILD_NUMBER}-${env.SEOKPAN_GIT_SHA.take(12)}"
                     env.MAIN_SHA_12    = env.SEOKPAN_GIT_SHA.take(12)
                     env.CANDIDATE_TAG  = "scan-${env.MAIN_SHA_12}-${env.BUILD_NUMBER}"
-                    env.P1_PASSED = 'true'
                     env.FINAL_TAG      = "git-${env.MAIN_SHA_12}"
+                    env.P1_PASSED      = 'true' // TEMP-TEST-ONLY: P1을 통째로 건너뛰므로 강제 설정
                     echo "Commit: ${env.SEOKPAN_GIT_SHA}"
                     echo "RUN_ID: ${env.SEOKPAN_CI_RUN_ID}"
                     echo "Candidate tag: ${env.CANDIDATE_TAG} / Final tag: ${env.FINAL_TAG}"
@@ -192,7 +201,7 @@ pipeline {
             steps {
                 echo "TEMP-TEST-ONLY: P1 Revalidation 임시 스킵"
             }
-            /*
+            /* TEMP-TEST-ONLY: 아래 원본 내용은 비활성화됨, 실제 PR에는 절대 반영 금지
             agent { kubernetes { inheritFrom 'app-ci-check' } }
             environment {
                 // [반영] App Jenkinsfile v3.1과 동일. verify_ci.py 등이 HOME 기준으로
@@ -528,7 +537,7 @@ PYEOF
                 stage('SBOM & Provenance (미검증)') {
                     steps {
                         container('buildkit') {
-                            echo("SBOM 스킵 - 임시 테스트")
+                            echo("TEMP-TEST-ONLY: SBOM 스킵 - 임시 테스트")
                         }
                     }
                 }
