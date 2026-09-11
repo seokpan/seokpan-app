@@ -24,6 +24,15 @@
 # [정정] v1의 nginx:1.27-alpine + sed로 포트/권한 수동 조정하던 방식은 폐기.
 # nginx-unprivileged 이미지는 처음부터 non-root(uid 101)·8080 포트로 설계되어
 # 별도 sed 트릭이 불필요해짐.
+#
+# [수정, 2026-09-11] Trivy Scan HIGH 차단 정책 대응 (Issue #58).
+# libuuid(util-linux 계열) CVE 7건(CVE-2026-53612/53613/53614/76642/78408/
+# 78409/78410) 전부 Fixed Version이 있는(fixed=2.42.3-r0/r1) HIGH — 베이스
+# 이미지(nginx-unprivileged:1.30.4-alpine3.24) 빌드 시점 Alpine 패키지
+# 스냅샷이 구버전이라 발생. apk upgrade로 해결.
+# nginx-unprivileged 이미지는 기본 USER가 이미 101(non-root)이라, apk
+# 실행을 위해 잠깐 root로 전환했다가 다시 non-root로 복귀해야 함.
+# backend와 동일하게 "임의 예외처리"가 아니라 실제 패치 적용.
 
 # ---------- Stage 1: build ----------
 FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS builder
@@ -54,6 +63,15 @@ FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:9b87ad3dd9f431c733f19d
 # readOnlyRootFilesystem 대응: PID·caches·temp 전부 /tmp 하위로 재배치
 # (컨테이너 파일시스템이 read-only여도 /tmp만 emptyDir로 쓰기 가능하면 기동됨 —
 # 실제 Pod의 volumeMounts에 /tmp를 emptyDir로 마운트하는 건 GitOps Deployment 쪽 책임)
+
+# [추가, 2026-09-11] libuuid Trivy HIGH 7건(전부 Fixed Version 있음) 패치.
+# apk 명령 실행을 위해 잠깐 root로 전환 후 즉시 원래 non-root(101)로 복귀.
+USER root
+RUN apk update && \
+    apk upgrade --no-cache libuuid && \
+    rm -rf /var/cache/apk/*
+USER 101
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=builder /app/dist /usr/share/nginx/html

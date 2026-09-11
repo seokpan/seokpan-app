@@ -24,6 +24,11 @@
 #
 # Rootless BuildKit(buildctl-daemonless.sh)으로 빌드되는 것을 전제로 하며,
 # Host Docker Socket을 사용하지 않는다(04 문서 11.1절 원칙).
+#
+# [수정, 2026-09-11] Trivy Scan CRITICAL/HIGH 차단 정책 대응 (Issue #58).
+# runtime 스테이지에 perl-base 제거(CVE-2026-13221/42496/8376, CRITICAL,
+# Fixed Version 없음) + setuptools/msgpack 조건부 업그레이드(HIGH, Fixed
+# Version 있음) 추가. 상세 근거는 해당 RUN 라인 바로 위 주석 참고.
 
 # ---------- Stage 1: builder ----------
 FROM python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS builder
@@ -62,6 +67,36 @@ COPY --from=builder --chown=seokpan:seokpan /app/.venv /app/.venv
 COPY --from=builder --chown=seokpan:seokpan /app/src /app/src
 COPY --from=builder --chown=seokpan:seokpan /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
+
+# [수정, 2026-09-11 3차] 진단 결과 확인 완료.
+#
+# msgpack: pip에 vendored됨(pip/_vendor/msgpack) — 최상위 import로는 안
+#   잡혀서 1~2차 조건부 체크가 계속 스킵됐던 것. 앱 의존성이 아니라
+#   pip 내부 구현체.
+# setuptools: 실제 패키지 위치를 find로 못 찾음(cffi의 무관한 헬퍼 파일만
+#   검출됨) — pip/ensurepip 생태계 어딘가에 있을 가능성이 높다고 보고
+#   pip과 함께 정리.
+#
+# 결론: 런타임 컨테이너는 pip이 전혀 필요 없음(빌드 시점에 uv로 .venv에
+# 이미 설치 완료, 실행은 .venv/bin/uvicorn 직접 호출, HEALTHCHECK도 표준
+# urllib만 사용). perl-base와 같은 논리 — "예외 처리"가 아니라 애초에
+# 불필요한 도구를 제거하는 것. pip을 통째로 지우면 그 안의 msgpack도
+# 함께 사라짐. 같은 RUN 안에서 제거 후 즉시 재확인까지 수행해 조용한
+# 실패를 방지함.
+RUN apt-get update && \
+    apt-get purge -y --allow-remove-essential --auto-remove perl-base && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    echo "=== pip/setuptools/wheel 제거 (런타임 불필요, msgpack은 pip 내부 vendored) ===" && \
+    rm -rf /usr/local/lib/python3.13/site-packages/pip \
+           /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+           /usr/local/lib/python3.13/site-packages/setuptools* \
+           /usr/local/lib/python3.13/site-packages/pkg_resources \
+           /usr/local/lib/python3.13/site-packages/wheel* \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 && \
+    echo "=== 제거 후 재확인 (여기서 뭔가 나오면 아직 안 지워진 것) ===" && \
+    (find / -xdev \( -iname "*msgpack*" -o -iname "*setuptools*" \) 2>/dev/null | grep -v '^/proc' || echo "(흔적 없음 - 제거 성공)") && \
+    echo "=== venv 밖에서 python3가 여전히 정상 동작하는지 확인 ===" && \
+    python3 --version
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
