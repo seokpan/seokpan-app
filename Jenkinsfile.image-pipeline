@@ -334,12 +334,13 @@ pipeline {
                                         def status = sh(
                                             script: '''
                                                 python3 - <<'PYEOF'
-import os, sys, ssl, urllib.request, urllib.error, base64
+import os, sys, json, ssl, urllib.request, urllib.error, base64
 
 host  = os.environ["HARBOR_HOST"]
 proj  = os.environ["HARBOR_PROJECT"]
 repo  = os.environ["CURRENT_REPO"]
 tag   = os.environ["FINAL_TAG"]
+sha12 = os.environ["MAIN_SHA_12"]
 user  = os.environ["HARBOR_API_USER"]
 pw    = os.environ["HARBOR_API_PASS"]
 
@@ -351,7 +352,25 @@ req.add_header("Authorization", f"Basic {auth}")
 
 try:
     with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-        print(resp.status)
+        data = json.loads(resp.read())
+        digest = data.get("digest")
+        if resp.status != 200 or not digest:
+            print("ERR", file=sys.stderr)
+            sys.exit(1)
+
+        tags = [
+            t.get("name")
+            for t in (data.get("tags") or [])
+            if isinstance(t, dict) and t.get("name")
+        ]
+
+        stale = sorted(
+            name for name in tags
+            if name.startswith(f"scan-{sha12}-")
+        )
+
+        stale_field = ",".join(stale) if stale else "-"
+        print(f"200 {digest} {stale_field}")
 except urllib.error.HTTPError as e:
     print(e.code)
 except Exception as e:
@@ -363,13 +382,53 @@ PYEOF
                                             returnStdout: true
                                         ).trim()
 
-                                        echo "Guard [${component}/${repo}] HTTP status: ${status}"
-                                        if (status == '200') {
-                                            error("Guard: [${component}] 최종 태그 ${env.FINAL_TAG} 가 이미 존재합니다 (repo=${repo}).")
+                                        echo "Guard [${component}/${repo}] result: ${status}"
+
+                                        def existing = (
+                                            status =~ /^200 (sha256:[0-9a-f]+) (.+)$/
+                                        )
+
+                                        if (existing) {
+                                            def digest = existing[0][1]
+                                            def staleField = existing[0][2]
+                                            def staleCandidates =
+                                                (staleField == '-') ?
+                                                '' :
+                                                staleField
+
+                                            echo(
+                                                "Guard [${component}]: 기존 Final " +
+                                                "${env.FINAL_TAG} 확인. " +
+                                                "재실행 복구 대상으로 재사용한다. " +
+                                                "digest=${digest}"
+                                            )
+
+                                            if (component == 'backend') {
+                                                env.FINAL_EXISTS_BACKEND = 'true'
+                                                env.FINAL_DIGEST_BACKEND = digest
+                                                env.STALE_CANDIDATES_BACKEND =
+                                                    staleCandidates
+                                            } else {
+                                                env.FINAL_EXISTS_FRONTEND = 'true'
+                                                env.FINAL_DIGEST_FRONTEND = digest
+                                                env.STALE_CANDIDATES_FRONTEND =
+                                                    staleCandidates
+                                            }
+
                                         } else if (status == '404') {
-                                            echo "Guard [${component}]: 최종 태그 없음, 정상 진행."
+                                            echo "Guard [${component}]: Final 없음, 현재 Run에서 처리."
+
+                                            if (component == 'backend') {
+                                                env.FINAL_EXISTS_BACKEND = 'false'
+                                            } else {
+                                                env.FINAL_EXISTS_FRONTEND = 'false'
+                                            }
+
                                         } else {
-                                            error("Guard: [${component}] 예상치 못한 응답(${status}), fail-closed 중단.")
+                                            error(
+                                                "Guard: [${component}] 예상치 못한 응답" +
+                                                "(${status}), fail-closed 중단."
+                                            )
                                         }
                                     }
                                 }
@@ -387,7 +446,18 @@ PYEOF
                         )]) {
                             script {
                                 COMPONENT_REPO.each { component, repo ->
-                                    container('buildkit') {
+                                    def finalExists =
+                                        (component == 'backend') ?
+                                        env.FINAL_EXISTS_BACKEND :
+                                        env.FINAL_EXISTS_FRONTEND
+
+                                    if (finalExists == 'true') {
+                                        echo(
+                                            "[${component}] 기존 immutable Final 재사용 - " +
+                                            "Candidate Build/Push 생략"
+                                        )
+                                    } else {
+                                        container('buildkit') {
                                         sh """
                                             buildctl-daemonless.sh build \\
                                               --frontend dockerfile.v0 \\
@@ -438,6 +508,7 @@ PYEOF
                                         }
                                         echo "[${repo}] push-time digest: ${digest}"
                                     }
+                                    }
                                 }
                             }
                         }
@@ -455,7 +526,24 @@ PYEOF
                                 script {
                                     def scanSummary = [:]
                                     COMPONENT_REPO.each { component, repo ->
-                                        env.CURRENT_REPO = repo
+                                        def finalExists =
+                                            (component == 'backend') ?
+                                            env.FINAL_EXISTS_BACKEND :
+                                            env.FINAL_EXISTS_FRONTEND
+
+                                        if (finalExists == 'true') {
+                                            echo(
+                                                "[${component}] 기존 immutable Final 재사용 - " +
+                                                "Scan 생략"
+                                            )
+
+                                            if (component == 'backend') {
+                                                env.SCAN_BACKEND = 'SKIPPED_EXISTING_FINAL'
+                                            } else {
+                                                env.SCAN_FRONTEND = 'SKIPPED_EXISTING_FINAL'
+                                            }
+                                        } else {
+                                            env.CURRENT_REPO = repo
                                         def output = sh(
                                             script: '''
                                                 set -eu
@@ -501,6 +589,7 @@ PYEOF
                                         } else if (component == 'frontend') {
                                             env.SCAN_FRONTEND = summary
                                         }
+                                        }
                                     }
                                     env.SCAN_SUMMARY = scanSummary.collect { k, v -> "${k}(${v})" }.join(', ')
                                 }
@@ -518,7 +607,24 @@ PYEOF
                     steps {
                         script {
                             HEALTH_CFG.each { component, cfg ->
-                                def repo = COMPONENT_REPO[component]
+                                def finalExists =
+                                    (component == 'backend') ?
+                                    env.FINAL_EXISTS_BACKEND :
+                                    env.FINAL_EXISTS_FRONTEND
+
+                                if (finalExists == 'true') {
+                                    echo(
+                                        "[${component}] 기존 immutable Final 재사용 - " +
+                                        "Candidate Health Smoke 생략"
+                                    )
+
+                                    if (component == 'backend') {
+                                        env.HEALTH_BACKEND = 'SKIPPED_EXISTING_FINAL'
+                                    } else {
+                                        env.HEALTH_FRONTEND = 'SKIPPED_EXISTING_FINAL'
+                                    }
+                                } else {
+                                    def repo = COMPONENT_REPO[component]
                                 def label = "smoke-${component}-${env.BUILD_NUMBER}"
                                 def targetImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.CANDIDATE_TAG}"
                                 def checkerImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/ci-python@sha256:19349910928096e034c1e45b51f3b446e95e152b2525695afe8fc791914b49a5"
@@ -669,6 +775,7 @@ PYEOF
                                 }
 
                                 echo "[${component}] Candidate Health Process Smoke PASS"
+                                }
                             }
                         }
                     }
@@ -684,7 +791,18 @@ PYEOF
                             )]) {
                                 script {
                                     COMPONENT_REPO.each { component, repo ->
-                                        env.CURRENT_REPO = repo
+                                        def finalExists =
+                                            (component == 'backend') ?
+                                            env.FINAL_EXISTS_BACKEND :
+                                            env.FINAL_EXISTS_FRONTEND
+
+                                        if (finalExists == 'true') {
+                                            echo(
+                                                "[${component}] 기존 immutable Final 재사용 - " +
+                                                "Promote 생략"
+                                            )
+                                        } else {
+                                            env.CURRENT_REPO = repo
                                         sh '''
                                             python3 - <<'PYEOF'
 import os, json, ssl, urllib.request, urllib.error, base64
@@ -705,6 +823,7 @@ except urllib.error.HTTPError as e:
     raise SystemExit(1)
 PYEOF
                                         '''
+                                        }
                                     }
                                 }
                             }
@@ -723,8 +842,121 @@ PYEOF
                                 script {
                                     def cleanupResults = [:]
                                     COMPONENT_REPO.each { component, repo ->
-                                        env.CURRENT_REPO = repo
-                                        env.CURRENT_CAND_DIGEST = (component == 'backend') ? env.CAND_DIGEST_BACKEND : env.CAND_DIGEST_FRONTEND
+                                        def finalExists =
+                                            (component == 'backend') ?
+                                            env.FINAL_EXISTS_BACKEND :
+                                            env.FINAL_EXISTS_FRONTEND
+
+                                        if (finalExists == 'true') {
+                                            def staleCandidates =
+                                                (component == 'backend') ?
+                                                (env.STALE_CANDIDATES_BACKEND ?: '') :
+                                                (env.STALE_CANDIDATES_FRONTEND ?: '')
+
+                                            if (staleCandidates) {
+                                                env.CURRENT_REPO = repo
+                                                env.CURRENT_STALE_CANDIDATES =
+                                                    staleCandidates
+
+                                                sh """
+                                                    python3 - <<'PYEOF'
+import os
+import ssl
+import urllib.request
+import base64
+import sys
+
+host = os.environ["HARBOR_HOST"]
+proj = os.environ["HARBOR_PROJECT"]
+repo = os.environ["CURRENT_REPO"]
+final = os.environ["FINAL_TAG"]
+user = os.environ["HARBOR_API_USER"]
+pw = os.environ["HARBOR_API_PASS"]
+
+tags = [
+    x for x in
+    os.environ["CURRENT_STALE_CANDIDATES"].split(",")
+    if x
+]
+
+ctx = ssl.create_default_context(
+    cafile=os.environ["HARBOR_CA_PATH"]
+)
+
+auth = base64.b64encode(
+    f"{user}:{pw}".encode()
+).decode()
+
+for cand in tags:
+    url = (
+        f"https://{host}/api/v2.0/projects/{proj}/"
+        f"repositories/{repo}/artifacts/{final}/tags/{cand}"
+    )
+
+    req = urllib.request.Request(
+        url,
+        method="DELETE",
+    )
+    req.add_header(
+        "Authorization",
+        f"Basic {auth}",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            req,
+            timeout=15,
+            context=ctx,
+        ) as resp:
+            print(
+                f"[{repo}] stale Candidate 삭제 완료: "
+                f"{cand} status={resp.status}"
+            )
+    except Exception as e:
+        print(
+            f"[{repo}] stale Candidate 삭제 실패: "
+            f"{cand}: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+PYEOF
+                                                """
+
+                                                cleanupResults[repo] =
+                                                    'OK_REUSED_FINAL'
+
+                                                if (component == 'backend') {
+                                                    env.CLEANUP_BACKEND =
+                                                        'OK_REUSED_FINAL'
+                                                } else {
+                                                    env.CLEANUP_FRONTEND =
+                                                        'OK_REUSED_FINAL'
+                                                }
+
+                                            } else {
+                                                cleanupResults[repo] =
+                                                    'NO_STALE_CANDIDATE'
+
+                                                if (component == 'backend') {
+                                                    env.CLEANUP_BACKEND =
+                                                        'NO_STALE_CANDIDATE'
+                                                } else {
+                                                    env.CLEANUP_FRONTEND =
+                                                        'NO_STALE_CANDIDATE'
+                                                }
+                                            }
+
+                                            echo(
+                                                "[${component}] 기존 immutable Final 재사용 - " +
+                                                "Final Digest=${(component == 'backend') ? env.FINAL_DIGEST_BACKEND : env.FINAL_DIGEST_FRONTEND}, " +
+                                                "cleanup=${cleanupResults[repo]}"
+                                            )
+                                        } else {
+                                            env.CURRENT_REPO = repo
+                                            env.CURRENT_CAND_DIGEST =
+                                                (component == 'backend') ?
+                                                env.CAND_DIGEST_BACKEND :
+                                                env.CAND_DIGEST_FRONTEND
                                         def output = sh(
                                             script: '''
                                                 python3 - <<'PYEOF'
@@ -762,9 +994,10 @@ try:
     with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
         print(f"[{repo}] Candidate 태그 삭제 완료: {resp.status}")
         print(f"CLEANUP_STATUS={repo}=OK")
-except urllib.error.HTTPError as e:
-    print(f"[{repo}] Candidate 태그 삭제 실패(Retention으로 추후 정리 예정): {e.code}")
-    print(f"CLEANUP_STATUS={repo}=FAILED")
+except Exception as e:
+    print(f"[{repo}] Candidate 태그 삭제 실패: {e}", file=sys.stderr)
+    print(f"CLEANUP_STATUS={repo}=FAILED", file=sys.stderr)
+    raise SystemExit(1)
 PYEOF
                                             ''',
                                             returnStdout: true
@@ -789,6 +1022,7 @@ PYEOF
                                             env.FINAL_DIGEST_FRONTEND = finalDigest
                                             env.CLEANUP_FRONTEND = cleanupStatus
                                         }
+                                        }
                                     }
                                     env.CLEANUP_SUMMARY = cleanupResults.collect { k, v -> "${k}=${v}" }.join(', ')
                                 }
@@ -806,8 +1040,20 @@ PYEOF
                     steps {
                         container('python') {
                             script {
-                                def backendCandidateDigest  = env.CAND_DIGEST_BACKEND ?: ''
-                                def frontendCandidateDigest = env.CAND_DIGEST_FRONTEND ?: ''
+                                def backendReused =
+                                    env.FINAL_EXISTS_BACKEND == 'true'
+                                def frontendReused =
+                                    env.FINAL_EXISTS_FRONTEND == 'true'
+
+                                def backendCandidateTag =
+                                    backendReused ? '' : env.CANDIDATE_TAG
+                                def frontendCandidateTag =
+                                    frontendReused ? '' : env.CANDIDATE_TAG
+
+                                def backendCandidateDigest =
+                                    env.CAND_DIGEST_BACKEND ?: ''
+                                def frontendCandidateDigest =
+                                    env.CAND_DIGEST_FRONTEND ?: ''
 
                                 def backendFinalDigest  = env.FINAL_DIGEST_BACKEND ?: ''
                                 def frontendFinalDigest = env.FINAL_DIGEST_FRONTEND ?: ''
@@ -830,8 +1076,9 @@ PYEOF
   "components": {
     "backend": {
       "harbor_repo": "backend",
-      "candidate_tag": "${env.CANDIDATE_TAG}",
+      "candidate_tag": "${backendCandidateTag}",
       "candidate_digest": "${backendCandidateDigest}",
+      "reused_existing_final": ${backendReused},
       "final_tag": "${env.FINAL_TAG}",
       "final_digest": "${backendFinalDigest}",
       "scan": "${backendScan}",
@@ -840,8 +1087,9 @@ PYEOF
     },
     "frontend": {
       "harbor_repo": "frontend",
-      "candidate_tag": "${env.CANDIDATE_TAG}",
+      "candidate_tag": "${frontendCandidateTag}",
       "candidate_digest": "${frontendCandidateDigest}",
+      "reused_existing_final": ${frontendReused},
       "final_tag": "${env.FINAL_TAG}",
       "final_digest": "${frontendFinalDigest}",
       "scan": "${frontendScan}",
@@ -869,7 +1117,7 @@ PYEOF
             echo "Image Pipeline 실패: ${env.CANDIDATE_TAG ?: 'N/A'} / ${env.FINAL_TAG ?: 'N/A'} (scan-* Candidate는 삭제하지 않고 보존, Retention 정책으로 추후 정리 예정)"
         }
         success {
-            echo "Image Pipeline 성공: ${env.FINAL_TAG} Promote 완료 (backend/frontend). Candidate 정리 결과: ${env.CLEANUP_SUMMARY ?: '기록 없음'}. Scan 요약: ${env.SCAN_SUMMARY ?: '기록 없음'}"
+            echo "Image Pipeline 성공: ${env.FINAL_TAG} Final 상태 정상. Candidate 정리 결과: ${env.CLEANUP_SUMMARY ?: '기록 없음'}. Scan 요약: ${env.SCAN_SUMMARY ?: '기록 없음'}"
         }
     }
 }
