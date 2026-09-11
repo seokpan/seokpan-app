@@ -189,7 +189,9 @@ pipeline {
         // Pipeline은 상위 stage 실패 시 하위 stage를 자동 skip).
         // --------------------------------------------------------------
         stage('P1 Revalidation (App CI Check on main)') {
-            /*
+            steps {
+                echo "TEMP-TEST-ONLY: P1 Revalidation 임시 스킵"
+            }
             agent { kubernetes { inheritFrom 'app-ci-check' } }
             environment {
                 // [반영] App Jenkinsfile v3.1과 동일. verify_ci.py 등이 HOME 기준으로
