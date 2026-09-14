@@ -9,9 +9,14 @@ from seokpan.persistence.memory import ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
 from seokpan.persistence.redis.room_adapter import RedisRoomRuntimeAdapter
 from seokpan.persistence.redis.room_scripts import ROOM_MUTATION, ROOM_READ
-from seokpan.room.application.runtime import ROOM_RUNTIME_SCHEMA_VERSION
+from seokpan.room.application import ChangeRoomIdentity, DisconnectRoomParticipant
+from seokpan.room.application.runtime import (
+    ROOM_DISCONNECT_LEASE_MS,
+    ROOM_RUNTIME_SCHEMA_VERSION,
+)
+from seokpan.room.domain import ActorType
 
-from .conftest import EmulatedRoomRedisClient, create_room
+from .conftest import EmulatedRoomRedisClient, create_room, join_guest
 
 
 def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
@@ -57,6 +62,82 @@ async def test_mutation_declares_one_hash_slot_and_separated_room_keys() -> None
     assert "HINCRBY', KEYS[9], coordinate, -1" in ROOM_MUTATION.source
     assert "local raw_game = redis.call('GET', KEYS[10])" in ROOM_MUTATION.source
     assert "game.state_version = tonumber(game.state_version or 1) + 1" in (ROOM_MUTATION.source)
+
+
+@pytest.mark.asyncio
+async def test_list_rooms_scans_meta_keys_without_a_second_authority_index() -> None:
+    client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))
+    adapter = RedisRoomRuntimeAdapter(client)
+    await adapter.create(create_room())
+
+    rooms = await adapter.list_rooms()
+
+    assert tuple(room.room_id for room in rooms) == ("room-1",)
+
+
+@pytest.mark.asyncio
+async def test_shared_binding_lookup_tracks_identity_session_rotation() -> None:
+    client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))
+    adapter = RedisRoomRuntimeAdapter(client)
+    await adapter.create(create_room())
+    await adapter.join(join_guest("guest-1", request_id="join-1"))
+
+    initial = await adapter.find_by_session("f" * 64)
+    assert initial is not None
+    assert (initial.room_id, initial.participant_id, initial.actor_type) == (
+        "room-1",
+        "guest-1",
+        ActorType.GUEST,
+    )
+
+    await adapter.change_identity(
+        ChangeRoomIdentity(
+            room_id="room-1",
+            request_id="rotate-1",
+            participant_id="guest-1",
+            actor_type=ActorType.MEMBER,
+            session_digest="b" * 64,
+            expected_state_version=2,
+        )
+    )
+
+    assert await adapter.find_by_session("f" * 64) is None
+    rotated = await adapter.find_by_participant("guest-1")
+    assert rotated is not None
+    assert rotated.session_digest == "b" * 64
+    assert rotated.actor_type is ActorType.MEMBER
+
+
+@pytest.mark.asyncio
+async def test_due_disconnects_are_discovered_from_shared_connection_hashes() -> None:
+    clock = ManualClock(now_ms=1_000)
+    client = EmulatedRoomRedisClient(clock)
+    adapter = RedisRoomRuntimeAdapter(client)
+    await adapter.create(create_room())
+    await adapter.join(join_guest("guest-1", request_id="join-1"))
+    await adapter.disconnect(
+        DisconnectRoomParticipant(
+            room_id="room-1",
+            request_id="disconnect-1",
+            participant_id="guest-1",
+            connection_generation=1,
+            expected_state_version=2,
+            active_vote_turn=None,
+        )
+    )
+
+    assert await adapter.due_disconnects(now_ms=1_000, limit=10) == ()
+    due = await adapter.due_disconnects(
+        now_ms=1_000 + ROOM_DISCONNECT_LEASE_MS,
+        limit=10,
+    )
+    assert len(due) == 1
+    assert (
+        due[0].room_id,
+        due[0].participant_id,
+        due[0].connection_generation,
+        due[0].expires_at_ms,
+    ) == ("room-1", "guest-1", 1, 1_000 + ROOM_DISCONNECT_LEASE_MS)
 
 
 @pytest.mark.asyncio

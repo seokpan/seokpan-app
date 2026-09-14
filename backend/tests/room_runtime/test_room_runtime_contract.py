@@ -192,7 +192,7 @@ async def test_guest_identity_promotion_preserves_room_participant_state(
     assert teamed.snapshot is not None
 
     promoted = await room_harness.adapter.change_identity(
-        ChangeRoomIdentity("room-1", "identity-1", "guest-1", ActorType.MEMBER, 3)
+        ChangeRoomIdentity("room-1", "identity-1", "guest-1", ActorType.MEMBER, digest("b"), 3)
     )
 
     assert promoted.snapshot is not None

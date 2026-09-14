@@ -6,7 +6,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
 
 from seokpan.identity.application import (
@@ -54,6 +54,21 @@ class LobbyRoomRuntimePort(RoomRuntimePort, Protocol):
     async def list_rooms(self) -> tuple[RoomRuntimeSnapshot, ...]: ...
 
 
+class RoomParticipationResolver(Protocol):
+    async def by_session(self, session_digest: str) -> RoomParticipation | None: ...
+
+    async def by_participant(self, participant_id: str) -> RoomParticipation | None: ...
+
+    async def by_transition_source(self, previous: SessionRecord) -> RoomParticipation | None: ...
+
+    async def identity_transition_applied(
+        self,
+        previous: SessionRecord,
+        replacement: CreateSession,
+        participant_id: str,
+    ) -> bool | None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RoomParticipation:
     session_digest: str
@@ -79,17 +94,18 @@ class RoomApplicationService(ParticipantSessionPort):
         passwords: RoomPasswordPort,
         events: RealtimeEventPort | None = None,
         votes: VoteRuntimePort | None = None,
+        participation_resolver: RoomParticipationResolver | None = None,
     ) -> None:
         self._runtime = runtime
         self._passwords = passwords
         self._events = events or NullRealtimeEventAdapter()
         self._votes = votes
+        self._participation_resolver = participation_resolver
         self._by_session: dict[str, RoomParticipation] = {}
         self._by_participant: dict[str, RoomParticipation] = {}
         self._participation_watches: WeakValueDictionary[str, ParticipationWatch] = (
             WeakValueDictionary()
         )
-        self._allocated_ids: dict[tuple[str, str, str], tuple[str, str]] = {}
         self._results: dict[tuple[str, str, str], tuple[str, RoomMutationResult]] = {}
 
     async def list_rooms(self) -> tuple[RoomRuntimeSnapshot, ...]:
@@ -126,6 +142,22 @@ class RoomApplicationService(ParticipantSessionPort):
     def participant_identity(self, participant_id: str) -> RoomParticipation | None:
         return self._by_participant.get(participant_id)
 
+    async def resolve_participation(self, session_digest: str) -> RoomParticipation | None:
+        if self._participation_resolver is not None:
+            return await self._participation_resolver.by_session(session_digest)
+        return self.participation(session_digest)
+
+    async def resolve_participant_identity(self, participant_id: str) -> RoomParticipation | None:
+        if self._participation_resolver is not None:
+            return await self._participation_resolver.by_participant(participant_id)
+        return self.participant_identity(participant_id)
+
+    async def resolve_current_room(self, session_digest: str) -> tuple[str, str] | None:
+        participation = await self.resolve_participation(session_digest)
+        if participation is None:
+            return None
+        return participation.room_id, participation.participant_id
+
     async def create_room(
         self,
         *,
@@ -141,7 +173,7 @@ class RoomApplicationService(ParticipantSessionPort):
             return replay
         if session.actor_type is not SessionActorType.MEMBER:
             raise RoomRuleViolation("MEMBER_REQUIRED_TO_CREATE_ROOM")
-        self._require_not_participating(session.session_digest)
+        await self._require_not_participating(session.session_digest)
         room_id, participant_id = self._ids_for(session.session_digest, "create", request_id)
         encoded_password = None
         if config.visibility is RoomVisibility.PRIVATE:
@@ -179,7 +211,7 @@ class RoomApplicationService(ParticipantSessionPort):
         replay = self._replay(key, fingerprint)
         if replay is not None:
             return replay
-        self._require_not_participating(session.session_digest)
+        await self._require_not_participating(session.session_digest)
         encoded_password = await self._runtime.get_private_access_hash(room_id)
         if encoded_password is None:
             if password is not None:
@@ -222,7 +254,7 @@ class RoomApplicationService(ParticipantSessionPort):
         expected_state_version: int,
         team: Team,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         result = await self._runtime.change_team(
             ChangeRoomTeam(
                 room_id=participation.room_id,
@@ -248,7 +280,7 @@ class RoomApplicationService(ParticipantSessionPort):
         expected_state_version: int,
         ready: bool,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         result = await self._runtime.set_ready(
             SetRoomReady(
                 room_id=participation.room_id,
@@ -274,7 +306,7 @@ class RoomApplicationService(ParticipantSessionPort):
         expected_state_version: int,
         vote_seconds: int,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         result = await self._runtime.change_vote_seconds(
             ChangeRoomVoteSeconds(
                 room_id=participation.room_id,
@@ -314,7 +346,7 @@ class RoomApplicationService(ParticipantSessionPort):
         expected_state_version: int,
         notify_realtime: bool = True,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         result = await self._runtime.start_game(
             StartRoomGame(
                 room_id=participation.room_id,
@@ -343,7 +375,7 @@ class RoomApplicationService(ParticipantSessionPort):
         request_id: str,
         expected_state_version: int,
     ) -> RoomMutationResult:
-        actor = self._require_participation(session.session_digest)
+        actor = await self._require_participation(session.session_digest)
         result = await self._runtime.kick(
             KickRoomParticipant(
                 room_id=actor.room_id,
@@ -381,7 +413,7 @@ class RoomApplicationService(ParticipantSessionPort):
         replay = self._replay(key, fingerprint)
         if replay is not None:
             return replay
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         active_vote_turn = await self._active_vote_turn(participation.room_id)
         result = await self._runtime.leave(
             LeaveRoomRuntime(
@@ -419,7 +451,7 @@ class RoomApplicationService(ParticipantSessionPort):
         session: SessionRecord,
         room_id: str,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         if participation.room_id != room_id:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
         result: RoomMutationResult | None = None
@@ -459,7 +491,7 @@ class RoomApplicationService(ParticipantSessionPort):
         connection_generation: int,
         active_vote_turn: int | None = None,
     ) -> RoomMutationResult:
-        participation = self._require_participation(session.session_digest)
+        participation = await self._require_participation(session.session_digest)
         if participation.room_id != room_id:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
         return await self.disconnect_participant(
@@ -557,8 +589,9 @@ class RoomApplicationService(ParticipantSessionPort):
         if result.room_closed:
             self._unbind_room(room_id)
             await self._closed(room_id)
-        elif participation is not None:
-            self._unbind(participation)
+        else:
+            if participation is not None:
+                self._unbind(participation)
             await self._room_changed(
                 "room.participant_left",
                 result,
@@ -579,7 +612,9 @@ class RoomApplicationService(ParticipantSessionPort):
         previous: SessionRecord,
         replacement: CreateSession,
     ) -> None:
-        participation = self._by_session.get(previous.session_digest)
+        participation = self.participation(previous.session_digest)
+        if participation is None and self._participation_resolver is not None:
+            participation = await self._participation_resolver.by_transition_source(previous)
         if participation is None:
             return
         if replacement.actor_type is not SessionActorType.MEMBER:
@@ -594,7 +629,10 @@ class RoomApplicationService(ParticipantSessionPort):
         if snapshot is None:
             self._unbind(participation)
             return
-        if self._by_participant.get(participation.participant_id) != participation:
+        if (
+            self._participation_resolver is None
+            and self._by_participant.get(participation.participant_id) != participation
+        ):
             # Participation can end during a session rotation. Login may still
             # succeed, but must not restore the removed Room binding.
             if self._by_participant.get(participation.participant_id) is None:
@@ -608,14 +646,40 @@ class RoomApplicationService(ParticipantSessionPort):
                         request_id=str(uuid4()),
                         participant_id=participation.participant_id,
                         actor_type=ActorType.MEMBER,
+                        session_digest=replacement.session_digest,
                         expected_state_version=snapshot.state_version,
                     )
                 )
-            except RoomRuleViolation as error:
-                if self._by_participant.get(participation.participant_id) is None:
-                    return
-                raise SessionTransitionUnavailable from error
-        if self._by_participant.get(participation.participant_id) != participation:
+            except Exception as error:
+                if self._participation_resolver is not None:
+                    try:
+                        applied = await self._participation_resolver.identity_transition_applied(
+                            previous,
+                            replacement,
+                            participation.participant_id,
+                        )
+                    except Exception as confirmation_error:
+                        raise SessionTransitionUnavailable from confirmation_error
+                    if applied is True:
+                        pass
+                    elif applied is None:
+                        raise SessionTransitionUnavailable from error
+                    else:
+                        raise
+                elif not isinstance(error, RoomRuleViolation):
+                    raise
+                current = await self._runtime.get(participation.room_id)
+                if self._participation_resolver is None:
+                    if current is None or not any(
+                        item.participant_id == participation.participant_id
+                        for item in current.participants
+                    ):
+                        return
+                    raise
+        if (
+            self._participation_resolver is None
+            and self._by_participant.get(participation.participant_id) != participation
+        ):
             if self._by_participant.get(participation.participant_id) is None:
                 return
             raise SessionTransitionUnavailable
@@ -630,17 +694,22 @@ class RoomApplicationService(ParticipantSessionPort):
         self._invalidate_participation_watch(updated.session_digest)
         self._by_session[updated.session_digest] = updated
         self._by_participant[updated.participant_id] = updated
-        refreshed = await self._runtime.get(updated.room_id)
-        if refreshed is not None:
-            await self._room_changed(
-                "snapshot.required",
-                RoomMutationResult(snapshot=refreshed),
-                room_id=updated.room_id,
-                payload={"reason": "PARTICIPANT_IDENTITY_CHANGED"},
-            )
+        try:
+            refreshed = await self._runtime.get(updated.room_id)
+            if refreshed is not None:
+                await self._room_changed(
+                    "snapshot.required",
+                    RoomMutationResult(snapshot=refreshed),
+                    room_id=updated.room_id,
+                    payload={"reason": "PARTICIPANT_IDENTITY_CHANGED"},
+                )
+        except Exception:
+            # The Session and Room authorities already agree. Realtime is
+            # advisory here; clients recover through the shared snapshot.
+            _LOGGER.error("Room identity notification could not be confirmed")
 
     async def leave(self, current: SessionRecord) -> None:
-        participation = self._by_session.get(current.session_digest)
+        participation = await self.resolve_participation(current.session_digest)
         if participation is None:
             return
         snapshot = await self._runtime.get(participation.room_id)
@@ -680,21 +749,19 @@ class RoomApplicationService(ParticipantSessionPort):
             if participation.room_id == room_id:
                 self._unbind(participation)
 
-    def _require_not_participating(self, session_digest: str) -> None:
-        if session_digest in self._by_session:
+    async def _require_not_participating(self, session_digest: str) -> None:
+        if await self.resolve_participation(session_digest) is not None:
             raise RoomRuleViolation("SESSION_ALREADY_IN_ROOM")
 
-    def _require_participation(self, session_digest: str) -> RoomParticipation:
-        try:
-            return self._by_session[session_digest]
-        except KeyError as error:
-            raise RoomRuleViolation("SESSION_NOT_IN_ROOM") from error
+    async def _require_participation(self, session_digest: str) -> RoomParticipation:
+        participation = await self.resolve_participation(session_digest)
+        if participation is None:
+            raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
+        return participation
 
     def _ids_for(self, session_digest: str, operation: str, request_id: str) -> tuple[str, str]:
-        key = (session_digest, operation, request_id)
-        if key not in self._allocated_ids:
-            self._allocated_ids[key] = (str(uuid4()), str(uuid4()))
-        return self._allocated_ids[key]
+        seed = f"{session_digest}\n{operation}\n{request_id}"
+        return _stable_uuid4(seed + "\nroom"), _stable_uuid4(seed + "\nparticipant")
 
     def _replay(
         self,
@@ -716,6 +783,7 @@ class RoomApplicationService(ParticipantSessionPort):
             vote_removed=result.vote_removed,
             departure=result.departure,
             start_roster=result.start_roster,
+            operation_at_ms=result.operation_at_ms,
         )
 
     async def _room_changed(
@@ -854,3 +922,12 @@ def _room_actor_type(actor_type: SessionActorType) -> ActorType:
 
 def _fingerprint(*values: object) -> str:
     return hashlib.sha256(repr(values).encode(), usedforsecurity=False).hexdigest()
+
+
+def _stable_uuid4(seed: str) -> str:
+    """Derive a canonical UUIDv4-shaped id from an idempotency seed."""
+
+    value = bytearray(hashlib.sha256(seed.encode("utf-8"), usedforsecurity=False).digest()[:16])
+    value[6] = (value[6] & 0x0F) | 0x40
+    value[8] = (value[8] & 0x3F) | 0x80
+    return str(UUID(bytes=bytes(value)))

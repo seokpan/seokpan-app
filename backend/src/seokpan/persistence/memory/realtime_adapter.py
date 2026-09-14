@@ -83,6 +83,12 @@ class InMemoryRealtimeEventAdapter:
     def room_version(self, room_id: str) -> int:
         return self._room_versions.get(room_id, 1)
 
+    async def current_lobby_version(self) -> int:
+        return self.lobby_version
+
+    async def current_room_version(self, room_id: str) -> int:
+        return self.room_version(room_id)
+
     async def subscribe_lobby(self) -> RealtimeSubscription:
         subscription = _Subscription(
             max_queue_size=self._max_queue_size,

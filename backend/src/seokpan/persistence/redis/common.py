@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -25,6 +25,10 @@ class RedisProviderError(RuntimeError):
 
 class RedisClient(Protocol):
     async def get(self, key: str) -> bytes | str | None: ...
+
+    def scan_iter(self, *, match: str, count: int) -> AsyncIterator[bytes | str]: ...
+
+    async def hgetall(self, key: str) -> Mapping[bytes | str, bytes | str]: ...
 
     async def evalsha(
         self,
@@ -107,6 +111,46 @@ class RedisKeyspace:
     @staticmethod
     def room_resolver(room_id: str, turn_no: int) -> str:
         return f"{REDIS_KEY_PREFIX}room:{{{room_id}}}:resolver:{turn_no}"
+
+    @staticmethod
+    def presence_bindings() -> str:
+        return f"{REDIS_KEY_PREFIX}presence:bindings"
+
+    @staticmethod
+    def presence_expiries() -> str:
+        return f"{REDIS_KEY_PREFIX}presence:expiries"
+
+    @staticmethod
+    def chat_receipts(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}chat:{{{scope}}}:receipts"
+
+    @staticmethod
+    def chat_receipt_expiries(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}chat:{{{scope}}}:receipt-expiries"
+
+    @staticmethod
+    def chat_channel(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}chat:{{{scope}}}:messages"
+
+    @staticmethod
+    def realtime_version(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}realtime:{{{scope}}}:version"
+
+    @staticmethod
+    def realtime_events(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}realtime:{{{scope}}}:events"
+
+    @staticmethod
+    def realtime_event_expiries(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}realtime:{{{scope}}}:event-expiries"
+
+    @staticmethod
+    def realtime_channel(scope: str) -> str:
+        return f"{REDIS_KEY_PREFIX}realtime:{{{scope}}}:channel"
+
+    @staticmethod
+    def tie_selection(game_id: str, turn_no: int) -> str:
+        return f"{REDIS_KEY_PREFIX}game:{{{game_id}}}:tie:{turn_no}"
 
 
 class VersionedJsonCodec:

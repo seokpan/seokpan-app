@@ -172,7 +172,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         current = await _websocket_session(websocket, services.identity)
         if current is None:
             return
-        participation = services.rooms.rooms.participation(current.session_digest)
+        participation = await services.rooms.rooms.resolve_participation(current.session_digest)
         if participation is None or participation.room_id != room_id:
             await websocket.close(code=4403)
             return

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+from redis.exceptions import RedisError
+
 from seokpan.persistence.redis.common import (
     LuaScriptRunner,
     RedisClient,
@@ -29,6 +31,7 @@ from seokpan.room.application.runtime import (
     ConnectRoomParticipant,
     CreateRoomRuntime,
     DisconnectRoomParticipant,
+    DueRoomDisconnect,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
     KickRoomParticipant,
@@ -36,6 +39,7 @@ from seokpan.room.application.runtime import (
     RoomMutationResult,
     RoomRuntimeParticipant,
     RoomRuntimeSnapshot,
+    RoomSessionBinding,
     SetRoomReady,
     StartRoomGame,
     validate_room_id,
@@ -57,7 +61,146 @@ from seokpan.room.domain import (
 
 class RedisRoomRuntimeAdapter:
     def __init__(self, client: RedisClient) -> None:
+        self._client = client
         self._scripts = LuaScriptRunner(client)
+
+    async def list_rooms(self) -> tuple[RoomRuntimeSnapshot, ...]:
+        pattern = f"{RedisKeyspace.room_meta('*')}"
+        prefix = "stone:v1:room:{"
+        suffix = "}:meta"
+        room_ids: set[str] = set()
+        try:
+            async for raw_id in self._client.scan_iter(match=pattern, count=100):
+                try:
+                    key = raw_id.decode("utf-8") if isinstance(raw_id, bytes) else raw_id
+                except UnicodeDecodeError:
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID") from None
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(prefix)
+                    or not key.endswith(suffix)
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                room_id = key[len(prefix) : -len(suffix)]
+                try:
+                    validate_room_id(room_id)
+                except RoomRuleViolation:
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID") from None
+                room_ids.add(room_id)
+        except RedisError as error:
+            raise RedisProviderError() from error
+        rooms: list[RoomRuntimeSnapshot | None] = []
+        for room_id in sorted(room_ids):
+            rooms.append(await self.get(room_id))
+        return tuple(room for room in rooms if room is not None)
+
+    async def find_by_session(self, session_digest: str) -> RoomSessionBinding | None:
+        return await self._find_binding(session_digest=session_digest)
+
+    async def find_by_participant(self, participant_id: str) -> RoomSessionBinding | None:
+        return await self._find_binding(participant_id=participant_id)
+
+    async def due_disconnects(self, *, now_ms: int, limit: int) -> tuple[DueRoomDisconnect, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_DUE_DISCONNECT_LIMIT")
+        due: list[DueRoomDisconnect] = []
+        pattern = RedisKeyspace.room_connections("*")
+        prefix, suffix = "stone:v1:room:{", "}:connections"
+        try:
+            async for raw_key in self._client.scan_iter(match=pattern, count=100):
+                key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else raw_key
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(prefix)
+                    or not key.endswith(suffix)
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                room_id = key[len(prefix) : -len(suffix)]
+                validate_room_id(room_id)
+                for raw_participant, raw_connection in (await self._client.hgetall(key)).items():
+                    participant = (
+                        raw_participant.decode("utf-8")
+                        if isinstance(raw_participant, bytes)
+                        else raw_participant
+                    )
+                    if not isinstance(participant, str):
+                        raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                    connection = VersionedJsonCodec.decode(raw_connection)
+                    connected = _boolean(connection, "connected")
+                    expires = _optional_integer(connection, "disconnect_expires_at_ms")
+                    generation = _integer(connection, "generation")
+                    if not connected and expires is not None and expires <= now_ms:
+                        due.append(DueRoomDisconnect(room_id, participant, generation, expires))
+        except (RedisError, UnicodeDecodeError, RoomRuleViolation) as error:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID") from error
+        return tuple(
+            sorted(
+                due,
+                key=lambda item: (item.expires_at_ms, item.room_id, item.participant_id),
+            )[:limit]
+        )
+
+    async def _find_binding(
+        self,
+        *,
+        session_digest: str | None = None,
+        participant_id: str | None = None,
+    ) -> RoomSessionBinding | None:
+        matches: list[RoomSessionBinding] = []
+        pattern = RedisKeyspace.room_connections("*")
+        prefix, suffix = "stone:v1:room:{", "}:connections"
+        try:
+            async for raw_key in self._client.scan_iter(match=pattern, count=100):
+                key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else raw_key
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(prefix)
+                    or not key.endswith(suffix)
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                room_id = key[len(prefix) : -len(suffix)]
+                validate_room_id(room_id)
+                connections = await self._client.hgetall(key)
+                for raw_participant, raw_connection in connections.items():
+                    found_participant = (
+                        raw_participant.decode("utf-8")
+                        if isinstance(raw_participant, bytes)
+                        else raw_participant
+                    )
+                    if not isinstance(found_participant, str):
+                        raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                    connection = VersionedJsonCodec.decode(raw_connection)
+                    found_session = _string(connection, "session_digest")
+                    if (session_digest is not None and found_session != session_digest) or (
+                        participant_id is not None and found_participant != participant_id
+                    ):
+                        continue
+                    snapshot = await self.get(room_id)
+                    if snapshot is None:
+                        continue
+                    participant = next(
+                        (
+                            item
+                            for item in snapshot.participants
+                            if item.participant_id == found_participant
+                        ),
+                        None,
+                    )
+                    if participant is None:
+                        raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                    matches.append(
+                        RoomSessionBinding(
+                            room_id,
+                            found_participant,
+                            found_session,
+                            participant.actor_type,
+                        )
+                    )
+        except (RedisError, UnicodeDecodeError, RoomRuleViolation) as error:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID") from error
+        if len(matches) > 1:
+            raise RedisProviderError("ROOM_PARTICIPATION_AMBIGUOUS")
+        return None if not matches else matches[0]
 
     async def create(self, command: CreateRoomRuntime) -> RoomMutationResult:
         return await self._mutate(
@@ -138,6 +281,7 @@ class RedisRoomRuntimeAdapter:
             {
                 "participant_id": command.participant_id,
                 "actor_type": command.actor_type.value,
+                "session_digest": command.session_digest,
                 "expected_state_version": command.expected_state_version,
             },
         )
@@ -335,6 +479,7 @@ class RedisRoomRuntimeAdapter:
             vote_removed=_optional_bool(value, "vote_removed", False),
             departure=cls._optional_departure(value.get("departure")),
             start_roster=cls._optional_roster(value.get("start_roster")),
+            operation_at_ms=_optional_integer(value, "operation_at_ms"),
         )
 
     @classmethod

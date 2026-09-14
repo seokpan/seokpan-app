@@ -41,24 +41,24 @@ class SnapshotReader:
 
     async def lobby(self) -> LobbyRecoveryResponse:
         for _ in range(3):
-            version = self._events.lobby_version
+            version = await self._events.current_lobby_version()
             rooms = await self._rooms.rooms.list_rooms()
             payload = [lobby_room_response(room) for room in rooms]
             current = await self._rooms.rooms.list_rooms()
             # Only public list fields matter; Ready/team changes are not Lobby events.
             if (
                 payload == [lobby_room_response(room) for room in current]
-                and version == self._events.lobby_version
+                and version == await self._events.current_lobby_version()
             ):
                 return LobbyRecoveryResponse(rooms=payload, stream_version=version)
         raise ApiProblem(503, "SNAPSHOT_CHANGED", "State changed while reading; retry the snapshot")
 
     async def room(self, session: SessionRecord, room_id: str) -> RoomRecoveryResponse:
         for _ in range(3):
-            participant = self._rooms.rooms.participation(session.session_digest)
+            participant = await self._rooms.rooms.resolve_participation(session.session_digest)
             if participant is None or participant.room_id != room_id:
                 raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
-            version = self._events.room_version(room_id)
+            version = await self._events.current_room_version(room_id)
             room = await self._rooms.rooms.get(room_id)
             if room is None:
                 raise RoomRuleViolation("ROOM_NOT_FOUND")
@@ -88,9 +88,11 @@ class SnapshotReader:
                 if error.code not in {"GAME_NOT_IN_CURRENT_ROOM", "GAME_RUNTIME_NOT_FOUND"}:
                     raise
                 continue
-            if version != self._events.room_version(
+            if version != await self._events.current_room_version(
                 room_id
-            ) or participant != self._rooms.rooms.participation(session.session_digest):
+            ) or participant != await self._rooms.rooms.resolve_participation(
+                session.session_digest
+            ):
                 continue
             return RoomRecoveryResponse(
                 room=payload,

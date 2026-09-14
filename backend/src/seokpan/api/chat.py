@@ -40,7 +40,7 @@ from seokpan.chat import (
     SendChat,
 )
 from seokpan.identity.application import SessionActorType, SessionRecord
-from seokpan.room.application import RoomApplicationService
+from seokpan.room.application import RoomApplicationService, RoomParticipation
 from seokpan.room.domain import RoomStatus
 
 
@@ -72,12 +72,18 @@ class ChatAccess:
     identity/participation must open a fresh, empty chat subscription.
     """
 
-    def __init__(self, services: ChatApiServices, current: SessionRecord, scope: ChatScope):
+    def __init__(
+        self,
+        services: ChatApiServices,
+        current: SessionRecord,
+        scope: ChatScope,
+        binding: RoomParticipation | None,
+    ):
         self.services = services
         self.current = current
         self.scope = scope
         self.watch = services.rooms.watch_participation(current.session_digest)
-        self.binding = services.rooms.participation(current.session_digest)
+        self.binding = binding
         self.generation = (
             None
             if self.binding is None
@@ -86,8 +92,15 @@ class ChatAccess:
             )
         )
 
-    def check_binding(self) -> None:
-        binding = self.services.rooms.participation(self.current.session_digest)
+    @classmethod
+    async def create(
+        cls, services: ChatApiServices, current: SessionRecord, scope: ChatScope
+    ) -> ChatAccess:
+        binding = await services.rooms.resolve_participation(current.session_digest)
+        return cls(services, current, scope, binding)
+
+    async def check_binding(self) -> None:
+        binding = await self.services.rooms.resolve_participation(self.current.session_digest)
         if not self.watch.unchanged or binding != self.binding:
             raise ApiProblem(403, "CHAT_SCOPE_FORBIDDEN", "Chat access ended")
         if self.scope.kind is ChatScopeType.LOBBY:
@@ -106,7 +119,7 @@ class ChatAccess:
 
     async def check(self) -> None:
         async with asyncio.timeout(SESSION_CHECK_TIMEOUT_SECONDS):
-            self.check_binding()
+            await self.check_binding()
             if self.binding is not None:
                 room = await self.services.rooms.get(self.binding.room_id)
                 if (
@@ -130,7 +143,7 @@ class ChatAccess:
                 raise ApiProblem(503, "CHAT_UNAVAILABLE", "Chat is unavailable")
             # Storage reads above may have yielded while a join/kick/logout or
             # connection replacement completed. Never trust the initial binding.
-            self.check_binding()
+            await self.check_binding()
             if self.services.registry.shutting_down:
                 raise ChatDeliveryUnavailable("CHAT_SHUTTING_DOWN")
 
@@ -173,7 +186,7 @@ def chat_router(services: ChatApiServices) -> APIRouter:
             require_allowed_origin(services.identity.settings, request)
             current = await require_current_session(services.identity, raw_session)
             require_csrf(current, csrf)
-            access = ChatAccess(services, current, _scope(room_id))
+            access = await ChatAccess.create(services, current, _scope(room_id))
             await access.check()
             sender = await _sender(services, current)
             command = SendChat(
@@ -229,7 +242,7 @@ def chat_router(services: ChatApiServices) -> APIRouter:
             current = await _websocket_session(websocket, services.identity)
             if current is None:
                 return
-            access = ChatAccess(services, current, _scope(room_id))
+            access = await ChatAccess.create(services, current, _scope(room_id))
             await access.check()
             subscription = await services.delivery.subscribe(access.scope)
             await access.check()

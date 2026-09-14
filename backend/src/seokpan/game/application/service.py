@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import uuid4
+from uuid import UUID
 
 from seokpan.game.application.history import CompletedGameReplay, replay_completed_game
 from seokpan.game.application.persistence import (
@@ -64,13 +64,6 @@ class GameApplicationSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class _AllocatedStart:
-    game_id: str
-    expected_state_version: int
-    started_at_ms: int
-
-
-@dataclass(frozen=True, slots=True)
 class GameResultSnapshot:
     result: StoredGameResult
     board: CompletedGameReplay
@@ -95,7 +88,6 @@ class GameApplicationService:
         self._votes = votes
         self._clock = clock
         self._events = events or NullRealtimeEventAdapter()
-        self._starts: dict[tuple[str, str], _AllocatedStart] = {}
 
     async def start_game(
         self,
@@ -105,25 +97,15 @@ class GameApplicationService:
         request_id: str,
         expected_state_version: int,
     ) -> GameApplicationSnapshot:
-        participation = self._require_participation(session)
+        participation = await self._require_participation(session)
         if participation.room_id != room_id:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
-        key = (participation.room_id, request_id)
-        allocated = self._starts.get(key)
-        if allocated is None:
-            allocated = _AllocatedStart(
-                str(uuid4()),
-                expected_state_version,
-                self._clock.now_ms,
-            )
-            self._starts[key] = allocated
-        elif allocated.expected_state_version != expected_state_version:
-            raise RoomRuleViolation("REQUEST_ID_CONFLICT")
+        game_id = _stable_uuid4(f"{participation.room_id}\nstart\n{request_id}")
 
         room_result = await self._rooms.start_game(
             session=session,
             request_id=request_id,
-            game_id=allocated.game_id,
+            game_id=game_id,
             expected_state_version=expected_state_version,
             notify_realtime=False,
         )
@@ -132,21 +114,26 @@ class GameApplicationService:
         if room is None or roster is None:
             raise RoomRuleViolation("GAME_START_RESULT_INVALID")
         current_room = await self._rooms.get(room.room_id)
-        if current_room is None or current_room.game_id != allocated.game_id:
+        if current_room is None or current_room.game_id != game_id:
             raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
+        started_at_ms = room_result.operation_at_ms
+        if started_at_ms is None:
+            raise RoomRuleViolation("GAME_START_TIME_MISSING")
 
         player_entries = tuple(
             entry for entry in roster.entries if entry.role is RoomParticipantRole.PLAYER
         )
         persistence_outcome = await self._games.start_game(
             StartGameCommand(
-                game_id=allocated.game_id,
+                game_id=game_id,
                 room_id=room.room_id,
                 voting_time_seconds=room.config.vote_seconds,
-                started_at=datetime.fromtimestamp(allocated.started_at_ms / 1000, UTC),
+                started_at=datetime.fromtimestamp(started_at_ms / 1000, UTC),
                 participants=tuple(
-                    self._persistence_participant(item.participant_id, item.team)
-                    for item in player_entries
+                    [
+                        await self._persistence_participant(item.participant_id, item.team)
+                        for item in player_entries
+                    ]
                 ),
             )
         )
@@ -154,7 +141,7 @@ class GameApplicationService:
             InitializeVoteRuntime(
                 room_id=room.room_id,
                 request_id=request_id,
-                game_id=allocated.game_id,
+                game_id=game_id,
                 participants=tuple(
                     Voter(
                         participant_id=item.participant_id,
@@ -164,7 +151,7 @@ class GameApplicationService:
                     )
                     for item in player_entries
                 ),
-                deadline_ms=allocated.started_at_ms + room.config.vote_seconds * 1000,
+                deadline_ms=started_at_ms + room.config.vote_seconds * 1000,
                 expected_state_version=1,
                 previous_game_id=room.last_game_id,
                 previous_turn_no=room.last_game_turn_no,
@@ -204,7 +191,7 @@ class GameApplicationService:
         self,
         session: SessionRecord,
     ) -> tuple[int | None, str | None]:
-        participation = self._require_participation(session)
+        participation = await self._require_participation(session)
         room = await self._rooms.get(participation.room_id)
         runtime = await self._votes.get(participation.room_id)
         if room is not None and runtime is not None and runtime.game_id == room.game_id:
@@ -214,7 +201,7 @@ class GameApplicationService:
         return (None if room is None else room.state_version), None
 
     async def get_result(self, *, session: SessionRecord, game_id: str) -> GameResultSnapshot:
-        participation = self._require_participation(session)
+        participation = await self._require_participation(session)
         room = await self._rooms.get(participation.room_id)
         if room is None:
             raise RoomRuleViolation("ROOM_NOT_FOUND")
@@ -414,7 +401,7 @@ class GameApplicationService:
         session: SessionRecord,
         game_id: str,
     ) -> tuple[RoomParticipation, RoomRuntimeSnapshot, VoteRuntimeSnapshot]:
-        participation = self._require_participation(session)
+        participation = await self._require_participation(session)
         room = await self._rooms.get(participation.room_id)
         if room is None:
             raise RoomRuleViolation("ROOM_NOT_FOUND")
@@ -425,8 +412,8 @@ class GameApplicationService:
             raise RoomRuleViolation("GAME_RUNTIME_NOT_FOUND")
         return participation, room, runtime
 
-    def _require_participation(self, session: SessionRecord) -> RoomParticipation:
-        participation = self._rooms.participation(session.session_digest)
+    async def _require_participation(self, session: SessionRecord) -> RoomParticipation:
+        participation = await self._rooms.resolve_participation(session.session_digest)
         if participation is None:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
         return participation
@@ -436,8 +423,10 @@ class GameApplicationService:
         if not any(item.participant_id == participant_id for item in runtime.participants):
             raise VoteRuleViolation("PLAYER_REQUIRED")
 
-    def _persistence_participant(self, participant_id: str, team: Team) -> GameParticipantRecord:
-        identity = self._rooms.participant_identity(participant_id)
+    async def _persistence_participant(
+        self, participant_id: str, team: Team
+    ) -> GameParticipantRecord:
+        identity = await self._rooms.resolve_participant_identity(participant_id)
         if identity is None:
             raise RoomRuleViolation("PARTICIPANT_IDENTITY_NOT_FOUND")
         if identity.actor_type is SessionActorType.MEMBER:
@@ -460,6 +449,13 @@ def _stone(team: Team) -> Stone:
     if team is Team.NONE:
         raise RoomRuleViolation("PLAYER_TEAM_REQUIRED")
     return Stone(team.value)
+
+
+def _stable_uuid4(seed: str) -> str:
+    value = bytearray(hashlib.sha256(seed.encode("utf-8"), usedforsecurity=False).digest()[:16])
+    value[6] = (value[6] & 0x0F) | 0x40
+    value[8] = (value[8] & 0x3F) | 0x80
+    return str(UUID(bytes=bytes(value)))
 
 
 def _connected(room: RoomRuntimeSnapshot, participant_id: str) -> bool:

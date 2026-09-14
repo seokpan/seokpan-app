@@ -34,6 +34,10 @@ class RealtimeEventPort(Protocol):
 
     def room_version(self, room_id: str) -> int: ...
 
+    async def current_lobby_version(self) -> int: ...
+
+    async def current_room_version(self, room_id: str) -> int: ...
+
     async def subscribe_lobby(self) -> RealtimeSubscription: ...
 
     async def subscribe_room(self, room_id: str) -> RealtimeSubscription: ...
@@ -67,6 +71,12 @@ class NullRealtimeEventAdapter:
     def room_version(self, room_id: str) -> int:
         del room_id
         return 1
+
+    async def current_lobby_version(self) -> int:
+        return self.lobby_version
+
+    async def current_room_version(self, room_id: str) -> int:
+        return self.room_version(room_id)
 
     async def subscribe_lobby(self) -> RealtimeSubscription:
         raise RuntimeError("REALTIME_SUBSCRIPTION_NOT_CONFIGURED")

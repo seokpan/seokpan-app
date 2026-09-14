@@ -108,11 +108,13 @@ class ChangeRoomIdentity:
     request_id: str
     participant_id: str
     actor_type: ActorType
+    session_digest: str
     expected_state_version: int
 
     def __post_init__(self) -> None:
         _validate_request(self.room_id, self.request_id)
         _validate_identifier(self.participant_id, code="INVALID_PARTICIPANT_ID")
+        _validate_session_digest(self.session_digest)
         _validate_state_version(self.expected_state_version)
 
 
@@ -316,6 +318,7 @@ class RoomMutationResult:
     vote_removed: bool = False
     departure: DepartureResult | None = None
     start_roster: StartRoster | None = None
+    operation_at_ms: int | None = None
 
     @property
     def room_closed(self) -> bool:
@@ -326,6 +329,19 @@ class RoomMutationResult:
         if self.departure is None:
             return GameTermination.NONE
         return self.departure.game_termination
+
+
+@dataclass(frozen=True, slots=True)
+class RoomSessionBinding:
+    room_id: str
+    participant_id: str
+    session_digest: str
+    actor_type: ActorType
+
+    def __post_init__(self) -> None:
+        validate_room_id(self.room_id)
+        _validate_identifier(self.participant_id, code="INVALID_PARTICIPANT_ID")
+        _validate_session_digest(self.session_digest)
 
 
 class RoomRuntimePort(Protocol):

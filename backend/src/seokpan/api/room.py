@@ -169,7 +169,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
     ) -> RoomSnapshotResponse:
         current = await require_current_session(services.identity, session_cookie, touch=True)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         snapshot = await services.rooms.get(room_id)
         return await room_snapshot_response(services, snapshot)
 
@@ -213,7 +213,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> RoomSnapshotResponse | None:
         current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         result = await _stale_guard(
             services,
             room_id,
@@ -241,7 +241,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> RoomSnapshotResponse:
         current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         result = await _stale_guard(
             services,
             room_id,
@@ -267,7 +267,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> RoomSnapshotResponse:
         current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         result = await _stale_guard(
             services,
             room_id,
@@ -293,7 +293,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> RoomSnapshotResponse:
         current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         result = await _stale_guard(
             services,
             room_id,
@@ -319,7 +319,7 @@ def room_router(services: RoomApiServices) -> APIRouter:
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> RoomSnapshotResponse:
         current = await _mutation_session(services.identity, request, session_cookie, csrf_token)
-        _require_current_room(services.rooms, current, room_id)
+        await _require_current_room(services.rooms, current, room_id)
         result = await _stale_guard(
             services,
             room_id,
@@ -353,12 +353,12 @@ def _uuid4(value: UUID) -> str:
     return str(value)
 
 
-def _require_current_room(
+async def _require_current_room(
     rooms: RoomApplicationService,
     session: SessionRecord,
     room_id: str,
 ) -> None:
-    participation = rooms.participation(session.session_digest)
+    participation = await rooms.resolve_participation(session.session_digest)
     if participation is None or participation.room_id != room_id:
         raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
 
@@ -392,7 +392,7 @@ async def room_snapshot_response(
         raise RoomRuleViolation("ROOM_NOT_FOUND")
     participants: list[RoomParticipantResponse] = []
     for participant in snapshot.participants:
-        identity = services.rooms.participant_identity(participant.participant_id)
+        identity = await services.rooms.resolve_participant_identity(participant.participant_id)
         if identity is None:
             display_name = participant.participant_id
         elif identity.actor_type is SessionActorType.GUEST:
