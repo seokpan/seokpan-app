@@ -350,6 +350,8 @@ for (const width of [1280, 390])
     await page.goto("/lobby");
     const badge = page.getByLabel("전체 접속자", { exact: true });
     await expect(badge).toHaveText("접속 12명");
+    await expect(page.getByRole("button", { name: "방 생성", exact: true })).toBeEnabled();
+    await expect.poll(() => stateConnections).toBe(1);
     const header = page.locator("header"),
       before = await header.boundingBox();
     count = 999;
@@ -362,6 +364,10 @@ for (const width of [1280, 390])
     expect(presenceConnections).toBe(1);
     await page.getByRole("link", { name: "로비", exact: true }).click();
     await expect(page.getByRole("region", { name: "게임 방", exact: true })).toBeVisible();
+    // The region renders before the remounted Lobby's deferred socket connects.
+    // Establish the baseline only after its snapshot enables room commands.
+    await expect(page.getByRole("button", { name: "방 생성", exact: true })).toBeEnabled();
+    await expect.poll(() => stateConnections).toBe(2);
     const stateBeforeFailure = stateConnections;
     disconnect();
     await expect(badge).toContainText("접속자 확인 필요");
