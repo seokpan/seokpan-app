@@ -1,5 +1,7 @@
 # Application CI 검증 명령과 실행 인계
 
+후속 main 이미지·격리 실패 시험 결과와 남은 인수 범위는 [A-09 이미지 인수 기록](a09-image-acceptance.md)을 참고한다. 아래 실행별 과거 검증 기록은 유지한다.
+
 [App #60](https://github.com/seokpan/seokpan-app/issues/60), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-09 첫 작업이다. Jenkins 연결은 [#40](https://github.com/seokpan/seokpan-app/issues/40), main Image Pipeline은 [#58](https://github.com/seokpan/seokpan-app/issues/58)에서 담당한다.
 
 **검증 상태:** 기존 Windows 전체 검증은 아래 실행 ID·Commit의 결과로 보존한다. [PR #61](https://github.com/seokpan/seokpan-app/pull/61)의 Jenkins Build #2에서 발견한 종료 판정 테스트를 보완한 Commit `230a1ba`의 Build #3은 GitHub status `success`를 확인했다. 같은 Commit의 실제 Node 원본 파일 Linux 시험도 5 PASS·exit 0과 시험 Pod 삭제를 확인했다. 아래 실행 근거와 범위를 참고한다. 이 결과를 Frontend 도구 전체 Linux 시험·Image Runtime Smoke·Harbor 또는 실제 Provider 통합 성공으로 확대하지 않는다.
