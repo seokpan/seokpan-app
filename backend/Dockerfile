@@ -83,7 +83,13 @@ COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
 # 불필요한 도구를 제거하는 것. pip을 통째로 지우면 그 안의 msgpack도
 # 함께 사라짐. 같은 RUN 안에서 제거 후 즉시 재확인까지 수행해 조용한
 # 실패를 방지함.
-RUN apt-get update && \
+# Issue #70: fixed trixie security packages, verified together in an isolated
+# build. Keep base/application locks unchanged; unavailable versions fail build.
+RUN apt-get update -o APT::Update::Error-Mode=any && \
+    apt-get install -y --only-upgrade --no-install-recommends --no-remove \
+        gzip=1.13-1+deb13u1 \
+        libpcre2-8-0=10.46-1~deb13u2 \
+        libsqlite3-0=3.46.1-7+deb13u2 && \
     apt-get purge -y --allow-remove-essential --auto-remove perl-base && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "=== pip/setuptools/wheel 제거 (런타임 불필요, msgpack은 pip 내부 vendored) ===" && \
@@ -96,7 +102,11 @@ RUN apt-get update && \
     echo "=== 제거 후 재확인 (여기서 뭔가 나오면 아직 안 지워진 것) ===" && \
     (find / -xdev \( -iname "*msgpack*" -o -iname "*setuptools*" \) 2>/dev/null | grep -v '^/proc' || echo "(흔적 없음 - 제거 성공)") && \
     echo "=== venv 밖에서 python3가 여전히 정상 동작하는지 확인 ===" && \
-    python3 --version
+    python3 --version && \
+    test "$(dpkg-query -W -f='${Version}' gzip)" = '1.13-1+deb13u1' && \
+    test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = '10.46-1~deb13u2' && \
+    test "$(dpkg-query -W -f='${Version}' libsqlite3-0)" = '3.46.1-7+deb13u2' && \
+    /app/.venv/bin/python -c "import sys, sqlite3, ssl, fastapi, sqlalchemy, asyncmy; assert sys.version_info[:3] == (3, 13, 15); print(sqlite3.sqlite_version); print(ssl.OPENSSL_VERSION)"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
