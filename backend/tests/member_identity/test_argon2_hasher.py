@@ -1,6 +1,10 @@
 import pytest
 
-from seokpan.security import Argon2Parameters, Argon2PasswordHasher
+from seokpan.security import (
+    PRODUCTION_ARGON2_PARAMETERS,
+    Argon2Parameters,
+    Argon2PasswordHasher,
+)
 
 
 def test_argon2id_hash_verify_and_rehash_boundary() -> None:
@@ -28,6 +32,18 @@ def test_argon2_provider_reports_rehash_when_parameters_change() -> None:
 def test_argon2_parameters_are_explicit() -> None:
     parameters = Argon2Parameters(time_cost=1, memory_cost_kib=1024, parallelism=1)
     assert parameters == Argon2Parameters(1, 1024, 1, 32, 16)
+
+
+def test_production_parameters_match_linux_measurement() -> None:
+    assert (
+        Argon2Parameters(
+            time_cost=3,
+            memory_cost_kib=64 * 1024,
+            parallelism=1,
+        )
+        == PRODUCTION_ARGON2_PARAMETERS
+    )
+    assert PRODUCTION_ARGON2_PARAMETERS.memory_cost_kib > 8 * 1024
 
 
 def test_argon2_parameter_validation_rejects_unsafe_shape() -> None:

@@ -52,12 +52,12 @@ class StreamAccess:
                 raise SessionTransitionUnavailable
             return StreamAccessState.EXPIRED if current is None else StreamAccessState.ALLOWED
         for _ in range(3):
-            binding = self._rooms.participant_identity(self._participant_id)
+            binding = await self._rooms.resolve_participant_identity(self._participant_id)
             if binding is None or binding.room_id != self._room_id:
                 return StreamAccessState.LEFT
             current = await self._identity.sessions.find(binding.session_digest)
             # A completed Guest login may have replaced the digest during the read.
-            if self._rooms.participant_identity(self._participant_id) != binding:
+            if await self._rooms.resolve_participant_identity(self._participant_id) != binding:
                 continue
             if current is None:
                 if binding.session_digest != self._session.session_digest:

@@ -19,6 +19,7 @@ from seokpan.api.statistics import StatisticsApiServices, statistics_router
 from seokpan.clock import MillisecondClock
 from seokpan.game.application import GameApplicationService, TurnResolutionRunner
 from seokpan.game.application.resolution import DueTurnSource, TieSelector
+from seokpan.health import RuntimeReadiness
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
     AuthSessionService,
@@ -159,10 +160,97 @@ def build_headless_services(
     )
 
 
+def build_production_services(settings: Settings, providers: object) -> ApplicationServices:
+    """Compose only concrete MariaDB/Redis providers; performs no external I/O."""
+
+    from seokpan.persistence.redis import (
+        RedisRoomParticipationResolver,
+        RedisSessionWorkflow,
+        RedisTurnCoordinator,
+    )
+    from seokpan.production import ProductionProviders
+
+    if settings.environment != "production" or not isinstance(providers, ProductionProviders):
+        raise RuntimeError("Production providers are required")
+    resolver = RedisRoomParticipationResolver(providers.rooms, providers.sessions)
+    room_service = RoomApplicationService(
+        providers.rooms,
+        providers.room_passwords,
+        providers.realtime,
+        providers.votes,
+        resolver,
+    )
+    sessions = AuthSessionService(
+        RedisSessionWorkflow(providers.sessions, room_service),
+        providers.tokens,
+    )
+    members = MemberIdentityService(
+        providers.identities,
+        providers.passwords,
+        dummy_password_hash=providers.passwords.hash(providers.tokens.issue()),
+    )
+    identity_api = IdentityApiServices(settings, members, sessions, room_service)
+    room_api = RoomApiServices(identity_api, room_service)
+    game_service = GameApplicationService(
+        rooms=room_service,
+        games=providers.games,
+        votes=providers.votes,
+        clock=providers.clock,
+        events=providers.realtime,
+    )
+    game_api = GameApiServices(identity_api, game_service)
+    registry = ActiveWebSocketRegistry()
+    connections = RoomConnectionCoordinator(
+        rooms=room_service,
+        votes=providers.votes,
+        clock=providers.clock,
+    )
+    turn_coordinator = RedisTurnCoordinator(
+        providers.redis_client,
+        providers.rooms,
+        providers.votes,
+        providers.games,
+    )
+    return ApplicationServices(
+        identity_api=identity_api,
+        room_api=room_api,
+        game_api=game_api,
+        realtime_api=RealtimeApiServices(
+            identity_api,
+            room_api,
+            game_api,
+            providers.realtime,
+            connections,
+            registry,
+        ),
+        disconnect_expiry=DisconnectExpiryRunner(
+            due_disconnects=providers.rooms,
+            connections=connections,
+            clock=providers.clock,
+        ),
+        turn_resolution=TurnResolutionRunner(
+            due_turns=turn_coordinator,
+            finalization_gate=turn_coordinator,
+            tie_selector=turn_coordinator,
+            tie_audit=turn_coordinator,
+            votes=providers.votes,
+            games=providers.games,
+            rooms=providers.rooms,
+            clock=providers.clock,
+            runner_id=settings.instance_id,
+            events=providers.realtime,
+        ),
+        statistics_api=StatisticsApiServices(identity_api, providers.statistics),
+        chat_api=ChatApiServices(identity_api, room_service, providers.chat, registry),
+        presence_api=PresenceApiServices(identity_api, providers.presence, registry),
+    )
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     services: ApplicationServices | None = None,
+    readiness: RuntimeReadiness | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     resolved_services = services or build_headless_services(resolved_settings)
@@ -205,7 +293,17 @@ def create_app(
     if resolved_services.presence_api is not None:
         application.include_router(presence_router(resolved_services.presence_api))
     application.state.services = resolved_services
+    application.state.readiness = readiness
     return application
 
 
-app = create_app()
+def create_runtime_app(settings: Settings | None = None) -> FastAPI:
+    resolved = settings or Settings()
+    if resolved.environment != "production":
+        return create_app(settings=resolved)
+    from seokpan.production_app import create_production_app
+
+    return create_production_app(resolved)
+
+
+app = create_runtime_app()

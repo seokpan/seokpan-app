@@ -36,7 +36,7 @@ class IdentityApiServices:
 
 
 class SessionParticipationLookup(Protocol):
-    def current_room(self, session_digest: str) -> tuple[str, str] | None: ...
+    async def resolve_current_room(self, session_digest: str) -> tuple[str, str] | None: ...
 
 
 class IssuedSessionResponse(BaseModel):
@@ -306,7 +306,7 @@ async def _current_response(
     participation = (
         None
         if services.participations is None
-        else services.participations.current_room(current.session_digest)
+        else await services.participations.resolve_current_room(current.session_digest)
     )
     return CurrentSessionResponse(
         actor_type=current.actor_type,

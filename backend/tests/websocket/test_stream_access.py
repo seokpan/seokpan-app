@@ -54,6 +54,9 @@ class Binding:
     def participant_identity(self, _participant_id: str) -> RoomParticipation | None:
         return self.value
 
+    async def resolve_participant_identity(self, _participant_id: str) -> RoomParticipation | None:
+        return self.value
+
     async def change_identity(self, previous: SessionRecord, replacement: CreateSession) -> None:
         self.entered.set()
         await self.release.wait()

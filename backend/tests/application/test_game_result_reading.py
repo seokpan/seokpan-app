@@ -72,12 +72,16 @@ async def test_start_requires_complete_room_result(
     room_missing: bool, roster_missing: bool
 ) -> None:
     service, rooms, _, _ = await setup_result()
-    rooms.start_game = AsyncMock(
-        return_value=SimpleNamespace(
+
+    async def start_game(**values: object) -> object:
+        if values["expected_state_version"] == 9:
+            raise RoomRuleViolation("REQUEST_ID_CONFLICT")
+        return SimpleNamespace(
             snapshot=None if room_missing else rooms.get.return_value,
             start_roster=None if roster_missing else object(),
         )
-    )
+
+    rooms.start_game = AsyncMock(side_effect=start_game)
     with pytest.raises(RoomRuleViolation, match="GAME_START_RESULT_INVALID"):
         await service.start_game(
             session=SESSION, room_id=ROOM, request_id="start", expected_state_version=8
@@ -162,6 +166,12 @@ async def setup_result() -> tuple[
         BLACK,
         SESSION.actor_type,
         SESSION.actor_id,
+    )
+    rooms.resolve_participation = AsyncMock(
+        side_effect=lambda session_digest: rooms.participation(session_digest)
+    )
+    rooms.resolve_participant_identity = AsyncMock(
+        side_effect=lambda participant_id: rooms.participant_identity(participant_id)
     )
     rooms.get = AsyncMock(
         return_value=RoomRuntimeSnapshot(

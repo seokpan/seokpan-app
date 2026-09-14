@@ -88,6 +88,7 @@ local function save(result)
   result.ok = true
   result.error = cjson.null
   result.replayed = false
+  result.operation_at_ms = current_ms
   redis.call('HSET', KEYS[5], request_id, cjson.encode({
     fingerprint = fingerprint,
     result = result
@@ -293,15 +294,20 @@ if operation == 'change_team' then
 end
 
 if operation == 'change_identity' then
-  if current_participant.actor_type == payload.actor_type then
-    return save({snapshot = snapshot()})
-  end
-  if current_participant.actor_type ~= 'GUEST' or payload.actor_type ~= 'MEMBER' then
+  local raw_connection = redis.call('HGET', KEYS[4], payload.participant_id)
+  if not raw_connection then return rejection('CONNECTION_NOT_FOUND') end
+  local connection = cjson.decode(raw_connection)
+  if current_participant.actor_type ~= payload.actor_type and
+     (current_participant.actor_type ~= 'GUEST' or payload.actor_type ~= 'MEMBER') then
     return rejection('ROOM_IDENTITY_CHANGE_NOT_ALLOWED')
   end
+  local actor_changed = current_participant.actor_type ~= payload.actor_type
   current_participant.actor_type = payload.actor_type
   store_participant(payload.participant_id, current_participant)
-  advance_version()
+  local changed = connection.session_digest ~= payload.session_digest
+  connection.session_digest = payload.session_digest
+  redis.call('HSET', KEYS[4], payload.participant_id, cjson.encode(connection))
+  if changed or actor_changed then advance_version() end
   return save({snapshot = snapshot()})
 end
 

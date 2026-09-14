@@ -217,6 +217,11 @@ class InMemoryRoomRuntimeAdapter:
             participant_id=command.participant_id,
             actor_type=command.actor_type,
         )
+        connection = self._require_connection(state, command.participant_id)
+        state.connections[command.participant_id] = replace(
+            connection,
+            session_digest=command.session_digest,
+        )
         return self._remember_result(command, state)
 
     async def set_ready(self, command: SetRoomReady) -> RoomMutationResult:
@@ -506,6 +511,8 @@ class InMemoryRoomRuntimeAdapter:
         command: _RoomCommand,
         result: RoomMutationResult,
     ) -> RoomMutationResult:
+        if result.operation_at_ms is None:
+            result = replace(result, operation_at_ms=self._clock.now_ms)
         self._requests[(command.room_id, command.request_id)] = _CachedResult(
             result=result,
             expires_at_ms=self._clock.now_ms + ROOM_REQUEST_DEDUPE_TTL_MS,

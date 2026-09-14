@@ -26,6 +26,15 @@ class Argon2Parameters:
             raise ValueError("Argon2 hash_len or salt_len is too small")
 
 
+# Measured in the pinned Backend Linux image on worker-02 with a 1 CPU/512 MiB
+# benchmark envelope (2026-09-14): hash median 110.186 ms, verify 110.034 ms.
+PRODUCTION_ARGON2_PARAMETERS = Argon2Parameters(
+    time_cost=3,
+    memory_cost_kib=64 * 1024,
+    parallelism=1,
+)
+
+
 class Argon2PasswordHasher:
     """Argon2id provider with no implicit production cost defaults."""
 

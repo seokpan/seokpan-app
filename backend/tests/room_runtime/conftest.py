@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
@@ -56,6 +57,33 @@ class EmulatedRoomRedisClient:
 
     async def get(self, key: str) -> None:
         return None
+
+    async def scan_iter(self, *, match: str, count: int) -> AsyncIterator[bytes]:
+        assert match in {
+            "stone:v1:room:{*}:meta",
+            "stone:v1:room:{*}:connections",
+        }
+        assert count == 100
+        suffix = "meta" if match.endswith(":meta") else "connections"
+        for room in await self.store.list_rooms():
+            yield f"stone:v1:room:{{{room.room_id}}}:{suffix}".encode()
+
+    async def hgetall(self, key: str) -> dict[bytes, bytes]:
+        room_id = self._room_id(key)
+        state = self.store._rooms.get(room_id)
+        if state is None:
+            return {}
+        return {
+            participant_id.encode(): self._encode(
+                {
+                    "session_digest": connection.session_digest,
+                    "generation": connection.generation,
+                    "connected": connection.connected,
+                    "disconnect_expires_at_ms": connection.disconnect_expires_at_ms,
+                }
+            )
+            for participant_id, connection in state.connections.items()
+        }
 
     async def evalsha(
         self,
@@ -162,6 +190,7 @@ class EmulatedRoomRedisClient:
                     request_id,
                     str(payload["participant_id"]),
                     ActorType(str(payload["actor_type"])),
+                    str(payload["session_digest"]),
                     int(str(payload["expected_state_version"])),
                 )
             )
@@ -271,6 +300,7 @@ class EmulatedRoomRedisClient:
                     "disconnect_expires_at_ms": result.disconnect_expires_at_ms,
                     "stale_connection": result.stale_connection,
                     "vote_removed": result.vote_removed,
+                    "operation_at_ms": result.operation_at_ms,
                     "departure": (
                         None
                         if result.departure is None
