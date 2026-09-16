@@ -37,18 +37,16 @@ Application은 **MariaDB를 영속 데이터의 권위 저장소**, **Redis를 R
 
 ## Repository Structure
 
+현재 Application Repository의 주요 구조는 다음과 같습니다.
+
 ```text
 seokpan-app/
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   └── pull_request_template.md
 │
-├── docs/
-│   └── mvp-implementation-baseline.md
-│
 ├── backend/
 │   ├── src/
-│   │   └── seokpan/
 │   ├── tests/
 │   ├── docs/
 │   ├── migrations/
@@ -60,18 +58,34 @@ seokpan-app/
 │
 ├── frontend/
 │   ├── src/
-│   ├── tests/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   ├── package.json
 │   ├── package-lock.json
 │   └── README.md
 │
+├── docs/
+│   ├── mvp-implementation-baseline.md
+│   ├── ci-verification.md
+│   └── a09-image-acceptance.md
+│
+├── Jenkinsfile
+├── Jenkinsfile.image-pipeline
 ├── .editorconfig
 ├── .gitattributes
 ├── .gitignore
 └── README.md
 ```
+
+각 Application 영역의 세부 구조와 구현 문서는 다음 위치를 기준으로 관리합니다.
+
+* `backend/` — Backend Application 및 관련 테스트 / Migration / 문서
+* `frontend/` — Frontend Application 및 관련 설정 / 테스트
+* `docs/` — Application 구현 기준 및 CI / Image 검증 문서
+* `Jenkinsfile` — Application CI Pipeline
+* `Jenkinsfile.image-pipeline` — Image Build / Scan / Digest Evidence Pipeline
+
+세부 파일 구조는 구현 변경에 따라 달라질 수 있으므로, 본 README에서는 Repository의 주요 책임과 구조를 중심으로 설명합니다.
 
 ---
 
@@ -410,7 +424,7 @@ Redis 상태가 변경되더라도 공식 영속 데이터와의 책임 경계�
 
 # Implementation Progress
 
-Application 구현은 단계적으로 진행합니다.
+Application 구현은 다음 단계로 진행되었습니다.
 
 ```text
 A-01  MVP Implementation Baseline
@@ -455,15 +469,34 @@ A-09  Container / Jenkins
 A-10  Provider / GitOps Integration
 ```
 
-현재 `main`은 Pure Domain, MariaDB / Redis Adapter, HTTP / WebSocket 흐름과 Headless First Success까지 구현이 진행된 상태입니다.
+현재 `main`은 **A-10 Provider / GitOps Integration까지 구현된 상태**입니다.
 
-실제 MariaDB / Redis / Kubernetes Provider 검증과 Application Runtime 통합은 별도의 Integration Gate로 구분합니다.
+현재까지 다음 범위가 구현 및 검증되었습니다.
+
+* Pure Domain 구현
+* MariaDB / Redis Adapter 및 Production Provider 구성
+* HTTP / WebSocket 흐름 구현
+* Headless First Success 검증
+* Frontend First Success
+* Container / Jenkins Image Pipeline 구성
+* MariaDB / Redis Production Provider 조립
+* Backend / Frontend 다중 Replica Runtime 구성
+* Kubernetes / Gateway 환경의 기본 Runtime Integration 검증
+
+현재 남은 범위는 다음과 같습니다.
+
+* **#76 서비스 안정화**
+* **#22 신규 빈 DB 환경에서 Migration 재현 검증**
+
+따라서 `Headless First Success`는 초기 Application 내부 흐름을 검증한 단계이며, 현재 `main`의 최종 구현 상태를 의미하지 않습니다.
+
+실제 MariaDB / Redis Provider 및 Kubernetes Runtime Integration은 Headless 검증 이후 진행된 별도의 Integration 단계로 구분합니다.
 
 ---
 
 # Headless First Success
 
-현재 Application의 Headless 검증은 Browser 없이 Backend의 전체 흐름을 검증하는 단계입니다.
+`Headless First Success`는 Browser 없이 Backend의 전체 Application 흐름을 검증한 단계입니다.
 
 ```text
 Session
@@ -483,17 +516,19 @@ Game Result
 Next Game
 ```
 
-이 검증은 Application 내부의 Domain / Application / Fake Provider 연결을 확인하기 위한 것입니다.
+이 검증은 Application 내부의 Domain / Application / Provider 연결을 확인하기 위한 초기 검증 단계입니다.
 
-따라서:
+따라서 다음 두 검증은 동일한 단계로 취급하지 않습니다.
 
 ```text
-Fake Provider Success
+Headless / Fake Provider Success
         ≠
 Real Provider Integration Success
 ```
 
-실제 MariaDB, Redis, Kubernetes, Gateway 환경의 First Success는 별도의 Integration 단계에서 검증합니다.
+현재 `main`에서는 Headless First Success 이후 실제 MariaDB / Redis Production Provider와 Kubernetes / Gateway Runtime Integration까지 진행되었습니다.
+
+즉, `Headless First Success`는 전체 구현의 종료 지점이 아니라 **Application 내부 흐름을 최초로 검증한 단계**로 구분합니다.
 
 ---
 
@@ -526,7 +561,7 @@ Migration은 일반 Backend Startup 과정에서 자동 실행하지 않습니�
 
 # CI/CD Integration
 
-Application의 CI/CD는 다음 흐름으로 연결됩니다.
+Application의 CI/CD 흐름은 다음과 같이 구성합니다.
 
 ```text
 Git Commit
@@ -537,26 +572,46 @@ Jenkins
     ├── Backend Test
     ├── Frontend Test
     ├── Image Build
-    │
-    ▼
-Harbor
-    │
-    ▼
-Image Digest
-    │
-    ▼
-seokpan-gitops
-    │
-    ▼
-Argo CD
-    │
-    ▼
-Kubernetes
+    ├── Image Scan
+    └── Image / Digest Evidence
+             │
+             ▼
+       GitOps 변경
+      (별도 승인된 작업)
+             │
+             ▼
+       seokpan-gitops
+             │
+             ▼
+          Argo CD
+             │
+             ▼
+        Kubernetes
 ```
 
-Application Repository는 **Cluster에 직접 배포하는 책임을 가지지 않습니다.**
+Application Repository의 Jenkins Pipeline은 다음 범위까지 담당합니다.
 
-Jenkins Pipeline의 최종 배포 산출물은 GitOps 변경으로 연결하고, 실제 Cluster 적용은 Argo CD가 담당합니다.
+* Application Test
+* Container Image Build
+* Image Scan
+* Image Promotion
+* Image Digest 검증
+* 검증된 Image / Digest Evidence 생성
+
+`Jenkinsfile.image-pipeline`은 **GitOps Repository의 Branch / Manifest / Commit / Push / PR을 직접 생성하지 않으며, Kubernetes Cluster를 직접 변경하지 않습니다.**
+
+검증된 Image / Digest를 기반으로 한 Kubernetes Desired State 변경은 별도의 승인된 GitOps 작업에서 수행합니다.
+
+`seokpan-gitops`는 Kubernetes의 Desired State를 관리하며, **Argo CD가 GitOps Repository의 Desired State를 Kubernetes Cluster에 적용**합니다.
+
+따라서 Application Repository, GitOps Repository, Argo CD의 책임을 다음과 같이 구분합니다.
+
+| 구성 요소            | 주요 책임                                        |
+| ---------------- | -------------------------------------------- |
+| `seokpan-app`    | Application Source 및 Container Image         |
+| Jenkins          | Test / Build / Scan / Image-Digest Evidence  |
+| `seokpan-gitops` | Kubernetes Desired State                     |
+| Argo CD          | GitOps Desired State → Kubernetes Cluster 적용 |
 
 ---
 
@@ -653,7 +708,9 @@ Application 세부 구현은 각 영역의 문서를 참고합니다.
 
 ```text
 docs/
-└── mvp-implementation-baseline.md
+├── mvp-implementation-baseline.md
+├── ci-verification.md
+└── a09-image-acceptance.md
 
 backend/docs/
 ├── member-identity.md
@@ -734,25 +791,10 @@ Host / VM / Network / Kubernetes Bootstrap 및 Infrastructure Automation
 
 `seokpan-gitops`
 
-Kubernetes Desired State와 Argo CD 배포 구성
+Kubernetes Desired State 및 Argo CD 기반 배포 상태 관리
 
 ### Documentation
 
 `seokpan-docs`
 
-프로젝트 요구사항, Logical / Physical Architecture, 설계 결정 및 변경 이력
-
----
-
-# Current Principle
-
-Application 구현에서는 다음 원칙을 유지합니다.
-
-1. **Domain과 Provider를 분리합니다.**
-2. **MariaDB와 Redis의 책임을 분리합니다.**
-3. **HTTP와 WebSocket의 책임을 분리합니다.**
-4. **Fake Provider 검증과 실제 Provider 검증을 구분합니다.**
-5. **Application Source와 Kubernetes Desired State를 분리합니다.**
-6. **Migration Credential과 Runtime Credential을 분리합니다.**
-7. **GitOps Repository를 통한 Kubernetes 배포를 사용합니다.**
-8. **검증되지 않은 Runtime 통합을 완료 상태로 표시하지 않습니다.**
+Project-wide Architecture / Design / 기술 문서 관리
