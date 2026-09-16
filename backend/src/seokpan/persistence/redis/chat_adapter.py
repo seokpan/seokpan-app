@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import math
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
@@ -44,27 +45,44 @@ class _RedisChatSubscription:
         self._closed = False
         self._receiving = False
         self._close_reason = "CLOSED"
+        self._pubsub_closed = False
         self._reader = asyncio.create_task(self._read())
 
     async def receive(self) -> ChatMessage:
         if self._receiving:
             raise ChatDeliveryUnavailable("CHAT_RECEIVER_ALREADY_WAITING")
         if self._closed:
-            raise ChatSubscriptionClosed("CLOSED")
+            raise ChatSubscriptionClosed(self._close_reason)
         self._receiving = True
         try:
             message = await self._queue.get()
-            if message is None:
+            if self._closed or message is None:
                 raise ChatSubscriptionClosed(self._close_reason)
             return message
         finally:
             self._receiving = False
 
     async def close(self) -> None:
-        if self._closed:
-            return
         self._stop("CLOSED")
-        self._reader.cancel()
+
+        reader = self._reader
+        if reader is asyncio.current_task():
+            return
+
+        if not reader.done():
+            reader.cancel()
+
+        caller = asyncio.current_task()
+        cancelling_before = caller.cancelling() if caller is not None else 0
+
+        try:
+            await asyncio.shield(reader)
+        except asyncio.CancelledError:
+            if caller is not None and caller.cancelling() > cancelling_before:
+                raise
+            if not reader.cancelled():
+                raise
+
         await self._close_pubsub()
 
     async def _read(self) -> None:
@@ -80,10 +98,13 @@ class _RedisChatSubscription:
                     self._queue.put_nowait(_message(item.get("data")))
                 except asyncio.QueueFull:
                     self._stop("SLOW_CONSUMER")
-        except RedisError:
+        except (ChatDeliveryUnavailable, RedisError):
             self._stop("UNAVAILABLE")
         finally:
-            await self._close_pubsub()
+            # close() performs the final cleanup attempt and reports
+            # failure if Pub/Sub still cannot be closed.
+            with suppress(RedisError):
+                await self._close_pubsub()
 
     def _stop(self, reason: str) -> None:
         if self._closed:
@@ -95,10 +116,10 @@ class _RedisChatSubscription:
         self._queue.put_nowait(None)
 
     async def _close_pubsub(self) -> None:
-        try:
-            await self._pubsub.aclose()  # type: ignore[no-untyped-call]
-        except RedisError:
+        if self._pubsub_closed:
             return
+        await self._pubsub.aclose()  # type: ignore[no-untyped-call]
+        self._pubsub_closed = True
 
 
 class RedisChatAdapter:
