@@ -25,6 +25,7 @@ from seokpan.identity.application import (
     AuthSessionService,
     MemberIdentityService,
 )
+from seokpan.metrics import install_metrics
 from seokpan.persistence.memory import (
     InMemoryDueTurnSource,
     InMemoryGamePersistenceAdapter,
@@ -277,6 +278,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    install_metrics(application)
     install_problem_handlers(application)
     application.include_router(health_router)
     application.include_router(identity_router(resolved_services.identity_api))
