@@ -30,20 +30,22 @@ async def _run_background_services(
     if disconnects is None or turns is None:
         readiness.mark_not_ready()
         raise RuntimeError("PRODUCTION_RUNNERS_REQUIRED")
-    try:
-        while True:
+    while True:
+        try:
             await disconnects.run_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("Production disconnect expiry iteration failed")
+
+        try:
             await turns.run_once()
-            await asyncio.sleep(0.1)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        readiness.mark_not_ready()
-        realtime = services.realtime_api
-        if realtime is not None:
-            realtime.registry.end_runtime()
-        _LOGGER.error("Production background runner stopped")
-        raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("Production turn resolution iteration failed")
+
+        await asyncio.sleep(0.1)
 
 
 class _RuntimeDispatch:
