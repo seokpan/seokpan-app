@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import math
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
@@ -100,7 +101,10 @@ class _RedisChatSubscription:
         except (ChatDeliveryUnavailable, RedisError):
             self._stop("UNAVAILABLE")
         finally:
-            await self._close_pubsub()
+            # close() performs the final cleanup attempt and reports
+            # failure if Pub/Sub still cannot be closed.
+            with suppress(RedisError):
+                await self._close_pubsub()
 
     def _stop(self, reason: str) -> None:
         if self._closed:
@@ -114,10 +118,7 @@ class _RedisChatSubscription:
     async def _close_pubsub(self) -> None:
         if self._pubsub_closed:
             return
-        try:
-            await self._pubsub.aclose()  # type: ignore[no-untyped-call]
-        except RedisError:
-            return
+        await self._pubsub.aclose()  # type: ignore[no-untyped-call]
         self._pubsub_closed = True
 
 

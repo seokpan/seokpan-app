@@ -402,6 +402,56 @@ async def test_close_is_idempotent() -> None:
     assert pubsub.close_calls == 1
 
 
+class FailingClosePubSub(ControlledPubSub):
+    def __init__(self, *, failures: int) -> None:
+        super().__init__(b"{}")
+        self.failures = failures
+        self.close_calls = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        if self.close_calls <= self.failures:
+            raise RedisError("pubsub close failed")
+        await super().aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_retries_pubsub_cleanup_after_reader_cleanup_failure() -> None:
+    pubsub = FailingClosePubSub(failures=1)
+    subscription = _RedisChatSubscription(
+        cast(PubSub, pubsub),
+        max_queue_size=1,
+    )
+
+    await asyncio.wait_for(pubsub.requested.wait(), timeout=1.0)
+
+    await subscription.close()
+
+    assert subscription._reader.done()
+    assert pubsub.closed.is_set()
+    assert pubsub.close_calls == 2
+    assert subscription._pubsub_closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_reports_pubsub_cleanup_failure() -> None:
+    pubsub = FailingClosePubSub(failures=2)
+    subscription = _RedisChatSubscription(
+        cast(PubSub, pubsub),
+        max_queue_size=1,
+    )
+
+    await asyncio.wait_for(pubsub.requested.wait(), timeout=1.0)
+
+    with pytest.raises(RedisError, match="pubsub close failed"):
+        await subscription.close()
+
+    assert subscription._reader.done()
+    assert not pubsub.closed.is_set()
+    assert pubsub.close_calls == 2
+    assert subscription._pubsub_closed is False
+
+
 class SingleMessagePubSub:
     def __init__(self, data: object) -> None:
         self.data = data
