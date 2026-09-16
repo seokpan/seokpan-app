@@ -175,6 +175,7 @@ async def test_invalid_pubsub_message_closes_waiting_receive() -> None:
         if subscription._reader.done() and not subscription._reader.cancelled():
             subscription._reader.exception()
 
+
 @pytest.mark.asyncio
 async def test_close_preserves_unavailable_reason() -> None:
     pubsub = ControlledPubSub(b"{}")
