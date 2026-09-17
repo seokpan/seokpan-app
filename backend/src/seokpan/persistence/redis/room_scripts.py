@@ -270,7 +270,7 @@ if operation == 'join' then
 end
 
 local current_participant = participant(payload.participant_id or payload.actor_id)
-if not current_participant and operation ~= 'kick' then
+if not current_participant and operation ~= 'kick' and operation ~= 'complete_game' then
   if operation == 'disconnect' or operation == 'expire_disconnect' then
     return rejection('CONNECTION_NOT_FOUND')
   end
