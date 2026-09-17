@@ -472,6 +472,8 @@ def _mapping(value: object) -> dict[str, object]:
 
 
 def _list(value: object) -> list[object]:
+    if isinstance(value, dict) and not value:
+        return []
     if not isinstance(value, list):
         raise RedisProviderError("REDIS_RESPONSE_INVALID")
     return cast(list[object], value)
