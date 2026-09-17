@@ -147,7 +147,21 @@ class TurnResolutionRunner:
         if limit < 1:
             raise ValueError("INVALID_DUE_TURN_LIMIT")
         due = await self._due_turns.due_turns(now_ms=self._clock.now_ms, limit=limit)
-        return tuple([await self.process(item) for item in due])
+        results: list[TurnProcessingResult] = []
+        for item in due:
+            try:
+                results.append(await self.process(item))
+            except Exception:
+                _LOGGER.exception(
+                    "Turn resolution item failed",
+                    extra={
+                        "event": "turn_resolution.item_failed",
+                        "room_id": item.room_id,
+                        "game_id": item.game_id,
+                        "turn_no": item.turn_no,
+                    },
+                )
+        return tuple(results)
 
     async def process(self, due_turn: DueTurn) -> TurnProcessingResult:
         snapshot = await self._votes.get(due_turn.room_id)

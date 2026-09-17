@@ -14,6 +14,7 @@ from seokpan.game.application import (
     PersistenceRuleViolation,
     StartGameCommand,
     TurnFinalizationApproval,
+    TurnProcessingResult,
     TurnProcessingStatus,
     TurnResolutionRunner,
 )
@@ -697,3 +698,73 @@ async def test_room_completion_keeps_state_safe_at_recovery_boundaries(
         events.lobby_rooms_changed.assert_not_called()
     # Completion notification does not write persistent results or ratings.
     assert games.results == {}
+
+
+@pytest.mark.asyncio
+async def test_turn_resolution_runner_isolates_item_failure_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = DueTurn("room-a", "game-a", 1)
+    second = DueTurn("room-b", "game-b", 2)
+
+    source = Mock()
+    source.due_turns = AsyncMock(return_value=(first, second))
+
+    runner = TurnResolutionRunner(
+        due_turns=source,
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=Mock(),
+        games=Mock(),
+        rooms=Mock(),
+        clock=ManualClock(),
+        runner_id="runner-isolation",
+    )
+    process = AsyncMock(
+        side_effect=(
+            RuntimeError("simulated turn item failure"),
+            TurnProcessingResult(second, TurnProcessingStatus.STALE),
+        )
+    )
+    log_exception = Mock()
+    monkeypatch.setattr(runner, "process", process)
+    monkeypatch.setattr(
+        "seokpan.game.application.resolution._LOGGER.exception",
+        log_exception,
+    )
+
+    results = await runner.run_once()
+
+    assert results == (TurnProcessingResult(second, TurnProcessingStatus.STALE),)
+    assert process.await_count == 2
+    log_exception.assert_called_once_with(
+        "Turn resolution item failed",
+        extra={
+            "event": "turn_resolution.item_failed",
+            "room_id": first.room_id,
+            "game_id": first.game_id,
+            "turn_no": first.turn_no,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_resolution_runner_propagates_due_source_failure() -> None:
+    source = Mock()
+    source.due_turns = AsyncMock(side_effect=RuntimeError("turn source unavailable"))
+
+    runner = TurnResolutionRunner(
+        due_turns=source,
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=Mock(),
+        games=Mock(),
+        rooms=Mock(),
+        clock=ManualClock(),
+        runner_id="runner-source-failure",
+    )
+
+    with pytest.raises(RuntimeError, match="turn source unavailable"):
+        await runner.run_once()
