@@ -83,20 +83,30 @@ Backend Application 로그는 stdout/stderr에 JSON Line 형식으로 출력한�
 `event=application.log`가 사용될 수 있다. 핵심 안정화 경로의 구체적인
 event/context는 해당 기능 작업에서 단계적으로 추가한다.
 
-### Pod에서 직접 확인
+### Quick Reference
 
-Kubernetes 접근 환경에서는 Backend Pod를 확인한 뒤 다음처럼 조회한다.
+현재 프로젝트의 Ansible inventory와 Vault 설정을 사용하기 위해 다음 명령은
+`seokpan-infra/ansible` 작업 디렉터리에서 실행한다.
 
-    kubectl -n application get pods \
-      -l app.kubernetes.io/name=backend
+Backend Pod 확인:
 
-    kubectl -n application logs <backend-pod> \
-      -c backend \
-      --timestamps \
-      --tail=100
+    cd ~/work/seokpan-infra/ansible && ansible cp-01 --ask-vault-pass -m shell -a 'export KUBECONFIG=/etc/kubernetes/admin.conf; kubectl -n application get pods -l app.kubernetes.io/name=backend -o wide'
 
-현재 프로젝트 운영 환경에서 Kubernetes 명령은 필요 시
-Ansible Controller에서 control-plane을 경유해 실행한다.
+Backend Replica의 최근 로그 확인:
+
+    cd ~/work/seokpan-infra/ansible && ansible cp-01 --ask-vault-pass -m shell -a 'export KUBECONFIG=/etc/kubernetes/admin.conf; kubectl -n application logs -l app.kubernetes.io/name=backend -c backend --tail=100 --prefix=true'
+
+최근 ERROR Application log 빠르게 확인:
+
+    cd ~/work/seokpan-infra/ansible && ansible cp-01 --ask-vault-pass -m shell -a 'export KUBECONFIG=/etc/kubernetes/admin.conf; kubectl -n application logs -l app.kubernetes.io/name=backend -c backend --tail=1000 --prefix=true' | grep -F '"level":"ERROR"'
+
+특정 Event 검색:
+
+    cd ~/work/seokpan-infra/ansible && ansible cp-01 --ask-vault-pass -m shell -a 'export KUBECONFIG=/etc/kubernetes/admin.conf; kubectl -n application logs -l app.kubernetes.io/name=backend -c backend --tail=1000 --prefix=true' | grep -F '"event":"<event-name>"'
+
+특정 Room 검색:
+
+    cd ~/work/seokpan-infra/ansible && ansible cp-01 --ask-vault-pass -m shell -a 'export KUBECONFIG=/etc/kubernetes/admin.conf; kubectl -n application logs -l app.kubernetes.io/name=backend -c backend --tail=1000 --prefix=true' | grep -F '"room_id":"<room-id>"'
 
 ### Grafana / Loki에서 조회
 
@@ -124,7 +134,7 @@ ERROR 로그:
     {namespace="application", container="backend"}
     | json
     | __error__=""
-    | event="game.start.failed"
+    | event="<event-name>"
 
 특정 Room:
 
@@ -156,12 +166,16 @@ ERROR 로그:
 Cookie, Session Token, Authorization header, Password, DB/Redis Credential,
 Secret 또는 검증되지 않은 사용자 입력 원문은 로그에 기록하지 않는다.
 
+Formatter는 Exception value를 자동으로 log payload에 포함하지 않는다.
+다만 호출부에서 Exception 문자열이나 민감정보를 직접 message에 삽입하는 경우까지
+자동 차단하는 것은 아니므로, 호출부에서도 같은 민감정보 제외 기준을 적용한다.
+
 ### Access Log Noise
 
-정상 응답인 다음 반복 Probe access log는 기본 조회 노이즈를 줄이기 위해 억제한다.
+다음 반복 health/metrics 요청의 **HTTP status < 400 access log**는 기본 조회 노이즈를 줄이기 위해 억제한다.
 
 - `/health/live`
 - `/health/ready`
 - `/metrics`
 
-같은 경로라도 오류 응답은 숨기지 않는다.
+동일 endpoint의 `4xx` / `5xx` access log는 유지한다.
