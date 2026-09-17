@@ -73,7 +73,12 @@ class LoadGameSession:
     async def __aexit__(self, *_args: object) -> None:
         return None
 
-    async def get(self, entity: type[object], key: object, **_kwargs: object) -> object | None:
+    async def get(
+        self,
+        entity: type[object],
+        key: object,
+        **_kwargs: object,
+    ) -> object | None:
         if entity is GameRow and key == GAME_ID:
             return self.game
         return None
@@ -135,7 +140,12 @@ class FinalizeSession:
     async def rollback(self) -> None:
         return None
 
-    async def get(self, entity: type[object], key: object, **_kwargs: object) -> object | None:
+    async def get(
+        self,
+        entity: type[object],
+        key: object,
+        **_kwargs: object,
+    ) -> object | None:
         if entity is GameRow and key == GAME_ID:
             return self.game
         if entity is GameResultRow and key == GAME_ID:
@@ -164,7 +174,13 @@ def assert_member_query_uses_only_game_granted_columns(statement: object) -> Non
     sql = str(statement)
     assert "member.member_id" in sql
     assert "member.rating" in sql
-    for forbidden in ("member.login_id", "member.nickname", "member.password_hash", "member.created_at"):
+    forbidden_columns = (
+        "member.login_id",
+        "member.nickname",
+        "member.password_hash",
+        "member.created_at",
+    )
+    for forbidden in forbidden_columns:
         assert forbidden not in sql
 
 
