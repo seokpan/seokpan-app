@@ -146,7 +146,9 @@ def test_production_shell_rejects_missing_mandatory_runner(
 
     monkeypatch.setattr(production_app_module, "production_resources", resources)
     monkeypatch.setattr(production_app_module, "build_production_providers", lambda value: value)
-    monkeypatch.setattr(app_module, "build_production_services", lambda settings, providers: services)
+    monkeypatch.setattr(
+        app_module, "build_production_services", lambda settings, providers: services
+    )
     monkeypatch.setattr(app_module, "create_app", lambda **values: FastAPI())
 
     shell = create_production_app(Settings(environment="production"))
