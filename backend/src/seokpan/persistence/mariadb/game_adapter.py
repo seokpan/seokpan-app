@@ -64,6 +64,10 @@ class MariaDBGamePersistenceAdapter:
                     ended_at=None,
                 )
             )
+            # 수정자: 이유빈
+            # 수정일: 2026-09-16
+            # 수정 내용: GameRow를 GameParticipantRow보다 먼저 flush하도록 변경
+            await session.flush()
             session.add_all(self._participant_rows(command.game_id, command.participants))
             return PersistenceOutcome.CREATED
 

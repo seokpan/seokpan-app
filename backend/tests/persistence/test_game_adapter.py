@@ -332,6 +332,58 @@ async def test_start_game_writes_game_and_member_guest_snapshots_in_one_commit()
     ]
 
 
+# 작성자: 이유빈
+# 작성일자: 2026-09-16
+# 작성 내용: F16 Game Start parent 선행 flush 회귀 검증
+@pytest.mark.asyncio
+async def test_start_game_flushes_parent_before_participant_rows() -> None:
+    class OrderingSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flush_snapshots: list[tuple[type[object], ...]] = []
+
+        async def flush(self) -> None:
+            self.flush_snapshots.append(tuple(type(row) for row in self.added))
+            await super().flush()
+
+    session = OrderingSession()
+    adapter = MariaDBGamePersistenceAdapter(SessionFactory(session))
+
+    outcome = await adapter.start_game(start_command())
+
+    assert outcome is PersistenceOutcome.CREATED
+    assert session.flush_snapshots
+    first_flush = session.flush_snapshots[0]
+    assert GameRow in first_flush
+    assert GameParticipantRow not in first_flush
+
+
+# 작성자: 이유빈
+# 작성일자: 2026-09-16
+# 작성 내용: F16 parent flush 이후 participant flush 실패 시 rollback 회귀 검증
+@pytest.mark.asyncio
+async def test_start_game_rolls_back_when_participant_flush_fails_after_parent_flush() -> None:
+    class SecondFlushFailsSession(FakeSession):
+        async def flush(self) -> None:
+            await super().flush()
+            if self.flush_count == 2:
+                raise SQLAlchemyError("participant flush failed")
+
+    writing = SecondFlushFailsSession()
+    verifying = FakeSession()
+    adapter = MariaDBGamePersistenceAdapter(SessionFactory(writing, verifying))
+
+    with pytest.raises(
+        PersistenceRuleViolation,
+        match="PERSISTENCE_COMMIT_UNCERTAIN",
+    ):
+        await adapter.start_game(start_command())
+
+    assert writing.flush_count == 2
+    assert writing.commit_count == 0
+    assert writing.rollback_count == 1
+
+
 @pytest.mark.asyncio
 async def test_existing_identical_game_start_is_idempotent_but_changed_start_conflicts() -> None:
     command = start_command()
