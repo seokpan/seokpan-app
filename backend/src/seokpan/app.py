@@ -25,6 +25,7 @@ from seokpan.identity.application import (
     AuthSessionService,
     MemberIdentityService,
 )
+from seokpan.logging_config import configure_logging
 from seokpan.metrics import install_metrics
 from seokpan.persistence.memory import (
     InMemoryDueTurnSource,
@@ -301,6 +302,7 @@ def create_app(
 
 def create_runtime_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or Settings()
+    configure_logging(resolved)
     if resolved.environment != "production":
         return create_app(settings=resolved)
     from seokpan.production_app import create_production_app
