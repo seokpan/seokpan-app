@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Mapping
 from functools import partial
 from typing import cast
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,12 +22,15 @@ from seokpan.persistence.memory import (
     ManualClock,
 )
 from seokpan.room.application import (
+    DisconnectExpiryResult,
     DisconnectExpiryRunner,
+    DisconnectExpiryStatus,
+    DueRoomDisconnect,
     RealtimeSubscription,
     RoomApplicationService,
     RoomConnectionCoordinator,
 )
-from seokpan.room.domain import RoomConfig
+from seokpan.room.domain import RoomConfig, RoomRuleViolation
 from seokpan.settings import Settings
 
 ORIGIN = "http://localhost:5173"
@@ -1262,3 +1266,95 @@ def test_event_delivery_failure_does_not_roll_back_completed_http_mutation() -> 
 
     assert snapshot.status_code == 200
     assert snapshot.json()["room_id"] == room["room_id"]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_expiry_runner_isolates_item_failure_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = DueRoomDisconnect("room-a", "participant-a", 1, 1)
+    second = DueRoomDisconnect("room-b", "participant-b", 2, 1)
+
+    source = Mock()
+    source.due_disconnects = AsyncMock(return_value=(first, second))
+    connections = Mock()
+    connections.expire = AsyncMock(
+        side_effect=(
+            RoomRuleViolation("SIMULATED_ITEM_RULE_VIOLATION"),
+            DisconnectExpiryResult(second, DisconnectExpiryStatus.EXPIRED),
+        )
+    )
+    log_exception = Mock()
+    monkeypatch.setattr(
+        "seokpan.room.application.disconnects._LOGGER.exception",
+        log_exception,
+    )
+
+    runner = DisconnectExpiryRunner(
+        due_disconnects=source,
+        connections=connections,
+        clock=ManualClock(),
+    )
+
+    results = await runner.run_once()
+
+    assert results == (DisconnectExpiryResult(second, DisconnectExpiryStatus.EXPIRED),)
+    assert connections.expire.await_count == 2
+    log_exception.assert_called_once_with(
+        "Disconnect expiry item failed",
+        extra={
+            "event": "disconnect_expiry.item_failed",
+            "room_id": first.room_id,
+            "participant_id": first.participant_id,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_disconnect_expiry_runner_propagates_due_source_failure() -> None:
+    source = Mock()
+    source.due_disconnects = AsyncMock(side_effect=RuntimeError("disconnect source unavailable"))
+    connections = Mock()
+    connections.expire = AsyncMock()
+
+    runner = DisconnectExpiryRunner(
+        due_disconnects=source,
+        connections=connections,
+        clock=ManualClock(),
+    )
+
+    with pytest.raises(RuntimeError, match="disconnect source unavailable"):
+        await runner.run_once()
+
+    connections.expire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_expiry_runner_propagates_item_provider_failure() -> None:
+    due = DueRoomDisconnect("room-a", "participant-a", 1, 1)
+
+    source = Mock()
+    source.due_disconnects = AsyncMock(return_value=(due,))
+
+    votes = Mock()
+    votes.get = AsyncMock(side_effect=RuntimeError("vote provider unavailable"))
+
+    rooms = Mock()
+    rooms.expire_disconnect = AsyncMock()
+
+    coordinator = RoomConnectionCoordinator(
+        rooms=rooms,
+        votes=votes,
+        clock=ManualClock(),
+    )
+    runner = DisconnectExpiryRunner(
+        due_disconnects=source,
+        connections=coordinator,
+        clock=ManualClock(),
+    )
+
+    with pytest.raises(RuntimeError, match="vote provider unavailable"):
+        await runner.run_once()
+
+    votes.get.assert_awaited_once_with(due.room_id)
+    rooms.expire_disconnect.assert_not_awaited()

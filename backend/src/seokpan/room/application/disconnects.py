@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -12,6 +13,8 @@ from seokpan.room.application.runtime import DueRoomDisconnect, DueRoomDisconnec
 from seokpan.room.domain import RoomRuleViolation
 from seokpan.vote.application import VoteRuntimePort
 from seokpan.vote.domain import TurnStatus
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MillisecondClock(Protocol):
@@ -119,4 +122,17 @@ class DisconnectExpiryRunner:
             now_ms=self._clock.now_ms,
             limit=limit,
         )
-        return tuple([await self._connections.expire(item) for item in due])
+        results: list[DisconnectExpiryResult] = []
+        for item in due:
+            try:
+                results.append(await self._connections.expire(item))
+            except RoomRuleViolation:
+                _LOGGER.exception(
+                    "Disconnect expiry item failed",
+                    extra={
+                        "event": "disconnect_expiry.item_failed",
+                        "room_id": item.room_id,
+                        "participant_id": item.participant_id,
+                    },
+                )
+        return tuple(results)
