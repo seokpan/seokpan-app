@@ -71,9 +71,27 @@ class ImpactContractTests(unittest.TestCase):
             changed = target.changed_paths(repo, old, new, ("backend/src",))
             self.assertEqual(changed, ["backend/src/app.py"])
 
-    def test_component_contract_excludes_backend_docs(self) -> None:
-        self.assertIn("backend/src", target.COMPONENT_PATHS["backend"])
-        self.assertNotIn("backend/docs", target.COMPONENT_PATHS["backend"])
+    def test_backend_contract_tracks_runtime_image_inputs_only(self) -> None:
+        paths = target.COMPONENT_PATHS["backend"]
+        self.assertIn("backend/Dockerfile", paths)
+        self.assertIn("backend/.dockerignore", paths)
+        self.assertIn("backend/src", paths)
+        self.assertIn("backend/migrations", paths)
+        self.assertNotIn("backend/docs", paths)
+        self.assertNotIn("backend/tests", paths)
+
+    def test_frontend_contract_tracks_production_build_inputs_only(self) -> None:
+        paths = target.COMPONENT_PATHS["frontend"]
+        self.assertIn("frontend/Dockerfile", paths)
+        self.assertIn("frontend/.dockerignore", paths)
+        self.assertIn("frontend/package-lock.json", paths)
+        self.assertIn("frontend/src", paths)
+        self.assertIn("frontend/vite.config.ts", paths)
+        self.assertIn("frontend/nginx.conf", paths)
+        self.assertNotIn("frontend/docs", paths)
+        self.assertNotIn("frontend/e2e", paths)
+        self.assertNotIn("frontend/playwright.config.ts", paths)
+        self.assertNotIn("frontend/vitest.ci.config.ts", paths)
 
 
 class PullRequestBodyTests(unittest.TestCase):
