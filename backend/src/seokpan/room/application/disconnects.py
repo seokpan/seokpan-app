@@ -126,7 +126,7 @@ class DisconnectExpiryRunner:
         for item in due:
             try:
                 results.append(await self._connections.expire(item))
-            except Exception:
+            except RoomRuleViolation:
                 _LOGGER.exception(
                     "Disconnect expiry item failed",
                     extra={

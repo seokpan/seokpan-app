@@ -30,7 +30,7 @@ from seokpan.room.application import (
     RoomApplicationService,
     RoomConnectionCoordinator,
 )
-from seokpan.room.domain import RoomConfig
+from seokpan.room.domain import RoomConfig, RoomRuleViolation
 from seokpan.settings import Settings
 
 ORIGIN = "http://localhost:5173"
@@ -1280,7 +1280,7 @@ async def test_disconnect_expiry_runner_isolates_item_failure_and_continues(
     connections = Mock()
     connections.expire = AsyncMock(
         side_effect=(
-            RuntimeError("simulated disconnect item failure"),
+            RoomRuleViolation("SIMULATED_ITEM_RULE_VIOLATION"),
             DisconnectExpiryResult(second, DisconnectExpiryStatus.EXPIRED),
         )
     )
@@ -1327,3 +1327,34 @@ async def test_disconnect_expiry_runner_propagates_due_source_failure() -> None:
         await runner.run_once()
 
     connections.expire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_expiry_runner_propagates_item_provider_failure() -> None:
+    due = DueRoomDisconnect("room-a", "participant-a", 1, 1)
+
+    source = Mock()
+    source.due_disconnects = AsyncMock(return_value=(due,))
+
+    votes = Mock()
+    votes.get = AsyncMock(side_effect=RuntimeError("vote provider unavailable"))
+
+    rooms = Mock()
+    rooms.expire_disconnect = AsyncMock()
+
+    coordinator = RoomConnectionCoordinator(
+        rooms=rooms,
+        votes=votes,
+        clock=ManualClock(),
+    )
+    runner = DisconnectExpiryRunner(
+        due_disconnects=source,
+        connections=coordinator,
+        clock=ManualClock(),
+    )
+
+    with pytest.raises(RuntimeError, match="vote provider unavailable"):
+        await runner.run_once()
+
+    votes.get.assert_awaited_once_with(due.room_id)
+    rooms.expire_disconnect.assert_not_awaited()

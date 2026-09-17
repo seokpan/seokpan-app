@@ -16,7 +16,14 @@ from seokpan.game.application.persistence import (
     OfficialMoveRecord,
     PersistenceRuleViolation,
 )
-from seokpan.game.domain import EndReason, Game, GameResultService, GameStatus
+from seokpan.game.domain import (
+    EndReason,
+    Game,
+    GameResultRuleViolation,
+    GameResultService,
+    GameRuleViolation,
+    GameStatus,
+)
 from seokpan.room.application import (
     CompleteRoomGame,
     NullRealtimeEventAdapter,
@@ -24,7 +31,7 @@ from seokpan.room.application import (
     RoomRuntimePort,
     RoomRuntimeSnapshot,
 )
-from seokpan.room.domain import RoomStatus
+from seokpan.room.domain import RoomRuleViolation, RoomStatus
 from seokpan.vote.application import (
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
@@ -151,7 +158,13 @@ class TurnResolutionRunner:
         for item in due:
             try:
                 results.append(await self.process(item))
-            except Exception:
+            except (
+                VoteRuleViolation,
+                PersistenceRuleViolation,
+                GameRuleViolation,
+                GameResultRuleViolation,
+                RoomRuleViolation,
+            ):
                 _LOGGER.exception(
                     "Turn resolution item failed",
                     extra={

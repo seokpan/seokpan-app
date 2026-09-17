@@ -723,7 +723,7 @@ async def test_turn_resolution_runner_isolates_item_failure_and_continues(
     )
     process = AsyncMock(
         side_effect=(
-            RuntimeError("simulated turn item failure"),
+            VoteRuleViolation("SIMULATED_ITEM_RULE_VIOLATION"),
             TurnProcessingResult(second, TurnProcessingStatus.STALE),
         )
     )
@@ -768,3 +768,31 @@ async def test_turn_resolution_runner_propagates_due_source_failure() -> None:
 
     with pytest.raises(RuntimeError, match="turn source unavailable"):
         await runner.run_once()
+
+
+@pytest.mark.asyncio
+async def test_turn_resolution_runner_propagates_item_provider_failure() -> None:
+    due = DueTurn("room-a", "game-a", 1)
+
+    source = Mock()
+    source.due_turns = AsyncMock(return_value=(due,))
+
+    votes = Mock()
+    votes.get = AsyncMock(side_effect=RuntimeError("vote provider unavailable"))
+
+    runner = TurnResolutionRunner(
+        due_turns=source,
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=votes,
+        games=Mock(),
+        rooms=Mock(),
+        clock=ManualClock(),
+        runner_id="runner-provider-failure",
+    )
+
+    with pytest.raises(RuntimeError, match="vote provider unavailable"):
+        await runner.run_once()
+
+    votes.get.assert_awaited_once_with(due.room_id)
