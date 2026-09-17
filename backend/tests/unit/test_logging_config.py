@@ -6,8 +6,8 @@ import logging
 import pytest
 
 from seokpan.logging_config import (
-    _SuccessfulProbeAccessFilter,
     _source_path,
+    _SuccessfulProbeAccessFilter,
     configure_logging,
 )
 from seokpan.settings import Settings
