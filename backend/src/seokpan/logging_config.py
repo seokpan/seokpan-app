@@ -130,11 +130,7 @@ def _resolve_level(value: str) -> int:
 def configure_logging(settings: Settings) -> None:
     """Configure one structured stdout contract for Seokpan application logs."""
 
-    instance_id = (
-        settings.instance_id.strip()
-        or os.getenv("HOSTNAME", "").strip()
-        or "unknown"
-    )
+    instance_id = settings.instance_id.strip() or os.getenv("HOSTNAME", "").strip() or "unknown"
     level = _resolve_level(settings.log_level)
 
     application_logger = logging.getLogger("seokpan")
