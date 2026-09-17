@@ -125,9 +125,11 @@ def test_non_transient_provider_failure_still_fails_production_runner(
     _patch_production_shell(monkeypatch, services, events)
 
     shell = create_production_app(Settings(environment="production"))
-    with pytest.raises(RedisProviderError, match="REDIS_PROVIDER_UNAVAILABLE"):
-        with TestClient(shell):
-            raise AssertionError("non-transient provider failure must fail startup")
+    with (
+        pytest.raises(RedisProviderError, match="REDIS_PROVIDER_UNAVAILABLE"),
+        TestClient(shell),
+    ):
+        raise AssertionError("non-transient provider failure must fail startup")
 
 
 def test_production_shell_rejects_missing_mandatory_runner(
