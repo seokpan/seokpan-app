@@ -372,6 +372,16 @@ def build_plan(
         old_source = read_source_annotation(deployment_text, spec.deployment_path)
         old_digest = read_digest(kustomization_text, spec.kustomization_path)
 
+        # 같은 App source SHA를 가리키면서 digest만 다른 상태는 정상적인
+        # non-impact 누적 상태가 아니라 provenance/digest 계약 불일치다.
+        # 자동으로 덮어써 숨기지 않고 fail-closed로 사람 확인을 요구한다.
+        if old_source == current_sha and old_digest != spec.final_digest:
+            raise PromotionError(
+                f"{spec.name}: current source SHA already matches {current_sha} "
+                f"but desired digest differs "
+                f"(gitops={old_digest}, verified={spec.final_digest})"
+            )
+
         ensure_commit(app_repo, old_source)
         ensure_ancestor(app_repo, old_source, current_sha)
         paths = changed_paths(app_repo, old_source, current_sha, spec.impact_paths)
