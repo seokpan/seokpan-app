@@ -6,7 +6,7 @@ from redis.exceptions import ConnectionError
 from seokpan.game.domain import Stone
 from seokpan.persistence.memory import ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
-from seokpan.persistence.redis.vote_adapter import RedisVoteRuntimeAdapter
+from seokpan.persistence.redis.vote_adapter import RedisVoteRuntimeAdapter, _list
 from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
 from seokpan.vote.application import InitializeVoteRuntime
 from seokpan.vote.domain import Voter
@@ -143,6 +143,12 @@ async def test_read_does_not_mix_new_game_with_previous_turn_keys() -> None:
 def test_missing_rejection_code_is_provider_failure() -> None:
     with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
         RedisVoteRuntimeAdapter._raise_rejection({"ok": False, "error": None})
+
+
+def test_empty_lua_object_is_accepted_only_as_empty_array() -> None:
+    assert _list({}) == []
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        _list({"unexpected": "value"})
 
 
 @pytest.mark.parametrize("version", [1, 2, 4])
