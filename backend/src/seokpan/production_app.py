@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from seokpan.app import ApplicationServices
 
 _LOGGER = logging.getLogger(__name__)
+_TRANSIENT_TURN_ERROR_CODES = {"REDIS_SNAPSHOT_CHANGED"}
+
+
+def _is_transient_turn_error(error: Exception) -> bool:
+    return getattr(error, "code", None) in _TRANSIENT_TURN_ERROR_CODES
 
 
 async def _run_background_services(
@@ -33,7 +38,18 @@ async def _run_background_services(
     try:
         while True:
             await disconnects.run_once()
-            await turns.run_once()
+            try:
+                await turns.run_once()
+            except Exception as error:
+                if not _is_transient_turn_error(error):
+                    raise
+                _LOGGER.warning(
+                    "Transient turn snapshot race; retrying",
+                    extra={
+                        "event": "turn_resolution.snapshot_changed",
+                        "error_code": getattr(error, "code", None),
+                    },
+                )
             await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         raise
@@ -42,7 +58,7 @@ async def _run_background_services(
         realtime = services.realtime_api
         if realtime is not None:
             realtime.registry.end_runtime()
-        _LOGGER.error("Production background runner stopped")
+        _LOGGER.exception("Production background runner stopped")
         raise
 
 
