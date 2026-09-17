@@ -8,6 +8,7 @@ from typing import cast
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from seokpan.game.application import (
     FinalizeGameCommand,
@@ -287,7 +288,9 @@ class MariaDBGamePersistenceAdapter:
                     for item in (
                         (
                             await session.execute(
-                                select(MemberRow).where(MemberRow.member_id.in_(member_ids))
+                                select(MemberRow)
+                                .options(load_only(MemberRow.member_id, MemberRow.rating))
+                                .where(MemberRow.member_id.in_(member_ids))
                             )
                         )
                         .scalars()
@@ -494,6 +497,7 @@ class MariaDBGamePersistenceAdapter:
             (
                 await session.execute(
                     select(MemberRow)
+                    .options(load_only(MemberRow.member_id, MemberRow.rating))
                     .where(MemberRow.member_id.in_(member_ids))
                     .order_by(MemberRow.member_id)
                     .with_for_update()
