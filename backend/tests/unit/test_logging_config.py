@@ -7,6 +7,7 @@ import pytest
 
 from seokpan.logging_config import (
     _SuccessfulProbeAccessFilter,
+    _source_path,
     configure_logging,
 )
 from seokpan.settings import Settings
@@ -137,3 +138,11 @@ def test_successful_probe_access_filter(
 def test_invalid_log_level_is_rejected() -> None:
     with pytest.raises(ValueError, match="INVALID_LOG_LEVEL"):
         configure_logging(_settings(level="LOUD"))
+
+
+def test_source_path_prefers_package_relative_path() -> None:
+    assert (
+        _source_path("/opt/app/src/seokpan/game/application/service.py")
+        == "seokpan/game/application/service.py"
+    )
+    assert _source_path("/tmp/test_logging_config.py") == "test_logging_config.py"

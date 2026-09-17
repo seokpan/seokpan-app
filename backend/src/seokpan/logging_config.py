@@ -29,6 +29,21 @@ _QUIET_ACCESS_PATHS = {
 }
 
 
+def _source_path(value: str) -> str:
+    """Return a stable package-relative source path when possible."""
+
+    normalized = value.replace("\\", "/")
+
+    if normalized.startswith("seokpan/"):
+        return normalized
+
+    marker = "/seokpan/"
+    if marker in normalized:
+        return f"seokpan/{normalized.rsplit(marker, 1)[1]}"
+
+    return normalized.rsplit("/", 1)[-1]
+
+
 class _JsonFormatter(logging.Formatter):
     def __init__(self, *, instance_id: str) -> None:
         super().__init__()
@@ -44,7 +59,7 @@ class _JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "event": getattr(record, "event", "application.log"),
             "logger": record.name,
-            "file": record.filename,
+            "file": _source_path(record.pathname),
             "line": record.lineno,
             "function": record.funcName,
             "instance_id": getattr(record, "instance_id", self._instance_id),
@@ -63,7 +78,7 @@ class _JsonFormatter(logging.Formatter):
                 if exc_tb is None
                 else [
                     {
-                        "file": os.path.basename(frame.filename),
+                        "file": _source_path(frame.filename),
                         "line": frame.lineno,
                         "function": frame.name,
                     }
