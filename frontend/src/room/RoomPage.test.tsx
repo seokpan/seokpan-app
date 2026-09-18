@@ -259,6 +259,7 @@ describe("room HTTP and receive-only connection integration", () => {
     loggedOut = true;
     act(() => window.dispatchEvent(new Event("focus")));
     expect(screen.getByRole("button", { name: "Ready" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "팀 선택 해제" })).not.toBeInTheDocument();
     await screen.findByRole("button", { name: "로그인" });
     expect(socket.close).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls.some((c) => c[0] === "/api/v1/sessions/guest")).toBe(false);
