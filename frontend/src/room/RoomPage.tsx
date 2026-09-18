@@ -267,28 +267,26 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                                 </li>
                               ))}
                           </ul>
-                          <button
-                            className={styles.secondaryButton}
-                            disabled={!canChange || me?.team === team}
-                            onClick={() =>
-                              void mutate(() =>
-                                auth.api.request(
-                                  "/api/v1/rooms/{room_id}/participants/me/team",
-                                  "put",
-                                  {
-                                    path: path(),
-                                    body: { ...versioned(), team },
-                                  },
-                                ),
-                              )
-                            }
-                          >
-                            {team === "NONE"
-                              ? "팀 선택 해제"
-                              : team === "BLACK"
-                                ? "흑팀 선택"
-                                : "백팀 선택"}
-                          </button>
+                          {team !== "NONE" && (
+                            <button
+                              className={styles.secondaryButton}
+                              disabled={!canChange || me?.team === team}
+                              onClick={() =>
+                                void mutate(() =>
+                                  auth.api.request(
+                                    "/api/v1/rooms/{room_id}/participants/me/team",
+                                    "put",
+                                    {
+                                      path: path(),
+                                      body: { ...versioned(), team },
+                                    },
+                                  ),
+                                )
+                              }
+                            >
+                              {team === "BLACK" ? "흑팀 선택" : "백팀 선택"}
+                            </button>
+                          )}
                         </section>
                       ))}
                     </div>
