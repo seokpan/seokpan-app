@@ -158,7 +158,8 @@ def test_old_or_future_vote_snapshot_is_not_interpreted(version: int) -> None:
 
 
 def test_last_move_lua_write_is_persistence_gated_and_readable() -> None:
-    assert VOTE_MUTATION.version == VOTE_READ.version == 5
+    assert VOTE_MUTATION.version == 6
+    assert VOTE_READ.version == 5
     assert VOTE_MUTATION.source.index("existing.schema_version ~= 3") < VOTE_MUTATION.source.index(
         "local expired"
     )
