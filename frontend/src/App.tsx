@@ -106,6 +106,10 @@ function Shell() {
   const location = useLocation();
   const { view, busy, blocking, notice, clearNotice } = useSession();
   const { notice: roomNotice, clearNotice: clearRoomNotice } = useRoomConnection();
+  const readyIdentity = view.phase === "ready" ? view.identity : null;
+  const inRoom = !!readyIdentity?.room_id;
+  const roomOrLobbyCurrent =
+    location.pathname === "/" || location.pathname === "/lobby" ? "page" : undefined;
   const previousPath = useRef(location.pathname);
   useEffect(() => {
     if (previousPath.current === location.pathname) return;
@@ -132,7 +136,9 @@ function Shell() {
           {view.phase === "ready" && !blocking && (
             <div className={styles.headerControls}>
               <nav className={styles.primaryNav} aria-label="주요 메뉴">
-                <NavLink to="/lobby">로비</NavLink>
+                <Link to="/lobby" aria-current={roomOrLobbyCurrent}>
+                  {inRoom ? "게임방" : "로비"}
+                </Link>
                 <NavLink to="/rankings">랭킹</NavLink>
               </nav>
               <div className={styles.utilityGroup} role="group" aria-label="서비스 상태와 도움말">
@@ -146,7 +152,7 @@ function Shell() {
                 />
               </div>
               <div className={styles.accountGroup} role="group" aria-label="계정">
-                {view.identity.actor_type === "GUEST" && (
+                {view.identity.actor_type === "GUEST" && location.pathname !== "/login" && (
                   <Link to="/login" className={styles.memberUpgrade}>
                     Member 로그인
                   </Link>

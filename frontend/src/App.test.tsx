@@ -118,6 +118,23 @@ describe("authentication and lobby screens", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not duplicate the Member login action on the login screen", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(guest));
+    mount(fetcher, "/login");
+
+    await screen.findByRole("heading", { name: "Member 로그인" });
+    expect(
+      within(screen.getByRole("group", { name: "계정" })).queryByRole("link", {
+        name: "Member 로그인",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "주요 메뉴" })).queryByRole("link", {
+        current: "page",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("marks rankings as the current primary destination", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(member));
     mount(fetcher, "/rankings");
