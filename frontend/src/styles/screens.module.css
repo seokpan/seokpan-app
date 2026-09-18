@@ -74,7 +74,8 @@
   gap: 0.55rem;
   min-width: 0;
 }
-.utilityGroup {
+.utilityGroup,
+.accountGroup {
   padding-left: 0.65rem;
   border-left: 1px solid #2d3f61;
 }
@@ -93,7 +94,7 @@
   background: #132a52;
   border-color: #627596;
 }
-.memberUpgrade {
+.header .memberUpgrade {
   min-height: 40px;
   display: inline-flex;
   align-items: center;
@@ -104,7 +105,7 @@
   font-weight: 700;
   background: #0d2c4c;
 }
-.memberUpgrade:hover {
+.header .memberUpgrade:hover {
   color: white;
   background: #123b60;
 }
@@ -466,7 +467,8 @@
     flex: 1 1 auto;
     justify-content: center;
   }
-  .utilityGroup {
+  .utilityGroup,
+  .accountGroup {
     padding-left: 0;
     border-left: 0;
   }

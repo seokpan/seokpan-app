@@ -98,7 +98,7 @@ describe("authentication and lobby screens", () => {
     );
     expect(screen.getByRole("group", { name: "서비스 상태와 도움말" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "계정" })).toContainElement(
-      screen.getByRole("button", { name: "내 전적 메뉴" }),
+      screen.getByRole("button", { name: "사용자 메뉴" }),
     );
   });
 
@@ -160,7 +160,7 @@ describe("authentication and lobby screens", () => {
       throw new Error("Unexpected request");
     });
     mount(fetcher, "/login");
-    fireEvent.click(await screen.findByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(await screen.findByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByText("로그아웃 요청을 처리했습니다.");
     fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
@@ -258,7 +258,7 @@ describe("authentication and lobby screens", () => {
     await act(async () => resolve(json(guest, 201)));
     await screen.findByText("아직 열린 방이 없습니다.");
     expect(screen.getByText("Guest-0123 · Guest")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByRole("button", { name: "로그인" });
     expect(fetcher.mock.calls.filter((call) => call[0] === "/api/v1/sessions/guest")).toHaveLength(
@@ -374,7 +374,7 @@ describe("authentication and lobby screens", () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(anonymous());
     mount(fetcher);
-    fireEvent.click(await screen.findByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(await screen.findByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByRole("button", { name: "로그인" });
     await act(async () => resolve(json({ rooms: [room], stream_version: 2 })));

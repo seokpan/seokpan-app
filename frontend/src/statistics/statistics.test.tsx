@@ -172,7 +172,7 @@ describe("rankings and user record screens", () => {
     expect(summary).toHaveTextContent("1,016");
     const table = screen.getByRole("table", { name: "Member 랭킹" });
     expect(within(table).getByRole("rowheader")).toHaveTextContent("돌하나");
-    const trigger = screen.getByRole("button", { name: "내 전적 메뉴" });
+    const trigger = screen.getByRole("button", { name: "사용자 메뉴" });
     fireEvent.click(trigger);
     const menu = screen.getByRole("region", { name: "사용자 정보" });
     await waitFor(() => expect(menu).toHaveTextContent("1,016"));
@@ -264,7 +264,7 @@ describe("rankings and user record screens", () => {
     mount(fetcher);
     await waitFor(() => expect(screen.getByRole("table")).toHaveTextContent("1,016"));
     expect(screen.queryByRole("region", { name: "내 순위와 전적" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
     expect(screen.getByRole("region", { name: "사용자 정보" })).toHaveTextContent(
       "개인 전적과 Rating은 저장되지 않습니다",
     );

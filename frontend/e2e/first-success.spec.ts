@@ -246,7 +246,7 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await expect(guest.getByText(/본인의 Rating 변동 내역이 없습니다/)).toBeVisible();
     for (const page of pages)
       await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
-    const guestName = await guest.getByRole("button", { name: "내 전적 메뉴" }).innerText();
+    const guestName = await guest.getByRole("button", { name: "사용자 메뉴" }).innerText();
     const guestDisplay = guestName.match(/Guest-[A-Z0-9]+/)![0];
     await white.getByRole("button", { name: `${guestDisplay} 강퇴`, exact: true }).click();
     await white
@@ -263,10 +263,10 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
       guest.getByText("방장에 의해 퇴장했습니다. 로비로 이동합니다.", { exact: true }),
     ).toHaveCount(0);
     await join(guest);
-    await black.getByRole("button", { name: "내 전적 메뉴", exact: true }).click();
+    await black.getByRole("button", { name: "사용자 메뉴", exact: true }).click();
     await black.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(black.getByRole("heading", { name: "Member 로그인", exact: true })).toBeVisible();
-    await white.getByRole("button", { name: "내 전적 메뉴", exact: true }).click();
+    await white.getByRole("button", { name: "사용자 메뉴", exact: true }).click();
     await white.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(
       guest.getByText("방이 종료되었습니다. 로비로 이동합니다.", { exact: true }),
