@@ -338,7 +338,7 @@
   margin-bottom: 0.65rem;
 }
 .waitingTeams ul {
-  max-height: 9rem;
+  height: 9rem;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }

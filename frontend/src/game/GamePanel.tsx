@@ -148,9 +148,11 @@ export function GamePanel({
                   <p>
                     투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
                   </p>
-                  <p className={styles.clock} aria-label="남은 투표 시간">
-                    {turnStatusLabel(game, left)}
-                  </p>
+                  {votingTimeLabel(game, left) && (
+                    <p className={styles.clock} aria-label="남은 투표 시간">
+                      {votingTimeLabel(game, left)}
+                    </p>
+                  )}
                   <progress
                     className={styles.timeBar}
                     max={100}
@@ -274,13 +276,9 @@ export function GamePanel({
   );
 }
 
-function turnStatusLabel(game: Game, left: number) {
-  if (game.turn_status === "VOTING")
-    return left > 0 ? `약 ${Math.ceil(left / 1000)}초` : "투표 마감 · 착수 확정 중";
-  if (game.turn_status === "RESOLVING") return "투표 집계 중";
-  if (game.turn_status === "MOVE_APPLIED") return "착수 확정 중";
-  if (game.turn_status === "PASSED") return "다음 차례 준비 중";
-  return "게임 상태 확인 중";
+function votingTimeLabel(game: Game, left: number) {
+  if (game.turn_status !== "VOTING" || left <= 0) return null;
+  return `약 ${Math.ceil(left / 1000)}초`;
 }
 
 const resultTitle: Record<Result["end_reason"], string> = {

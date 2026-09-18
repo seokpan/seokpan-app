@@ -137,33 +137,12 @@ describe("game screen flow", () => {
     expect(fetcher.mock.calls.filter((c) => String(c[0]).endsWith("/result"))).toHaveLength(2);
     expect(socket.close).not.toHaveBeenCalled();
   });
-  it("ignores a late result after another game starts and resets board focus", async () => {
-    let room = { ...waiting, last_game_id: "g1" as string | null };
-    let game: ReturnType<typeof gameFixture> | null = null,
-      version = 8;
-    let finish!: (r: Response) => void;
-    const { socket } = await mount(
-      () => ({ room, game, stream_version: version }),
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
+  it("does not expose a result that existed before entering the room", async () => {
+    const room = { ...waiting, last_game_id: "g1" as string | null };
+    const { fetcher } = await mount(() => ({ room, game: null, stream_version: 8 }));
+    expect(screen.queryByRole("button", { name: "지난 판 결과 보기" })).not.toBeInTheDocument();
     expect(screen.queryByText("저장된 결과를 불러오고 있습니다.")).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "지난 판 결과 보기" }));
-    await screen.findByText("저장된 결과를 불러오고 있습니다.");
-    const previousBoard = screen.getByRole("grid");
-    game = { ...gameFixture(), game_id: "g2" };
-    room = { ...room, status: "PLAYING", game_id: "g2" };
-    version++;
-    act(() => socket.message(event("game.started", version, {}, "r1")));
-    await screen.findByRole("heading", { name: "● 흑팀 차례" });
-    expect(screen.getByRole("grid")).toBe(previousBoard);
-    await act(async () => finish(json(resultFixture())));
-    expect(screen.queryByText("내 Rating: 1000 → 1016 (+16)")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "흑팀 승리" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "A1 빈 자리" })).toBeInTheDocument();
-    expect(socket.close).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
   it("shows a static analysis placeholder without predictions or analysis requests", async () => {
     const { fetcher } = await mount(() => ({
@@ -472,25 +451,15 @@ describe("game screen flow", () => {
       expect(fetcher.mock.calls.filter((c) => String(c[0]).endsWith("/vote"))).toHaveLength(1),
     );
   });
-  it("discards a late previous-game result when the next game starts", async () => {
-    let resolve!: (value: Response) => void;
+  it("keeps a pre-existing last_game_id hidden when the next game starts", async () => {
     let state: unknown = {
       room: { ...waiting, last_game_id: "g1" },
       game: null,
       stream_version: 8,
     };
-    const { socket, fetcher } = await mount(
-      () => state,
-      () =>
-        new Promise((done) => {
-          resolve = done;
-        }),
-    );
+    const { socket, fetcher } = await mount(() => state);
     expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
-    fireEvent.click(await screen.findByRole("button", { name: "지난 판 결과 보기" }));
-    await waitFor(() =>
-      expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(true),
-    );
+    expect(screen.queryByRole("button", { name: "지난 판 결과 보기" })).not.toBeInTheDocument();
     state = {
       room: { ...waiting, status: "PLAYING", game_id: "g2", last_game_id: "g1" },
       game: { ...gameFixture(), game_id: "g2" },
@@ -498,9 +467,7 @@ describe("game screen flow", () => {
     };
     act(() => socket.message(event("game.started", 9, {}, "r1")));
     await screen.findByRole("heading", { name: "● 흑팀 차례" });
-    await act(async () => resolve(json(resultFixture())));
-    expect(screen.queryByText("내 Rating: 1000 → 1016 (+16)")).not.toBeInTheDocument();
-    expect(socket.close).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
   it("does not replay a lost vote response and refreshes the confirmed vote", async () => {
     let game = gameFixture();
