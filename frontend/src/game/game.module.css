@@ -193,10 +193,15 @@
 .infoPanel > p:first-child {
   margin-top: 0;
 }
+.tallyFrame {
+  height: 12rem;
+  overflow: hidden;
+}
 .tally {
   list-style: none;
   padding: 0;
-  max-height: 19rem;
+  margin: 0;
+  height: 100%;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -266,12 +271,20 @@
   border-color: #123c78;
   color: white;
 }
+.topVote.myVoteBadge,
+.myVoteBadge {
+  border-color: #4caf50;
+  background: #4caf50;
+  color: white;
+  box-shadow: none;
+}
 .legend {
   color: #52617a;
   font-size: 0.85rem;
   line-height: 1.7;
 }
 .emptyVotes {
+  margin: 0;
   padding: 1rem 0;
   color: #52617a;
 }
