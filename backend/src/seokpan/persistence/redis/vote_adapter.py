@@ -25,6 +25,7 @@ from seokpan.vote.application import (
     ApplyRuntimeResolution,
     CastRuntimeVote,
     CloseRuntimeTurn,
+    FinalizeRuntimeGame,
     InitializeVoteRuntime,
     RemoveRuntimeVote,
     ResolverLease,
@@ -176,6 +177,21 @@ class RedisVoteRuntimeAdapter:
                 "next_end_reason": (
                     None if resolution.end_reason is None else resolution.end_reason.value
                 ),
+            },
+        )
+
+    async def finalize_game(self, command: FinalizeRuntimeGame) -> VoteMutationResult:
+        return await self._mutate(
+            command.room_id,
+            command.request_id,
+            "finalize_game",
+            command.turn_no,
+            {
+                "game_id": command.game_id,
+                "turn_no": command.turn_no,
+                "expected_state_version": command.expected_state_version,
+                "end_reason": command.end_reason.value,
+                "winner": command.winner.value,
             },
         )
 
