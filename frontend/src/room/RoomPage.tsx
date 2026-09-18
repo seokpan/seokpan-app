@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useSession } from "../session/context";
 import { useRoomConnection } from "./context";
 import type { RoomView } from "./model";
@@ -22,6 +22,9 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
   const { dismissedResult, dismissResult } = useRoomConnection();
   const view = useSyncExternalStore(stream.subscribe, stream.getSnapshot);
   const room = view.snapshot?.room;
+  const initialLastGame = useRef<{ roomId: string; gameId: string | null } | null>(null);
+  if (room && initialLastGame.current?.roomId !== room.room_id)
+    initialLastGame.current = { roomId: room.room_id, gameId: room.last_game_id ?? null };
   const identity = auth.view.phase === "ready" ? auth.view.identity : null;
   const me = room?.participants.find((p) => p.participant_id === identity?.participant_id);
   const [kick, setKick] = useState<{
@@ -53,7 +56,10 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
     readyPlayers.some((p) => p.team === "BLACK") &&
     readyPlayers.some((p) => p.team === "WHITE");
   const showResult =
-    room?.status === "WAITING" && room.last_game_id && room.last_game_id !== dismissedResult;
+    room?.status === "WAITING" &&
+    room.last_game_id &&
+    room.last_game_id !== dismissedResult &&
+    room.last_game_id !== initialLastGame.current?.gameId;
   const versioned = () => ({
     request_id: crypto.randomUUID(),
     expected_state_version: room!.state_version,
