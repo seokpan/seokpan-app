@@ -194,6 +194,8 @@ class RedisRoomRuntimeAdapter:
                             found_participant,
                             found_session,
                             participant.actor_type,
+                            _integer(connection, "generation"),
+                            _boolean(connection, "connected"),
                         )
                     )
         except (RedisError, UnicodeDecodeError, RoomRuleViolation) as error:
