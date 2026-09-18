@@ -87,8 +87,12 @@ class ChatAccess:
         self.generation = (
             None
             if self.binding is None
-            else services.registry.connection_generation(
-                self.binding.room_id, self.binding.participant_id
+            else (
+                self.binding.connection_generation
+                if self.binding.connection_generation is not None
+                else services.registry.connection_generation(
+                    self.binding.room_id, self.binding.participant_id
+                )
             )
         )
 
@@ -111,9 +115,19 @@ class ChatAccess:
             or binding.room_id != self.scope.room_id
             or (binding.actor_type, binding.actor_id)
             != (self.current.actor_type, self.current.actor_id)
+            or not binding.connected
             or self.generation is None
-            or self.services.registry.connection_generation(binding.room_id, binding.participant_id)
-            != self.generation
+            or (
+                binding.connection_generation is not None
+                and binding.connection_generation != self.generation
+            )
+            or (
+                binding.connection_generation is None
+                and self.services.registry.connection_generation(
+                    binding.room_id, binding.participant_id
+                )
+                != self.generation
+            )
         ):
             raise ApiProblem(403, "CHAT_SCOPE_FORBIDDEN", "Current Room connection required")
 
