@@ -421,6 +421,44 @@
 .readyPanel .primaryButton {
   margin-top: 0.6rem;
 }
+.waitingTeams button[aria-pressed="true"]:disabled {
+  opacity: 1;
+  color: #00636d;
+  background: #e5f2f4;
+  border-color: #007c87;
+  box-shadow: inset 0 0 0 1px #007c87;
+}
+.startChecklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0.8rem 0;
+  padding: 0;
+}
+.startChecklist li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 32px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d8e0ea;
+  border-radius: 999px;
+  background: #f5f7fa;
+  color: #52617a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.startChecklist li[data-met="true"] {
+  color: #00636d;
+  background: #e8f7f6;
+  border-color: #81c8c8;
+}
+.commandStatus {
+  margin: 0.65rem 0 0;
+  color: #52617a;
+  font-size: 0.85rem;
+}
 @media (max-width: 920px) {
   .headerInner {
     flex-wrap: wrap;
