@@ -47,7 +47,7 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
 
 def test_complete_game_is_not_blocked_by_participant_guard() -> None:
     source = ROOM_MUTATION.source
-    guard = source.index("local current_participant_id = payload.participant_id or payload.actor_id")
+    guard = source.index(\n        "local current_participant_id = payload.participant_id or payload.actor_id"\n    )
     complete = source.index("if operation == 'complete_game' then")
     assert guard < complete
     participant_guard = source[guard:complete]
