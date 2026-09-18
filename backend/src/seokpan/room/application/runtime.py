@@ -337,6 +337,8 @@ class RoomSessionBinding:
     participant_id: str
     session_digest: str
     actor_type: ActorType
+    connection_generation: int | None = None
+    connected: bool = True
 
     def __post_init__(self) -> None:
         validate_room_id(self.room_id)
