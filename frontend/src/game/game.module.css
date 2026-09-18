@@ -8,6 +8,9 @@
 .stage {
   overflow-anchor: none;
 }
+.waitingLayout {
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+}
 .layout > * {
   min-width: 0;
 }
@@ -178,18 +181,95 @@
 .hint summary {
   cursor: pointer;
 }
-.analysisPlaceholder {
-  padding: 1.25rem;
-  border: 1px dashed #c4cedd;
+.analysisPanel {
+  padding: 1.1rem;
+  border: 1px solid #dce4ee;
   border-radius: 0.8rem;
-  background: #f7f9fc;
+  background: linear-gradient(180deg, #fbfcff, #f3f6fb);
 }
-.analysisPlaceholder h3 {
-  margin-top: 0;
+.analysisHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
 }
-.analysisPlaceholder p:last-child {
-  margin-bottom: 0;
+.analysisHeader h3,
+.analysisGrid h4 {
+  margin: 0;
 }
+.analysisMark {
+  color: #52617a;
+  letter-spacing: 0.15rem;
+}
+.analysisBalance {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 700;
+}
+.analysisTrack {
+  position: relative;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #172c45 0 50%, #f4f4f4 50% 100%);
+  border: 1px solid #aab4c4;
+  overflow: hidden;
+}
+.analysisTrack span {
+  position: absolute;
+  inset: -2px auto -2px 50%;
+  width: 2px;
+  background: #d32f2f;
+  transform: translateX(-1px);
+}
+.analysisGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+.analysisGrid section {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid #e1e6ee;
+  border-radius: 0.65rem;
+  background: white;
+}
+.analysisCandidates {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+.analysisCandidates span {
+  display: grid;
+  place-items: center;
+  min-height: 2rem;
+  border-radius: 0.45rem;
+  background: #f2f5f9;
+  color: #6b778c;
+  font-weight: 700;
+}
+.analysisTrend {
+  height: 2.2rem;
+  margin-top: 0.7rem;
+  display: flex;
+  align-items: end;
+  gap: 0.25rem;
+}
+.analysisTrend span {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0.2rem 0.2rem 0 0;
+  background: #dce4ee;
+}
+.analysisTrend span:nth-child(1) { height: 42%; }
+.analysisTrend span:nth-child(2) { height: 62%; }
+.analysisTrend span:nth-child(3) { height: 52%; }
+.analysisTrend span:nth-child(4) { height: 72%; }
+.analysisTrend span:nth-child(5) { height: 58%; }
 .infoPanel > p:first-child {
   margin-top: 0;
 }
@@ -294,7 +374,8 @@
   color: #006c79;
 }
 @media (max-width: 1050px) {
-  .layout {
+  .layout,
+  .waitingLayout {
     grid-template-columns: 1fr;
   }
   .boardScroll {
@@ -304,6 +385,9 @@
   }
 }
 @media (max-width: 700px) {
+  .analysisGrid {
+    grid-template-columns: 1fr;
+  }
   .gameHeader {
     flex-direction: column;
     align-items: flex-start;

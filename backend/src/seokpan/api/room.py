@@ -24,6 +24,9 @@ from seokpan.room.application import RoomApplicationService, RoomMutationResult,
 from seokpan.room.domain import RoomConfig, RoomRuleViolation, RoomStatus, RoomVisibility, Team
 
 
+UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
+
+
 class ConfirmedDepartureFinalizer(Protocol):
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
 
@@ -410,12 +413,12 @@ async def room_snapshot_response(
     for participant in snapshot.participants:
         identity = await services.rooms.resolve_participant_identity(participant.participant_id)
         if identity is None:
-            display_name = participant.participant_id
+            display_name = UNKNOWN_PARTICIPANT_DISPLAY_NAME
         elif identity.actor_type is SessionActorType.GUEST:
             display_name = guest_display_name(identity.actor_id)
         else:
             member = await services.identity.members.find_member(int(identity.actor_id))
-            display_name = participant.participant_id if member is None else member.nickname
+            display_name = UNKNOWN_PARTICIPANT_DISPLAY_NAME if member is None else member.nickname
         participants.append(
             RoomParticipantResponse(
                 participant_id=participant.participant_id,

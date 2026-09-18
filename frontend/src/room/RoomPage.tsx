@@ -135,90 +135,6 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
               waitingControls={
                 room.status === "WAITING" && !showResult ? (
                   <>
-                    <section
-                      className={`${gameStyles.infoPanel} ${styles.readyPanel}`}
-                      aria-label="게임 시작 준비"
-                    >
-                      <h2>준비 현황</h2>
-                      <p role="status">
-                        Ready {readyPlayers.length}명 / 최소 {room.minimum_ready}명
-                      </p>
-                      <p className={styles.muted}>
-                        흑팀 {readyPlayers.filter((p) => p.team === "BLACK").length}명 · 백팀{" "}
-                        {readyPlayers.filter((p) => p.team === "WHITE").length}명 준비
-                      </p>
-                      <button
-                        className={styles.primaryButton}
-                        disabled={!canChange || me?.team === "NONE"}
-                        onClick={() =>
-                          void mutate(() =>
-                            auth.api.request(
-                              "/api/v1/rooms/{room_id}/participants/me/ready",
-                              "put",
-                              {
-                                path: path(),
-                                body: { ...versioned(), ready: !me?.ready },
-                              },
-                            ),
-                          )
-                        }
-                      >
-                        {me?.ready ? "Ready 취소" : "Ready"}
-                      </button>
-                      {me?.team === "NONE" && (
-                        <p className={styles.muted}>아래에서 팀을 선택한 뒤 Ready를 눌러 주세요.</p>
-                      )}
-                      <label htmlFor="room-vote-seconds">투표 제한 시간</label>
-                      <select
-                        id="room-vote-seconds"
-                        value={room.vote_seconds}
-                        disabled={!canChange || me?.participant_id !== room.owner_id}
-                        onChange={(event) => {
-                          const vote_seconds = Number(event.target.value);
-                          void mutate(() =>
-                            auth.api.request("/api/v1/rooms/{room_id}/settings", "patch", {
-                              path: path(),
-                              body: { ...versioned(), vote_seconds },
-                            }),
-                          );
-                        }}
-                      >
-                        {[5, 10, 15, 30].map((value) => (
-                          <option key={value} value={value}>
-                            {value}초
-                          </option>
-                        ))}
-                      </select>
-                      {me?.participant_id === room.owner_id ? (
-                        <button
-                          className={styles.primaryButton}
-                          disabled={!canStart}
-                          onClick={() =>
-                            void mutate(() =>
-                              auth.api.request("/api/v1/rooms/{room_id}/games", "post", {
-                                path: path(),
-                                body: versioned(),
-                              }),
-                            )
-                          }
-                        >
-                          게임 시작
-                        </button>
-                      ) : (
-                        <p className={styles.muted}>준비가 끝나면 방장이 게임을 시작합니다.</p>
-                      )}
-                      <details className={gameStyles.hint}>
-                        <summary>시작 조건과 Ready 안내</summary>
-                        <p>
-                          최소 Ready 인원과 양 팀 각 1명 이상 Ready가 필요합니다. 시작할 때 Ready가
-                          아닌 참가자는 이번 판을 관전합니다.
-                        </p>
-                        <p>
-                          팀 변경 시 본인의 Ready가 해제됩니다. 방장 변경·투표 시간 변경 시에는 모두
-                          해제됩니다.
-                        </p>
-                      </details>
-                    </section>
                     <div className={styles.waitingTeams}>
                       {(["BLACK", "WHITE", "NONE"] as const).map((team) => (
                         <section key={team} className={styles.teamPanel}>
@@ -288,6 +204,90 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                         </section>
                       ))}
                     </div>
+                    <section
+                      className={`${gameStyles.infoPanel} ${styles.readyPanel}`}
+                      aria-label="게임 시작 준비"
+                    >
+                      <h2>준비 현황</h2>
+                      <p role="status">
+                        Ready {readyPlayers.length}명 / 최소 {room.minimum_ready}명
+                      </p>
+                      <p className={styles.muted}>
+                        흑팀 {readyPlayers.filter((p) => p.team === "BLACK").length}명 · 백팀{" "}
+                        {readyPlayers.filter((p) => p.team === "WHITE").length}명 준비
+                      </p>
+                      <button
+                        className={styles.primaryButton}
+                        disabled={!canChange || me?.team === "NONE"}
+                        onClick={() =>
+                          void mutate(() =>
+                            auth.api.request(
+                              "/api/v1/rooms/{room_id}/participants/me/ready",
+                              "put",
+                              {
+                                path: path(),
+                                body: { ...versioned(), ready: !me?.ready },
+                              },
+                            ),
+                          )
+                        }
+                      >
+                        {me?.ready ? "Ready 취소" : "Ready"}
+                      </button>
+                      {me?.team === "NONE" && (
+                        <p className={styles.muted}>팀을 선택한 뒤 Ready를 눌러 주세요.</p>
+                      )}
+                      <label htmlFor="room-vote-seconds">투표 제한 시간</label>
+                      <select
+                        id="room-vote-seconds"
+                        value={room.vote_seconds}
+                        disabled={!canChange || me?.participant_id !== room.owner_id}
+                        onChange={(event) => {
+                          const vote_seconds = Number(event.target.value);
+                          void mutate(() =>
+                            auth.api.request("/api/v1/rooms/{room_id}/settings", "patch", {
+                              path: path(),
+                              body: { ...versioned(), vote_seconds },
+                            }),
+                          );
+                        }}
+                      >
+                        {[5, 10, 15, 30].map((value) => (
+                          <option key={value} value={value}>
+                            {value}초
+                          </option>
+                        ))}
+                      </select>
+                      {me?.participant_id === room.owner_id ? (
+                        <button
+                          className={styles.primaryButton}
+                          disabled={!canStart}
+                          onClick={() =>
+                            void mutate(() =>
+                              auth.api.request("/api/v1/rooms/{room_id}/games", "post", {
+                                path: path(),
+                                body: versioned(),
+                              }),
+                            )
+                          }
+                        >
+                          게임 시작
+                        </button>
+                      ) : (
+                        <p className={styles.muted}>준비가 끝나면 방장이 게임을 시작합니다.</p>
+                      )}
+                      <details className={gameStyles.hint}>
+                        <summary>시작 조건과 Ready 안내</summary>
+                        <p>
+                          최소 Ready 인원과 양 팀 각 1명 이상 Ready가 필요합니다. 시작할 때 Ready가
+                          아닌 참가자는 이번 판을 관전합니다.
+                        </p>
+                        <p>
+                          팀 변경 시 본인의 Ready가 해제됩니다. 방장 변경·투표 시간 변경 시에는 모두
+                          해제됩니다.
+                        </p>
+                      </details>
+                    </section>
                   </>
                 ) : undefined
               }

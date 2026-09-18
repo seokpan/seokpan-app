@@ -110,7 +110,8 @@ export function GamePanel({
                 : "관전 중 · 이번 판에는 투표할 수 없습니다."}
         </p>
       </div>
-      <div className={styles.layout}>
+      <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
+        {waiting && <div className={styles.infoStack}>{waitingControls}{chat}</div>}
         <div>
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
@@ -138,10 +139,8 @@ export function GamePanel({
                 : "숫자는 후보의 득표율 · 초록색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
-        <div className={styles.infoStack}>
-          {waiting ? (
-            waitingControls
-          ) : (
+        {!waiting && (
+          <div className={styles.infoStack}>
             <>
               {game ? (
                 <aside className={styles.infoPanel} aria-label="투표 정보">
@@ -260,17 +259,43 @@ export function GamePanel({
                   </button>
                 </aside>
               )}
-              <aside className={styles.analysisPlaceholder} aria-label="AI 판세 분석">
-                <h3>AI 판세 분석</h3>
-                <p>추후 제공 예정</p>
-                <p className={screens.muted}>
-                  현재 MVP에서는 제공하지 않습니다. 게임은 분석 없이 진행됩니다.
-                </p>
+              <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
+                <div className={styles.analysisHeader}>
+                  <h3>AI 판세 분석</h3>
+                  <span className={styles.analysisMark} aria-hidden="true">● ○</span>
+                </div>
+                <div className={styles.analysisBalance} aria-label="흑과 백 판세">
+                  <span>흑</span>
+                  <div className={styles.analysisTrack} aria-hidden="true">
+                    <span />
+                  </div>
+                  <span>백</span>
+                </div>
+                <div className={styles.analysisGrid}>
+                  <section>
+                    <h4>주요 후보</h4>
+                    <div className={styles.analysisCandidates} aria-label="주요 후보 좌표">
+                      <span>—</span>
+                      <span>—</span>
+                      <span>—</span>
+                    </div>
+                  </section>
+                  <section>
+                    <h4>판세 변화</h4>
+                    <div className={styles.analysisTrend} aria-label="판세 변화">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </section>
+                </div>
               </aside>
             </>
-          )}
-          {chat}
-        </div>
+            {chat}
+          </div>
+        )}
       </div>
     </section>
   );

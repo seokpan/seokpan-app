@@ -75,6 +75,14 @@ async function mount(
   return { ...app, socket, factory, fetcher };
 }
 describe("game screen flow", () => {
+  it("places team and Ready controls before the inactive waiting board", async () => {
+    await mount(() => ({ room: waiting, game: null, stream_version: 8 }));
+    const blackTeam = screen.getByRole("heading", { name: "● 흑팀" });
+    const readyPanel = screen.getByRole("region", { name: "게임 시작 준비" });
+    const board = screen.getByRole("grid", { name: "15×15 오목판" });
+    expect(blackTeam.compareDocumentPosition(readyPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(readyPanel.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
   it("keeps pointer voting from taking focus and marks my vote distinctly", () => {
     const vote = vi.fn();
     render(
@@ -144,15 +152,19 @@ describe("game screen flow", () => {
     expect(screen.queryByText("저장된 결과를 불러오고 있습니다.")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
-  it("shows a static analysis placeholder without predictions or analysis requests", async () => {
+  it("shows a static production-style analysis preview without fabricating results or requests", async () => {
     const { fetcher } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
       stream_version: 8,
     }));
     const panel = within(screen.getByRole("complementary", { name: "AI 판세 분석" }));
-    expect(panel.getByText("추후 제공 예정")).toBeInTheDocument();
-    expect(panel.queryByText(/%|분석 중|분석 완료/)).not.toBeInTheDocument();
+    expect(panel.getByText("AI 판세 분석")).toBeInTheDocument();
+    expect(panel.getByText("주요 후보")).toBeInTheDocument();
+    expect(panel.getByText("판세 변화")).toBeInTheDocument();
+    expect(panel.getByLabelText("주요 후보 좌표")).toHaveTextContent("—");
+    expect(panel.queryByText(/MVP|2차|예정|미지원|분석 중|분석 완료/)).not.toBeInTheDocument();
+    expect(panel.queryByText(/\d+%/)).not.toBeInTheDocument();
     expect(panel.queryByRole("button")).not.toBeInTheDocument();
     expect(panel.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some(([url]) => /analysis|prediction/.test(String(url)))).toBe(false);
