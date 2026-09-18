@@ -64,8 +64,7 @@ export function GamePanel({
     let detail = "지금 투표할 수 있습니다.";
     if (!ready) detail = "연결 상태 확인 중";
     else if (auth.busy) detail = "투표 요청 처리 중";
-    else if (game.turn_status !== "VOTING" || left <= 0)
-      detail = "서버 마감 처리 대기";
+    else if (game.turn_status !== "VOTING" || left <= 0) detail = "서버 마감 처리 대기";
     else if (game.current_team !== me.team) detail = "상대 팀 투표 진행 중";
     else if (!game.can_vote) detail = "현재는 투표할 수 없습니다.";
     playerStatus = `${team} 참가자 · ${detail}`;
