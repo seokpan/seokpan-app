@@ -94,6 +94,9 @@ export function Board({
                       aria-label={`${coord} ${stone === "BLACK" ? "흑돌" : stone === "WHITE" ? "백돌" : forbidden.includes(coord) ? "흑 금수" : "빈 자리"}${last ? ", 마지막 착수" : ""}${chosen === coord ? ", 내 투표" : ""}${vote ? `, ${vote.count}표 ${vote.label}` : ""}`}
                       aria-disabled={blocked}
                       onFocus={() => setFocus(index)}
+                      onMouseDown={(event) => {
+                        if (event.detail > 0) event.preventDefault();
+                      }}
                       onClick={() => {
                         if (!blocked) onVote?.(coord);
                       }}
@@ -120,10 +123,15 @@ export function Board({
                       ) : vote ? (
                         <span
                           aria-hidden="true"
-                          className={`${styles.voteBadge} ${vote.rank === 1 ? styles.topVote : ""}`}
+                          className={`${styles.voteBadge} ${vote.rank === 1 ? styles.topVote : ""} ${chosen === coord ? styles.myVoteBadge : ""}`}
                         >
                           <span>{vote.label.slice(0, -1)}</span>
                           <span>%</span>
+                          {chosen === coord && (
+                            <span aria-hidden="true" className={styles.myVoteMark}>
+                              내
+                            </span>
+                          )}
                         </span>
                       ) : (
                         <span aria-hidden="true">
