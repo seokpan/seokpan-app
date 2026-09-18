@@ -135,7 +135,7 @@ export function GamePanel({
                   : lastGame
                     ? "마지막으로 확인한 보드입니다. 최종 결과를 확인하고 있습니다."
                     : "아직 최종 보드를 받지 못했습니다."
-                : "숫자는 후보의 득표율 · 보라색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
+                : "숫자는 후보의 득표율 · 초록색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
         <div className={styles.infoStack}>
@@ -172,34 +172,36 @@ export function GamePanel({
                     </p>
                   </details>
                   <h3>실시간 투표 현황</h3>
-                  {total === 0 ? (
-                    <p className={styles.emptyVotes}>아직 제출된 표가 없습니다.</p>
-                  ) : (
-                    <ol className={styles.tally} aria-label="좌표별 득표 순위">
-                      {rows.map((t) => (
-                        <li
-                          key={t.coordinate}
-                          className={t.coordinate === game.my_vote ? styles.myCandidate : ""}
-                        >
-                          <div className={styles.tallyHeading}>
-                            <span>
-                              {t.rank}위 · <strong>{t.coordinate}</strong>
-                              {t.coordinate === game.my_vote ? " · 내 표" : ""}
-                            </span>
-                            <span>
-                              {t.count}표 · {t.label}
-                            </span>
-                          </div>
-                          <meter
-                            min={0}
-                            max={100}
-                            value={t.percent}
-                            aria-label={`${t.coordinate} 득표율`}
-                          />
-                        </li>
-                      ))}
-                    </ol>
-                  )}
+                  <div className={styles.tallyFrame}>
+                    {total === 0 ? (
+                      <p className={styles.emptyVotes}>아직 제출된 표가 없습니다.</p>
+                    ) : (
+                      <ol className={styles.tally} aria-label="좌표별 득표 순위">
+                        {rows.map((t) => (
+                          <li
+                            key={t.coordinate}
+                            className={t.coordinate === game.my_vote ? styles.myCandidate : ""}
+                          >
+                            <div className={styles.tallyHeading}>
+                              <span>
+                                {t.rank}위 · <strong>{t.coordinate}</strong>
+                                {t.coordinate === game.my_vote ? " · 내 표" : ""}
+                              </span>
+                              <span>
+                                {t.count}표 · {t.label}
+                              </span>
+                            </div>
+                            <meter
+                              min={0}
+                              max={100}
+                              value={t.percent}
+                              aria-label={`${t.coordinate} 득표율`}
+                            />
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
                   {rows.filter((t) => t.rank === 1).length > 1 && (
                     <p className={screens.muted}>
                       공동 1위입니다. 마감 때까지 동률이면 서버가 후보 중 무작위로 선택합니다.
