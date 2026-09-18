@@ -123,7 +123,9 @@ export function Board({
                       ) : vote ? (
                         <span
                           aria-hidden="true"
-                          className={`${styles.voteBadge} ${vote.rank === 1 ? styles.topVote : ""} ${chosen === coord ? styles.myVoteBadge : ""}`}
+                          className={`${styles.voteBadge} ${
+                            vote.rank === 1 ? styles.topVote : ""
+                          } ${chosen === coord ? styles.myVoteBadge : ""}`}
                         >
                           <span>{vote.label.slice(0, -1)}</span>
                           <span>%</span>
