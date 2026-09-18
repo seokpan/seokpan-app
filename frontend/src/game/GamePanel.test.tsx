@@ -80,8 +80,12 @@ describe("game screen flow", () => {
     const blackTeam = screen.getByRole("heading", { name: "● 흑팀" });
     const readyPanel = screen.getByRole("region", { name: "게임 시작 준비" });
     const board = screen.getByRole("grid", { name: "15×15 오목판" });
-    expect(blackTeam.compareDocumentPosition(readyPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(readyPanel.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      blackTeam.compareDocumentPosition(readyPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      readyPanel.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
   it("keeps pointer voting from taking focus and marks my vote distinctly", () => {
     const vote = vi.fn();

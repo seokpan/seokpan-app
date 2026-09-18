@@ -111,7 +111,12 @@ export function GamePanel({
         </p>
       </div>
       <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
-        {waiting && <div className={styles.infoStack}>{waitingControls}{chat}</div>}
+        {waiting && (
+          <div className={styles.infoStack}>
+            {waitingControls}
+            {chat}
+          </div>
+        )}
         <div>
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
@@ -262,7 +267,9 @@ export function GamePanel({
               <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
                 <div className={styles.analysisHeader}>
                   <h3>AI 판세 분석</h3>
-                  <span className={styles.analysisMark} aria-hidden="true">● ○</span>
+                  <span className={styles.analysisMark} aria-hidden="true">
+                    ● ○
+                  </span>
                 </div>
                 <div className={styles.analysisBalance} aria-label="흑과 백 판세">
                   <span>흑</span>

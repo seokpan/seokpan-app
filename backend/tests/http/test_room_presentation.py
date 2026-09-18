@@ -1,10 +1,11 @@
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from seokpan.api.identity import SessionActorType
-from seokpan.api.room import room_snapshot_response
+from seokpan.api.room import RoomApiServices, room_snapshot_response
 from seokpan.room.application import RoomRuntimeParticipant, RoomRuntimeSnapshot
 from seokpan.room.domain import ActorType, RoomConfig, RoomStatus, Team
 
@@ -38,7 +39,7 @@ async def test_room_presentation_never_exposes_participant_id_when_identity_is_m
         ),
     )
 
-    response = await room_snapshot_response(services, snapshot())
+    response = await room_snapshot_response(cast(RoomApiServices, services), snapshot())
 
     assert response.participants[0].display_name == "참가자"
     assert response.participants[0].display_name != "participant-internal-1"
@@ -60,7 +61,7 @@ async def test_room_presentation_uses_neutral_fallback_when_member_lookup_misses
         ),
     )
 
-    response = await room_snapshot_response(services, snapshot())
+    response = await room_snapshot_response(cast(RoomApiServices, services), snapshot())
 
     assert response.participants[0].display_name == "참가자"
     assert response.participants[0].display_name != "participant-internal-1"
