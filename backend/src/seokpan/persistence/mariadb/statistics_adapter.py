@@ -1,6 +1,7 @@
 """Read rankings via the Game connection; no migration or Identity credential needed."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Numeric, Select, cast, func, or_, select
@@ -73,6 +74,17 @@ def statistics_statement(query: StatisticsQuery) -> Select[Any]:
     )
 
 
+def _statistics_row(value: Mapping[str, object]) -> MemberStatistics:
+    normalized = dict(value)
+    for key in ("wins", "draws", "losses", "games_played"):
+        item = normalized.get(key)
+        if isinstance(item, Decimal):
+            if not item.is_finite() or item != item.to_integral_value():
+                raise StatisticsUnavailable()
+            normalized[key] = int(item)
+    return MemberStatistics(**normalized)
+
+
 class MariaDBStatisticsAdapter:
     def __init__(self, game_session_factory: Callable[[], AsyncSession]) -> None:
         self._sessions = game_session_factory
@@ -81,7 +93,7 @@ class MariaDBStatisticsAdapter:
         try:
             async with self._sessions() as session:
                 result = await session.execute(statistics_statement(query))
-                rows = tuple(MemberStatistics(**dict(row)) for row in result.mappings())
+                rows = tuple(_statistics_row(row) for row in result.mappings())
                 return statistics_page(rows, query)
         except SQLAlchemyError as error:
             raise StatisticsUnavailable() from error
