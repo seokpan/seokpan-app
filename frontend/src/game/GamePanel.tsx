@@ -58,20 +58,16 @@ export function GamePanel({
   );
   const isPlayer = me?.role === "PLAYER";
   const canVote = !!game && ready && !auth.busy && game.can_vote && left > 0;
-  const playerStatus =
-    isPlayer && game
-      ? `${me.team === "BLACK" ? "흑팀" : "백팀"} 참가자 · ${
-          game.current_team !== me.team
-            ? "상대 팀 투표 진행 중"
-            : auth.busy
-              ? "투표 요청 처리 중"
-              : !ready
-                ? "연결 상태 확인 중"
-                : game.turn_status !== "VOTING" || left <= 0
-                  ? "서버 마감 처리 대기"
-                  : "지금 투표할 수 있습니다."
-        }`
-      : null;
+  let playerStatus: string | null = null;
+  if (isPlayer && game && me) {
+    const team = me.team === "BLACK" ? "흑팀" : "백팀";
+    let detail = "지금 투표할 수 있습니다.";
+    if (game.current_team !== me.team) detail = "상대 팀 투표 진행 중";
+    else if (auth.busy) detail = "투표 요청 처리 중";
+    else if (!ready) detail = "연결 상태 확인 중";
+    else if (game.turn_status !== "VOTING" || left <= 0) detail = "서버 마감 처리 대기";
+    playerStatus = `${team} 참가자 · ${detail}`;
+  }
   const { total, rows } = summarizeVotes(
     game?.vote_aggregation ?? [],
     game?.valid_voter_count ?? 0,
