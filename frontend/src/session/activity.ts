@@ -21,6 +21,7 @@ export class SessionActivity {
     private readonly factory: TabChannelFactory,
     private readonly page = document,
     private readonly browser = window,
+    private readonly allowRefocus: () => boolean = () => true,
   ) {}
   start() {
     if (this.#started) return;
@@ -48,6 +49,7 @@ export class SessionActivity {
     this.browser.addEventListener("online", this.recheck);
   }
   refocus = () => {
+    if (!this.allowRefocus()) return;
     this.#check(true);
   };
   recheck = () => {
