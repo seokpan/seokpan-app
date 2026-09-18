@@ -27,6 +27,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
     initialLastGame.current = { roomId: room.room_id, gameId: room.last_game_id ?? null };
   const identity = auth.view.phase === "ready" ? auth.view.identity : null;
   const me = room?.participants.find((p) => p.participant_id === identity?.participant_id);
+  const [historicalResultRequested, setHistoricalResultRequested] = useState(false);
   const [kick, setKick] = useState<{
     id: string;
     version: number;
@@ -59,7 +60,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
     room?.status === "WAITING" &&
     room.last_game_id &&
     room.last_game_id !== dismissedResult &&
-    room.last_game_id !== initialLastGame.current?.gameId;
+    (room.last_game_id !== initialLastGame.current?.gameId || historicalResultRequested);
   const versioned = () => ({
     request_id: crypto.randomUUID(),
     expected_state_version: room!.state_version,
@@ -138,7 +139,10 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                     {room.last_game_id && (
                       <button
                         className={styles.secondaryButton}
-                        onClick={() => dismissResult(null)}
+                        onClick={() => {
+                          setHistoricalResultRequested(true);
+                          dismissResult(null);
+                        }}
                       >
                         지난 판 결과 보기
                       </button>
