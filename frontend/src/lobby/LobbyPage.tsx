@@ -129,6 +129,7 @@ export function LobbyPage() {
                   joining.room)
                 : joining.room
             }
+            refreshList={() => void stream.refresh()}
             cancel={() => setJoining(null)}
           />
         )}
