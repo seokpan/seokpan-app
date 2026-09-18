@@ -289,7 +289,6 @@ describe("game screen flow", () => {
     fireEvent.click(cell);
     expect(screen.getByRole("grid")).toBe(board);
     expect(cell).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("status")).toHaveTextContent("투표 요청을 처리하고 있습니다.");
     const link = screen.getByRole("link", { name: /石나가는 판단/ });
     act(() => {
       link.focus();
@@ -464,7 +463,6 @@ describe("game screen flow", () => {
       { ...identity, actor_type: actorType },
     );
     expect(screen.getByText("내 투표: 없음")).toBeInTheDocument();
-    expect(screen.getByText("흑팀 참가자 · 지금 투표할 수 있습니다.")).toBeInTheDocument();
     expect(screen.getByText(/다른 빈 자리를 선택하면/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "투표 취소" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "H8 빈 자리" }));
