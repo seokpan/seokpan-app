@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSession } from "../session/context";
 import { Board } from "./Board";
@@ -36,7 +36,6 @@ export function GamePanel({
   if (game && game !== cachedGame) setCachedGame(game);
   const lastGame = cachedGame?.game_id === gameId ? cachedGame : null;
   const finished = !waiting && game === null;
-  const { layoutRef, retainedHeight } = useRetainedLayout();
   const { result, error, retry } = useGameResult(gameId, roomId, finished);
   const [now, setNow] = useState(() => performance.now());
   const requested = useRef("");
@@ -111,11 +110,7 @@ export function GamePanel({
                 : "관전 중 · 이번 판에는 투표할 수 없습니다."}
         </p>
       </div>
-      <div
-        className={styles.layout}
-        ref={layoutRef}
-        style={{ minHeight: retainedHeight || undefined }}
-      >
+      <div className={styles.layout}>
         <div>
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
@@ -140,7 +135,7 @@ export function GamePanel({
                   : lastGame
                     ? "마지막으로 확인한 보드입니다. 최종 결과를 확인하고 있습니다."
                     : "아직 최종 보드를 받지 못했습니다."
-                : "숫자는 후보의 득표율 · 청록 테두리는 내 표 · 진한 표시는 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
+                : "숫자는 후보의 득표율 · 보라색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
         <div className={styles.infoStack}>
@@ -154,9 +149,7 @@ export function GamePanel({
                     투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
                   </p>
                   <p className={styles.clock} aria-label="남은 투표 시간">
-                    {game.turn_status === "VOTING" && left > 0
-                      ? `약 ${Math.ceil(left / 1000)}초`
-                      : "서버 마감 처리 대기"}
+                    {turnStatusLabel(game, left)}
                   </p>
                   <progress
                     className={styles.timeBar}
@@ -279,6 +272,15 @@ export function GamePanel({
   );
 }
 
+function turnStatusLabel(game: Game, left: number) {
+  if (game.turn_status === "VOTING")
+    return left > 0 ? `약 ${Math.ceil(left / 1000)}초` : "투표 마감 · 착수 확정 중";
+  if (game.turn_status === "RESOLVING") return "투표 집계 중";
+  if (game.turn_status === "MOVE_APPLIED") return "착수 확정 중";
+  if (game.turn_status === "PASSED") return "다음 차례 준비 중";
+  return "게임 상태 확인 중";
+}
+
 const resultTitle: Record<Result["end_reason"], string> = {
   BLACK_WIN: "흑팀 승리",
   WHITE_WIN: "백팀 승리",
@@ -287,28 +289,6 @@ const resultTitle: Record<Result["end_reason"], string> = {
   JOINT_LOSS: "양 팀 공동 패배",
   SYSTEM_INVALID: "경기 무효",
 };
-function useRetainedLayout() {
-  const layoutRef = useRef<HTMLDivElement>(null);
-  const [retainedHeight, setRetainedHeight] = useState(0);
-  useLayoutEffect(() => {
-    // Preserve room-stage height across waiting/game/result transitions.
-    // Explicit viewport changes may reflow; do not carry desktop height to mobile.
-    const element = layoutRef.current;
-    if (!element) return;
-    const measure = () =>
-      setRetainedHeight((previous) => Math.max(previous, element.getBoundingClientRect().height));
-    const resize = () => setRetainedHeight(0);
-    window.addEventListener("resize", resize);
-    measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(element);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", resize);
-    };
-  }, []);
-  return { layoutRef, retainedHeight };
-}
 function useGameResult(gameId: string, roomId: string, enabled: boolean) {
   const { api, view } = useSession();
   const [result, setResult] = useState<Result | null>(null);
