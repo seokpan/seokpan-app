@@ -129,15 +129,11 @@
 .white .lastMark {
   border-color: #172c45;
 }
-.chosen {
-  outline: 3px solid #facc15;
-  outline-offset: -3px;
-}
 .myVoteBadge {
-  border: 3px solid #facc15;
-  background: #7c3aed;
+  border-color: #4caf50;
+  background: #4caf50;
   color: white;
-  box-shadow: 0 0 0 1px #4c1d95;
+  box-shadow: none;
 }
 .myVoteMark {
   display: grid;
@@ -153,11 +149,11 @@
   z-index: 2;
 }
 .winnerStone {
-  outline: 4px solid #f59e0b;
+  outline: 4px solid #d32f2f;
   outline-offset: 2px;
   box-shadow:
     0 0 0 2px #fff,
-    0 0 14px #f59e0b;
+    0 0 14px #d32f2f;
   transform: scale(1.05);
 }
 .dimmedStone {
