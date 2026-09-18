@@ -89,6 +89,7 @@
 }
 .roomCard {
   padding: clamp(1rem, 2vw, 1.75rem);
+  overflow-anchor: none;
 }
 .guestCard {
   background: linear-gradient(145deg, #123a6c, #081b3f);
