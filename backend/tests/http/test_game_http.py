@@ -172,6 +172,54 @@ def test_playing_room_rejects_kick_without_changing_game_or_membership(
         assert white.get("/api/v1/session").json()["participant_id"] == target_id
 
 
+def test_explicit_player_leave_finishes_active_game_as_forfeit(application: FastAPI) -> None:
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as guest,
+    ):
+        owner_csrf = _member(owner, "leave01")
+        guest_csrf = _guest(guest)
+        room = _ready_room(owner, owner_csrf, guest, guest_csrf)
+        room_id = str(room["room_id"])
+        started = owner.post(
+            f"/api/v1/rooms/{room_id}/games",
+            headers={"Origin": ORIGIN, "X-CSRF-Token": owner_csrf},
+            json={
+                "request_id": str(uuid4()),
+                "expected_state_version": room["state_version"],
+            },
+        )
+        assert started.status_code == 201, started.text
+        game_id = str(started.json()["game_id"])
+        current_room = owner.get(f"/api/v1/rooms/{room_id}/snapshot").json()
+
+        left = guest.request(
+            "DELETE",
+            f"/api/v1/rooms/{room_id}/participants/me",
+            headers={"Origin": ORIGIN, "X-CSRF-Token": guest_csrf},
+            json={
+                "request_id": str(uuid4()),
+                "expected_state_version": current_room["state_version"],
+            },
+        )
+        assert left.status_code == 200, left.text
+        waiting = left.json()
+        assert waiting["status"] == "WAITING"
+        assert waiting["game_id"] is None
+        assert waiting["last_game_id"] == game_id
+        assert len(waiting["participants"]) == 1
+
+        result = owner.get(f"/api/v1/games/{game_id}/result")
+        assert result.status_code == 200, result.text
+        payload = result.json()
+        assert payload["end_reason"] == "FORFEIT"
+        assert payload["winner"] == "BLACK"
+        assert payload["stats_eligible"] is True
+        assert payload["my_rating"]["outcome"] == "WIN"
+        assert guest.get("/api/v1/session").json()["room_id"] is None
+
+
+
 def test_start_get_and_vote_headless_flow(application: FastAPI) -> None:
     with (
         TestClient(application, base_url=ORIGIN) as owner,
