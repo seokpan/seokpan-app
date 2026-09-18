@@ -22,6 +22,10 @@ class MillisecondClock(Protocol):
     def now_ms(self) -> int: ...
 
 
+class ConfirmedDepartureFinalizer(Protocol):
+    async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
+
+
 class DisconnectExpiryStatus(StrEnum):
     EXPIRED = "EXPIRED"
     STALE = "STALE"
@@ -41,10 +45,12 @@ class RoomConnectionCoordinator:
         rooms: RoomApplicationService,
         votes: VoteRuntimePort,
         clock: MillisecondClock,
+        departures: ConfirmedDepartureFinalizer | None = None,
     ) -> None:
         self._rooms = rooms
         self._votes = votes
         self._clock = clock
+        self._departures = departures
 
     async def connect(self, *, session: SessionRecord, room_id: str) -> tuple[int, int]:
         result = await self._rooms.connect(session=session, room_id=room_id)
@@ -82,6 +88,16 @@ class RoomConnectionCoordinator:
             if error.code in {"DISCONNECT_LEASE_ACTIVE", "STATE_VERSION_CONFLICT"}:
                 return DisconnectExpiryResult(due, DisconnectExpiryStatus.RETRY_REQUIRED)
             raise
+        if (
+            not result.stale_connection
+            and result.snapshot is not None
+            and result.snapshot.game_id is not None
+            and self._departures is not None
+        ):
+            await self._departures.finalize_departures(
+                room_id=due.room_id,
+                game_id=result.snapshot.game_id,
+            )
         return DisconnectExpiryResult(
             due,
             (
