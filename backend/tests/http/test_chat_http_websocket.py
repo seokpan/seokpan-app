@@ -217,6 +217,50 @@ def test_room_access_scope_and_chat_disconnect_preserve_game_connection(setup: A
         )
 
 
+def test_room_chat_accepts_shared_generation_without_local_game_registry() -> None:
+    settings = Settings(environment="test", allowed_origins=(ORIGIN,))
+    services = build_headless_services(settings)
+    assert services.room_api is not None
+    assert services.realtime_api is not None
+    assert services.chat_api is not None
+    chat_registry = type(services.realtime_api.registry)()
+    original_resolve = services.room_api.rooms.resolve_participation
+
+    async def resolve_with_shared_generation(session_digest: str) -> Any:
+        participation = await original_resolve(session_digest)
+        if participation is None:
+            return None
+        generation = services.realtime_api.registry.connection_generation(
+            participation.room_id, participation.participant_id
+        )
+        return replace(
+            participation,
+            connection_generation=generation,
+            connected=generation is not None,
+        )
+
+    services.room_api.rooms.resolve_participation = resolve_with_shared_generation  # type: ignore[method-assign]
+    services = replace(services, chat_api=replace(services.chat_api, registry=chat_registry))
+    with TestClient(create_app(settings=settings, services=services), base_url=ORIGIN) as client:
+        owner, guest = actor(client, "crosspod"), actor(client)
+        target = join(client, guest, room(client, owner))
+        room_id = target["room_id"]
+        with client.websocket_connect(f"/ws/v1/rooms/{room_id}", headers=guest.headers) as game:
+            game.receive_json()
+            assert (
+                chat_registry.connection_generation(
+                    room_id,
+                    client.get("/api/v1/session", headers=guest.headers).json()["participant_id"],
+                )
+                is None
+            )
+            with client.websocket_connect(
+                f"/ws/v1/chat/rooms/{room_id}", headers=guest.headers
+            ) as chat:
+                assert chat.receive_json()["event_type"] == "chat.ready"
+                assert send(client, guest, path=f"/api/v1/chat/rooms/{room_id}").status_code == 200
+
+
 def test_lobby_socket_cannot_survive_a_brief_room_visit(setup: Any) -> None:
     client, _ = setup
     owner, observer = actor(client, "lobbyowner"), actor(client)

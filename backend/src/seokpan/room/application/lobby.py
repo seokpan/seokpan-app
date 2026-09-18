@@ -76,6 +76,8 @@ class RoomParticipation:
     participant_id: str
     actor_type: SessionActorType
     actor_id: str
+    connection_generation: int | None = None
+    connected: bool = True
 
 
 @dataclass(slots=True, weakref_slot=True)

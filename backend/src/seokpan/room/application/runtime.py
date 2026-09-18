@@ -337,11 +337,15 @@ class RoomSessionBinding:
     participant_id: str
     session_digest: str
     actor_type: ActorType
+    connection_generation: int | None = None
+    connected: bool = True
 
     def __post_init__(self) -> None:
         validate_room_id(self.room_id)
         _validate_identifier(self.participant_id, code="INVALID_PARTICIPANT_ID")
         _validate_session_digest(self.session_digest)
+        if self.connection_generation is not None and self.connection_generation < 1:
+            raise RoomRuleViolation("INVALID_CONNECTION_GENERATION")
 
 
 class RoomRuntimePort(Protocol):

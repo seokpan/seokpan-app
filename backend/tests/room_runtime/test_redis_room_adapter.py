@@ -113,6 +113,8 @@ async def test_shared_binding_lookup_tracks_identity_session_rotation() -> None:
         "guest-1",
         ActorType.GUEST,
     )
+    assert initial.connection_generation == 1
+    assert initial.connected is True
 
     await adapter.change_identity(
         ChangeRoomIdentity(

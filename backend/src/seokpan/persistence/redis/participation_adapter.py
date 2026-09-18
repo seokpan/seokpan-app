@@ -32,6 +32,8 @@ class RedisRoomParticipationResolver:
             binding.participant_id,
             previous.actor_type,
             previous.actor_id,
+            binding.connection_generation,
+            binding.connected,
         )
 
     async def identity_transition_applied(
@@ -67,4 +69,6 @@ class RedisRoomParticipationResolver:
             binding.participant_id,
             session.actor_type,
             session.actor_id,
+            binding.connection_generation,
+            binding.connected,
         )
