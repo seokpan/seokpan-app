@@ -15,6 +15,7 @@ from seokpan.vote.application import (
     ApplyRuntimeResolution,
     CastRuntimeVote,
     CloseRuntimeTurn,
+    FinalizeRuntimeGame,
     InitializeVoteRuntime,
     RemoveRuntimeVote,
     VoteMutationResult,
@@ -186,6 +187,18 @@ class EmulatedVoteRedisClient:
                     expected_state_version=expected,
                     persistence_confirmed=bool(payload["persistence_confirmed"]),
                     next_deadline_ms=None if deadline is None else int(str(deadline)),
+                )
+            )
+        if operation == "finalize_game":
+            return await self.store.finalize_game(
+                FinalizeRuntimeGame(
+                    room_id=room_id,
+                    request_id=request_id,
+                    game_id=game_id,
+                    turn_no=turn_no,
+                    expected_state_version=expected,
+                    end_reason=EndReason(str(payload["end_reason"])),
+                    winner=Stone(str(payload["winner"])),
                 )
             )
         raise AssertionError(f"unexpected operation: {operation}")
