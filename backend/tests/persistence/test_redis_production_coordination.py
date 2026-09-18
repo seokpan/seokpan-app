@@ -47,7 +47,14 @@ def session(
 @pytest.mark.asyncio
 async def test_participation_resolution_requires_matching_shared_session() -> None:
     current = session("a")
-    binding = RoomSessionBinding("room-1", "participant-1", current.session_digest, ActorType.GUEST)
+    binding = RoomSessionBinding(
+        "room-1",
+        "participant-1",
+        current.session_digest,
+        ActorType.GUEST,
+        connection_generation=7,
+        connected=True,
+    )
     rooms = SimpleNamespace(
         find_by_session=AsyncMock(return_value=binding),
         find_by_participant=AsyncMock(return_value=binding),
@@ -62,6 +69,8 @@ async def test_participation_resolution_requires_matching_shared_session() -> No
         "participant-1",
         "guest-1",
     )
+    assert resolved.connection_generation == 7
+    assert resolved.connected is True
 
     sessions.get.return_value = None
     assert await resolver.by_participant("participant-1") is None
