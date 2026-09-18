@@ -84,7 +84,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
           방 나가기
         </button>
       </div>
-      {view.phase !== "ready" && (
+      {view.phase !== "ready" && view.phase !== "syncing" && (
         <div role="status" className={styles.notice}>
           {view.message || "최신 방 상태를 확인하고 있습니다. 잠시 기다려 주세요."}
         </div>
