@@ -320,6 +320,28 @@ class VoteTurnGame:
         self._resolutions[self._turn_no] = resolution
         return resolution
 
+    def finalize_external_result(self, *, end_reason: EndReason, winner: Stone) -> None:
+        """Apply a provider-confirmed non-board result and stop accepting votes."""
+        if self.game.status is not GameStatus.ACTIVE:
+            conclusion = self.game.conclusion
+            if conclusion is not None and conclusion.end_reason is end_reason and conclusion.winner is winner:
+                return
+            raise VoteRuleViolation("GAME_ALREADY_FINISHED")
+        try:
+            if end_reason is EndReason.FORFEIT:
+                if winner not in {Stone.BLACK, Stone.WHITE}:
+                    raise VoteRuleViolation("INVALID_EXTERNAL_GAME_RESULT")
+                losing_team = Stone.WHITE if winner is Stone.BLACK else Stone.BLACK
+                self.game.finish_forfeit(losing_team=losing_team)
+            elif end_reason is EndReason.JOINT_LOSS and winner is Stone.EMPTY:
+                self.game.finish_joint_loss()
+            else:
+                raise VoteRuleViolation("INVALID_EXTERNAL_GAME_RESULT")
+        except GameRuleViolation as error:
+            raise VoteRuleViolation(error.code) from error
+        self._votes.clear()
+        self._turn_status = TurnStatus.PASSED
+
     def _close_as_pass(self, *, next_deadline_ms: int | None) -> TurnClosure:
         next_passes = self._consecutive_passes + 1
         if next_passes < 2:
