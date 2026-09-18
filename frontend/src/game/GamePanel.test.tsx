@@ -75,6 +75,23 @@ async function mount(
   return { ...app, socket, factory, fetcher };
 }
 describe("game screen flow", () => {
+  it("keeps pointer voting from taking focus and marks my vote distinctly", () => {
+    const vote = vi.fn();
+    render(
+      <Board
+        cells={[]}
+        chosen="I8"
+        votes={[{ coordinate: "I8", count: 1, percent: 100, label: "100.0%", rank: 1 }]}
+        canVote
+        onVote={vote}
+      />,
+    );
+    const cell = screen.getByRole("button", { name: "I8 빈 자리, 내 투표, 1표 100.0%" });
+    expect(fireEvent.mouseDown(cell, { detail: 1 })).toBe(false);
+    fireEvent.click(cell);
+    expect(vote).toHaveBeenCalledWith("I8");
+    expect(within(cell).getByText("내")).toBeInTheDocument();
+  });
   it("keeps the board read-only through delayed result, failure and retry", async () => {
     let room = { ...waiting, status: "PLAYING", game_id: "g1" as string | null };
     let game: ReturnType<typeof gameFixture> | null = {
