@@ -120,9 +120,7 @@ def build_headless_services(
         clock=clock,
         events=events,
     )
-    room_api = RoomApiServices(identity_api, room_service)
     game_api = GameApiServices(identity_api, game_service)
-    connections = RoomConnectionCoordinator(rooms=room_service, votes=votes, clock=clock)
     registry = ActiveWebSocketRegistry()
     due_turns: DueTurnSource = (
         MemoryRoomTurnSource(room_runtime, votes) if discover_turns else InMemoryDueTurnSource()
@@ -138,6 +136,13 @@ def build_headless_services(
         clock=clock,
         runner_id="headless",
         events=events,
+    )
+    room_api = RoomApiServices(identity_api, room_service, turn_resolution)
+    connections = RoomConnectionCoordinator(
+        rooms=room_service,
+        votes=votes,
+        clock=clock,
+        departures=turn_resolution,
     )
     return ApplicationServices(
         identity_api,
@@ -192,7 +197,6 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         dummy_password_hash=providers.passwords.hash(providers.tokens.issue()),
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
-    room_api = RoomApiServices(identity_api, room_service)
     game_service = GameApplicationService(
         rooms=room_service,
         games=providers.games,
@@ -202,16 +206,30 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
     )
     game_api = GameApiServices(identity_api, game_service)
     registry = ActiveWebSocketRegistry()
-    connections = RoomConnectionCoordinator(
-        rooms=room_service,
-        votes=providers.votes,
-        clock=providers.clock,
-    )
     turn_coordinator = RedisTurnCoordinator(
         providers.redis_client,
         providers.rooms,
         providers.votes,
         providers.games,
+    )
+    turn_resolution = TurnResolutionRunner(
+        due_turns=turn_coordinator,
+        finalization_gate=turn_coordinator,
+        tie_selector=turn_coordinator,
+        tie_audit=turn_coordinator,
+        votes=providers.votes,
+        games=providers.games,
+        rooms=providers.rooms,
+        clock=providers.clock,
+        runner_id=settings.instance_id,
+        events=providers.realtime,
+    )
+    room_api = RoomApiServices(identity_api, room_service, turn_resolution)
+    connections = RoomConnectionCoordinator(
+        rooms=room_service,
+        votes=providers.votes,
+        clock=providers.clock,
+        departures=turn_resolution,
     )
     return ApplicationServices(
         identity_api=identity_api,
@@ -230,18 +248,7 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
             connections=connections,
             clock=providers.clock,
         ),
-        turn_resolution=TurnResolutionRunner(
-            due_turns=turn_coordinator,
-            finalization_gate=turn_coordinator,
-            tie_selector=turn_coordinator,
-            tie_audit=turn_coordinator,
-            votes=providers.votes,
-            games=providers.games,
-            rooms=providers.rooms,
-            clock=providers.clock,
-            runner_id=settings.instance_id,
-            events=providers.realtime,
-        ),
+        turn_resolution=turn_resolution,
         statistics_api=StatisticsApiServices(identity_api, providers.statistics),
         chat_api=ChatApiServices(identity_api, room_service, providers.chat, registry),
         presence_api=PresenceApiServices(identity_api, providers.presence, registry),
