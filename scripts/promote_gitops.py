@@ -295,25 +295,32 @@ def find_prs(token: str, branch: str, state: str) -> list[dict[str, object]]:
     return [item for item in data if isinstance(item, dict)]
 
 
-def verify_duplicate_state(token: str, branch: str) -> str | None:
+def check_no_conflicting_promotion(token: str, branch: str) -> None:
+    """Fail-closed duplicate/stale promotion guard.
+
+    기존 open PR을 내용 대조 없이 자동 재사용하지 않는다 — 있으면 항상 사람이
+    직접 확인(merge 또는 close)한 뒤에만 자동화가 다시 진행되도록 한다.
+    closed-unmerged PR도 동일하게 fail-closed.
+    """
     open_prs = find_prs(token, branch, "open")
     if len(open_prs) > 1:
         raise PromotionError(f"multiple open promotion PRs found for {branch}")
     if len(open_prs) == 1:
-        url = str(open_prs[0].get("html_url") or "")
-        if not url:
-            raise PromotionError("open promotion PR has no html_url")
-        return url
+        raise PromotionError(
+            "PROMOTION_OPEN_PR_REQUIRES_REVIEW: an existing open promotion PR "
+            "already exists for this source and must be resolved (merged or "
+            f"closed) manually before automation can proceed: "
+            f"{open_prs[0].get('html_url')}"
+        )
 
     closed_prs = find_prs(token, branch, "closed")
     for pr in closed_prs:
         if pr.get("merged_at"):
             continue
         raise PromotionError(
-            "PROMOTION_CLOSED_UNMERGED: an earlier promotion PR for this source "
-            f"was closed without merge: {pr.get('html_url')}"
+            "PROMOTION_CLOSED_UNMERGED: an earlier promotion PR for this "
+            f"source was closed without merge: {pr.get('html_url')}"
         )
-    return None
 
 
 def make_askpass(directory: Path) -> Path:
@@ -571,19 +578,7 @@ def main() -> int:
     ]
 
     branch = f"promotion/app-{current_sha[:12]}"
-    existing_pr = verify_duplicate_state(github_token, branch)
-    if existing_pr:
-        print(f"PROMOTION_EXISTING_OPEN_PR={existing_pr}")
-        write_result(
-            Path(args.result_file),
-            status="EXISTING_OPEN_PR",
-            current_sha=current_sha,
-            gitops_base_sha="",
-            branch=branch,
-            pr_url=existing_pr,
-            plans=[],
-        )
-        return 0
+    check_no_conflicting_promotion(github_token, branch)
 
     tmp = Path(tempfile.mkdtemp(prefix="seokpan-gitops-promotion-"))
     try:

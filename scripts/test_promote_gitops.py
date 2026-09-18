@@ -120,5 +120,36 @@ class PullRequestBodyTests(unittest.TestCase):
         self.assertIn("GitOps base commit", body)
 
 
+class ConflictingPromotionTests(unittest.TestCase):
+    def test_open_pr_requires_manual_review(self) -> None:
+        def fake_github_request(token, method, path, *, query=None, body=None):
+            self.assertEqual(query.get("state"), "open")
+            return [{"html_url": "https://github.com/seokpan/seokpan-gitops/pull/999"}]
+
+        original = target.github_request
+        target.github_request = fake_github_request
+        try:
+            with self.assertRaises(target.PromotionError) as ctx:
+                target.check_no_conflicting_promotion("tok", "promotion/app-abc123456789")
+            self.assertIn("PROMOTION_OPEN_PR_REQUIRES_REVIEW", str(ctx.exception))
+        finally:
+            target.github_request = original
+
+    def test_closed_unmerged_pr_fails_closed(self) -> None:
+        def fake_github_request(token, method, path, *, query=None, body=None):
+            if query.get("state") == "open":
+                return []
+            return [{"html_url": "...", "merged_at": None}]
+
+        original = target.github_request
+        target.github_request = fake_github_request
+        try:
+            with self.assertRaises(target.PromotionError) as ctx:
+                target.check_no_conflicting_promotion("tok", "promotion/app-abc123456789")
+            self.assertIn("PROMOTION_CLOSED_UNMERGED", str(ctx.exception))
+        finally:
+            target.github_request = original
+
+
 if __name__ == "__main__":
     unittest.main()
