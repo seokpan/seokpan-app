@@ -242,25 +242,23 @@ def test_room_chat_accepts_shared_generation_without_local_game_registry() -> No
     services.room_api.rooms.resolve_participation = resolve_with_shared_generation  # type: ignore[method-assign]
     services = replace(services, chat_api=replace(services.chat_api, registry=chat_registry))
     with TestClient(create_app(settings=settings, services=services), base_url=ORIGIN) as client:
-        owner, guest = actor(client, "crosspodowner"), actor(client)
+        owner, guest = actor(client, "crosspod"), actor(client)
         target = join(client, guest, room(client, owner))
         room_id = target["room_id"]
-        with client.websocket_connect(
-            f"/ws/v1/rooms/{room_id}", headers=guest.headers
-        ) as game:
+        with client.websocket_connect(f"/ws/v1/rooms/{room_id}", headers=guest.headers) as game:
             game.receive_json()
-            assert chat_registry.connection_generation(
-                room_id,
-                client.get("/api/v1/session", headers=guest.headers).json()["participant_id"],
-            ) is None
+            assert (
+                chat_registry.connection_generation(
+                    room_id,
+                    client.get("/api/v1/session", headers=guest.headers).json()["participant_id"],
+                )
+                is None
+            )
             with client.websocket_connect(
                 f"/ws/v1/chat/rooms/{room_id}", headers=guest.headers
             ) as chat:
                 assert chat.receive_json()["event_type"] == "chat.ready"
-                assert (
-                    send(client, guest, path=f"/api/v1/chat/rooms/{room_id}").status_code
-                    == 200
-                )
+                assert send(client, guest, path=f"/api/v1/chat/rooms/{room_id}").status_code == 200
 
 
 def test_lobby_socket_cannot_survive_a_brief_room_visit(setup: Any) -> None:
