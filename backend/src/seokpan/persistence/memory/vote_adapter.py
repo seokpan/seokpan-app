@@ -18,6 +18,7 @@ from seokpan.vote.application import (
     ApplyRuntimeResolution,
     CastRuntimeVote,
     CloseRuntimeTurn,
+    FinalizeRuntimeGame,
     InitializeVoteRuntime,
     RemoveRuntimeVote,
     ResolverLease,
@@ -254,6 +255,26 @@ class InMemoryVoteRuntimeAdapter:
                 self._snapshot(command.room_id, state),
                 resolution=resolution,
             ),
+        )
+
+    async def finalize_game(self, command: FinalizeRuntimeGame) -> VoteMutationResult:
+        replay = self._replay(command)
+        if replay is not None:
+            return replay
+        state = self._require(command)
+        if state.game.turn_no != command.turn_no:
+            raise VoteRuleViolation("STALE_TURN")
+        state.game.finalize_external_result(
+            end_reason=command.end_reason,
+            winner=command.winner,
+        )
+        state.resolver = None
+        state.closure = None
+        state.valid_voter_count = 0
+        state.state_version += 1
+        return self._remember(
+            command,
+            VoteMutationResult(self._snapshot(command.room_id, state)),
         )
 
     def _require(self, command: _VoteCommand) -> _VoteState:
