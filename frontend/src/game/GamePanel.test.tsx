@@ -90,7 +90,7 @@ describe("game screen flow", () => {
     expect(fireEvent.mouseDown(cell, { detail: 1 })).toBe(false);
     fireEvent.click(cell);
     expect(vote).toHaveBeenCalledWith("I8");
-    expect(within(cell).getByText("내")).toBeInTheDocument();
+    expect(within(cell).getByText("나")).toBeInTheDocument();
   });
   it("keeps the board read-only through delayed result, failure and retry", async () => {
     let room = { ...waiting, status: "PLAYING", game_id: "g1" as string | null };
