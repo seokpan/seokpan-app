@@ -87,19 +87,8 @@
   border-radius: 0;
   color: #9b2424;
   background:
-    linear-gradient(
-      90deg,
-      transparent calc(50% - 0.5px),
-      #a28a53 calc(50% - 0.5px),
-      #a28a53 calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    ),
-    linear-gradient(
-      transparent calc(50% - 0.5px),
-      #a28a53 calc(50% - 0.5px),
-      #a28a53 calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    );
+    linear-gradient(#9a8149 0 0) center / 1px 100% no-repeat,
+    linear-gradient(#9a8149 0 0) center / 100% 1px no-repeat;
 }
 .cell:focus-visible {
   outline: 3px solid #174a9d;
@@ -141,30 +130,39 @@
   border-color: #172c45;
 }
 .chosen {
-  outline: 3px solid #007c87;
+  outline: 3px solid #facc15;
   outline-offset: -3px;
 }
 .myVoteBadge {
-  box-shadow: inset 0 0 0 3px #00a7b5;
+  border: 3px solid #facc15;
+  background: #7c3aed;
+  color: white;
+  box-shadow: 0 0 0 1px #4c1d95;
 }
 .myVoteMark {
-  position: absolute;
-  top: 2px;
-  right: 2px;
   display: grid;
   place-items: center;
-  min-width: 1rem;
-  height: 1rem;
-  padding: 0 0.15rem;
-  border-radius: 999px;
-  color: white;
-  background: #007c87;
-  font-size: 0.58rem;
+  width: 100%;
+  height: 100%;
+  font-size: clamp(0.72rem, 1.35vw, 1rem);
   line-height: 1;
-  font-weight: 800;
+  font-weight: 900;
 }
 .winning {
-  box-shadow: inset 0 0 0 3px #007c87;
+  position: relative;
+  z-index: 2;
+}
+.winnerStone {
+  outline: 4px solid #f59e0b;
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 14px #f59e0b;
+  transform: scale(1.05);
+}
+.dimmedStone {
+  opacity: 0.42;
+  filter: saturate(0.45);
 }
 .infoPanel {
   padding: 1.25rem;
@@ -262,6 +260,8 @@
     flex-direction: column;
     font-size: clamp(7px, 2.5cqw, 10px);
     line-height: 1;
+  }
+  .voteBadge:not(.myVoteBadge) {
     border-width: 0;
   }
 }
