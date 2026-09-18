@@ -110,6 +110,9 @@
 .cell[aria-disabled="false"] {
   cursor: pointer;
 }
+.cell[aria-disabled="true"] {
+  cursor: default;
+}
 .black,
 .white {
   display: block;
