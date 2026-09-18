@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Header, Request, status
@@ -24,10 +24,15 @@ from seokpan.room.application import RoomApplicationService, RoomMutationResult,
 from seokpan.room.domain import RoomConfig, RoomRuleViolation, RoomStatus, RoomVisibility, Team
 
 
+class ConfirmedDepartureFinalizer(Protocol):
+    async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RoomApiServices:
     identity: IdentityApiServices
     rooms: RoomApplicationService
+    departures: ConfirmedDepartureFinalizer | None = None
 
 
 class CreateRoomRequest(BaseModel):
@@ -223,9 +228,20 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 expected_state_version=payload.expected_state_version,
             ),
         )
-        if result.snapshot is None:
+        if (
+            not result.replayed
+            and result.snapshot is not None
+            and result.snapshot.game_id is not None
+            and services.departures is not None
+        ):
+            await services.departures.finalize_departures(
+                room_id=room_id,
+                game_id=result.snapshot.game_id,
+            )
+        latest = await services.rooms.get(room_id)
+        if latest is None:
             return None
-        return await room_snapshot_response(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, latest, result.replayed)
 
     @router.post(
         "/{room_id}/participants/{participant_id}/kick",
