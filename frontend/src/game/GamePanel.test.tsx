@@ -149,6 +149,8 @@ describe("game screen flow", () => {
           finish = resolve;
         }),
     );
+    expect(screen.queryByText("저장된 결과를 불러오고 있습니다.")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "지난 판 결과 보기" }));
     await screen.findByText("저장된 결과를 불러오고 있습니다.");
     const previousBoard = screen.getByRole("grid");
     game = { ...gameFixture(), game_id: "g2" };
@@ -484,6 +486,8 @@ describe("game screen flow", () => {
           resolve = done;
         }),
     );
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "지난 판 결과 보기" }));
     await waitFor(() =>
       expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(true),
     );
