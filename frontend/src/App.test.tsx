@@ -81,6 +81,56 @@ function fill(login = "member01", password = "pass word12") {
 }
 
 describe("authentication and lobby screens", () => {
+  it("separates primary navigation, service utility and account controls", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(member))
+      .mockResolvedValueOnce(json({ rooms: [], stream_version: 1 }));
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(within(navigation).getByRole("link", { name: "로비" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "랭킹" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    expect(screen.getByRole("group", { name: "서비스 상태와 도움말" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "계정" })).toContainElement(
+      screen.getByRole("button", { name: "내 전적 메뉴" }),
+    );
+  });
+
+  it("keeps Guest upgrade action in the account group instead of primary navigation", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(guest))
+      .mockResolvedValueOnce(json({ rooms: [], stream_version: 1 }));
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(within(navigation).queryByRole("link", { name: "Member 로그인" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "계정" })).getByRole("link", {
+        name: "Member 로그인",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks rankings as the current primary destination", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(member));
+    mount(fetcher, "/rankings");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(await within(navigation).findByRole("link", { name: "랭킹" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "로비" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
   it("does not carry logout feedback into the registration dialog", async () => {
     let loggedOut = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
