@@ -80,6 +80,8 @@ export function Board({
                 const blocked = !canVote || !!stone || forbidden.includes(coord);
                 const vote = !stone ? tally.get(coord) : undefined;
                 const last = !!stone && lastMove?.coordinate === coord && lastMove.team === stone;
+                const won = !!stone && winning.includes(coord);
+                const dimmed = !!stone && winning.length > 0 && !won;
                 return (
                   <span role="gridcell" key={coord}>
                     <button
@@ -90,7 +92,7 @@ export function Board({
                       data-command-focus={
                         focusScope ? JSON.stringify([focusScope, coord]) : undefined
                       }
-                      className={`${styles.cell} ${winning.includes(coord) ? styles.winning : ""} ${chosen === coord ? styles.chosen : ""}`}
+                      className={`${styles.cell} ${won ? styles.winning : ""} ${chosen === coord ? styles.chosen : ""}`}
                       aria-label={`${coord} ${stone === "BLACK" ? "흑돌" : stone === "WHITE" ? "백돌" : forbidden.includes(coord) ? "흑 금수" : "빈 자리"}${last ? ", 마지막 착수" : ""}${chosen === coord ? ", 내 투표" : ""}${vote ? `, ${vote.count}표 ${vote.label}` : ""}`}
                       aria-disabled={blocked}
                       onFocus={() => setFocus(index)}
@@ -116,7 +118,7 @@ export function Board({
                       {stone ? (
                         <span
                           aria-hidden="true"
-                          className={`${stone === "BLACK" ? styles.black : styles.white} ${last ? styles.lastStone : ""}`}
+                          className={`${stone === "BLACK" ? styles.black : styles.white} ${last ? styles.lastStone : ""} ${won ? styles.winnerStone : ""} ${dimmed ? styles.dimmedStone : ""}`}
                         >
                           {last && <span className={styles.lastMark} />}
                         </span>
@@ -127,12 +129,13 @@ export function Board({
                             vote.rank === 1 ? styles.topVote : ""
                           } ${chosen === coord ? styles.myVoteBadge : ""}`}
                         >
-                          <span>{vote.label.slice(0, -1)}</span>
-                          <span>%</span>
-                          {chosen === coord && (
-                            <span aria-hidden="true" className={styles.myVoteMark}>
-                              내
-                            </span>
+                          {chosen === coord ? (
+                            <span className={styles.myVoteMark}>나</span>
+                          ) : (
+                            <>
+                              <span>{vote.label.slice(0, -1)}</span>
+                              <span>%</span>
+                            </>
                           )}
                         </span>
                       ) : (
