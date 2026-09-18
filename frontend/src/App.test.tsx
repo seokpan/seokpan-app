@@ -29,6 +29,41 @@ const room = {
   status: "WAITING",
   state_version: 4,
 };
+const inRoomMember = {
+  ...member,
+  room_id: "room-one",
+  participant_id: "participant-one",
+};
+const roomState = {
+  room: {
+    room_id: "room-one",
+    owner_id: "participant-one",
+    name: "한 수 같이 둬요",
+    visibility: "PUBLIC",
+    password_required: false,
+    max_participants: 4,
+    minimum_ready: 2,
+    vote_seconds: 15,
+    status: "WAITING",
+    state_version: 4,
+    game_id: null,
+    last_game_id: null,
+    replayed: false,
+    participants: [
+      {
+        participant_id: "participant-one",
+        actor_type: "MEMBER",
+        display_name: "돌하나",
+        joined_order: 1,
+        connected: true,
+        ready: false,
+        team: "BLACK",
+      },
+    ],
+  },
+  game: null,
+  stream_version: 4,
+};
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -116,6 +151,22 @@ describe("authentication and lobby screens", () => {
         name: "Member 로그인",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("labels the logical room destination as 게임방 while participating", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf") return json(inRoomMember);
+      if (url === "/api/v1/rooms/room-one/state") return json(roomState);
+      throw new Error(`Unexpected request ${url}`);
+    });
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(within(navigation).getByRole("link", { name: "게임방" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).queryByRole("link", { name: "로비" })).not.toBeInTheDocument();
   });
 
   it("does not duplicate the Member login action on the login screen", async () => {
