@@ -198,7 +198,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=8,
+    version=9,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -269,7 +269,8 @@ if operation == 'join' then
   return save({snapshot = snapshot(), connection_generation = 1})
 end
 
-local current_participant = participant(payload.participant_id or payload.actor_id)
+local current_participant_id = payload.participant_id or payload.actor_id
+local current_participant = current_participant_id and participant(current_participant_id) or nil
 if not current_participant and operation ~= 'kick' and operation ~= 'complete_game' then
   if operation == 'disconnect' or operation == 'expire_disconnect' then
     return rejection('CONNECTION_NOT_FOUND')
