@@ -23,6 +23,7 @@ from seokpan.game.domain import (
     GameResultService,
     GameRuleViolation,
     GameStatus,
+    Stone,
 )
 from seokpan.room.application import (
     CompleteRoomGame,
@@ -36,6 +37,7 @@ from seokpan.vote.application import (
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
     CloseRuntimeTurn,
+    FinalizeRuntimeGame,
     VoteRuntimePort,
     VoteRuntimeSnapshot,
 )
@@ -149,6 +151,79 @@ class TurnResolutionRunner:
         self._clock = clock
         self._runner_id = hashlib.sha256(runner_id.encode()).hexdigest()[:12]
         self._events = events or NullRealtimeEventAdapter()
+
+    async def finalize_departures(self, *, room_id: str, game_id: str) -> bool:
+        """Finalize an active Game after Room state confirms player departures."""
+        room = await self._rooms.get(room_id)
+        runtime = await self._votes.get(room_id)
+        if (
+            room is None
+            or runtime is None
+            or room.game_id != game_id
+            or runtime.game_id != game_id
+        ):
+            return False
+
+        history = await self._games.load_game(game_id)
+        if history is None:
+            raise PersistenceRuleViolation("GAME_NOT_FOUND")
+        roster_ids = {item.participant_id for item in history.participants}
+        present_ids = {item.participant_id for item in room.participants}
+        departed = frozenset(roster_ids - present_ids)
+        if not departed:
+            return False
+
+        stored = await self._games.load_result(game_id)
+        if stored is None:
+            game = self._rebuild_before_turn(runtime, history)
+            try:
+                result = GameResultService(
+                    game_id=game_id,
+                    game=game,
+                    participants=history.participants,
+                ).finalize_confirmed_departures(departed_participant_ids=departed)
+            except GameResultRuleViolation as error:
+                if error.code == "FORFEIT_NOT_CONFIRMED":
+                    return False
+                raise
+            command = FinalizeGameCommand(
+                result=result,
+                ended_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+            )
+            if not await self._games.result_matches(command):
+                await self._games.finalize_game(command)
+            end_reason = result.end_reason
+            winner = result.winner
+        else:
+            if stored.end_reason not in {EndReason.FORFEIT, EndReason.JOINT_LOSS}:
+                return False
+            end_reason = stored.end_reason
+            winner = stored.winner
+
+        runtime = await self._votes.get(room_id)
+        if runtime is None or runtime.game_id != game_id:
+            return False
+        if runtime.game_status is GameStatus.ACTIVE:
+            finalized = await self._votes.finalize_game(
+                FinalizeRuntimeGame(
+                    room_id=room_id,
+                    request_id=_stable_id(
+                        "departure-finalize",
+                        DueTurn(room_id, game_id, runtime.turn_no),
+                    ),
+                    game_id=game_id,
+                    turn_no=runtime.turn_no,
+                    expected_state_version=runtime.state_version,
+                    end_reason=end_reason,
+                    winner=winner,
+                )
+            )
+            runtime = finalized.snapshot
+
+        due = DueTurn(room_id, game_id, runtime.turn_no)
+        await self._game_finished(due, runtime)
+        await self._complete_room(due)
+        return True
 
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
