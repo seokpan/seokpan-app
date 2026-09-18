@@ -1,6 +1,7 @@
 """Read rankings via the Game connection; no migration or Identity credential needed."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Numeric, Select, cast, func, or_, select
@@ -73,6 +74,45 @@ def statistics_statement(query: StatisticsQuery) -> Select[Any]:
     )
 
 
+def _required_int(value: object) -> int:
+    if type(value) is not int:
+        raise StatisticsUnavailable()
+    return value
+
+
+def _counter(value: object) -> int:
+    if type(value) is int:
+        return value
+    if isinstance(value, Decimal) and value.is_finite() and value == value.to_integral_value():
+        return int(value)
+    raise StatisticsUnavailable()
+
+
+def _required_string(value: object) -> str:
+    if not isinstance(value, str):
+        raise StatisticsUnavailable()
+    return value
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return _required_int(value)
+
+
+def _statistics_row(value: Mapping[str, object]) -> MemberStatistics:
+    return MemberStatistics(
+        member_id=_required_int(value.get("member_id")),
+        nickname=_required_string(value.get("nickname")),
+        rating=_required_int(value.get("rating")),
+        wins=_counter(value.get("wins")),
+        draws=_counter(value.get("draws")),
+        losses=_counter(value.get("losses")),
+        games_played=_counter(value.get("games_played")),
+        rank=_optional_int(value.get("rank")),
+    )
+
+
 class MariaDBStatisticsAdapter:
     def __init__(self, game_session_factory: Callable[[], AsyncSession]) -> None:
         self._sessions = game_session_factory
@@ -81,7 +121,7 @@ class MariaDBStatisticsAdapter:
         try:
             async with self._sessions() as session:
                 result = await session.execute(statistics_statement(query))
-                rows = tuple(MemberStatistics(**dict(row)) for row in result.mappings())
+                rows = tuple(_statistics_row(dict(row)) for row in result.mappings())
                 return statistics_page(rows, query)
         except SQLAlchemyError as error:
             raise StatisticsUnavailable() from error

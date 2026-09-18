@@ -1,5 +1,6 @@
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from seokpan.game.domain import (
 from seokpan.identity.application import CreateMember
 from seokpan.persistence.mariadb.statistics_adapter import (
     MariaDBStatisticsAdapter,
+    _statistics_row,
     statistics_statement,
 )
 from seokpan.persistence.memory.game_adapter import InMemoryGamePersistenceAdapter
@@ -141,6 +143,38 @@ def test_mariadb_statement_is_one_read_without_private_columns_or_new_tables() -
         "games_played",
         "rank",
     ]
+
+
+def test_mariadb_row_normalizes_integral_decimal_counters() -> None:
+    row = {
+        "member_id": 1,
+        "nickname": "가가",
+        "rating": 1000,
+        "wins": Decimal("2"),
+        "draws": Decimal("0"),
+        "losses": Decimal("1"),
+        "games_played": Decimal("3"),
+        "rank": 1,
+    }
+
+    assert _statistics_row(row) == MemberStatistics(1, "가가", 1000, 2, 0, 1, 3, 1)
+
+
+@pytest.mark.parametrize("value", [Decimal("1.5"), Decimal("NaN"), Decimal("Infinity")])
+def test_mariadb_row_rejects_non_integral_decimal_counters(value: Decimal) -> None:
+    row = {
+        "member_id": 1,
+        "nickname": "가가",
+        "rating": 1000,
+        "wins": value,
+        "draws": Decimal("0"),
+        "losses": Decimal("0"),
+        "games_played": Decimal("1"),
+        "rank": 1,
+    }
+
+    with pytest.raises(StatisticsUnavailable):
+        _statistics_row(row)
 
 
 @pytest.mark.asyncio
