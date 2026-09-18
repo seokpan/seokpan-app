@@ -32,10 +32,14 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "HDEL', KEYS[4], payload.target_id" in kick
     assert "advance_version()" in kick
     assert "remove_vote(" not in kick and "update_game_player(" not in kick
-    assert ROOM_MUTATION.version == 8
+    assert ROOM_MUTATION.version == 9
     participant_guard = ROOM_MUTATION.source.split(
-        "local current_participant = participant(payload.participant_id or payload.actor_id)", 1
+        "local current_participant_id = payload.participant_id or payload.actor_id", 1
     )[1].split("if operation ~= 'disconnect'", 1)[0]
+    assert (
+        "local current_participant = current_participant_id and "
+        "participant(current_participant_id) or nil"
+    ) in participant_guard
     assert "operation ~= 'complete_game'" in participant_guard
     assert "operation == 'disconnect' or operation == 'expire_disconnect'" in participant_guard
     assert "rejection('CONNECTION_NOT_FOUND')" in participant_guard
@@ -43,10 +47,14 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
 
 def test_complete_game_is_not_blocked_by_participant_guard() -> None:
     source = ROOM_MUTATION.source
-    guard = source.index("local current_participant = participant")
+    guard = source.index("local current_participant_id = payload.participant_id or payload.actor_id")
     complete = source.index("if operation == 'complete_game' then")
     assert guard < complete
     participant_guard = source[guard:complete]
+    assert (
+        "local current_participant = current_participant_id and "
+        "participant(current_participant_id) or nil"
+    ) in participant_guard
     assert "operation ~= 'complete_game'" in participant_guard
     complete_block = source[complete : source.index("if operation == 'connect' then")]
     assert "expected_version_matches()" in complete_block
