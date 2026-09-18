@@ -58,25 +58,6 @@ export function GamePanel({
   );
   const isPlayer = me?.role === "PLAYER";
   const canVote = !!game && ready && !auth.busy && game.can_vote && left > 0;
-  let playerStatus: string | null = null;
-  if (isPlayer && game && me) {
-    const team = me.team === "BLACK" ? "흑팀" : "백팀";
-    let detail = "지금 투표할 수 있습니다.";
-    if (!ready) {
-      detail = "연결 상태 확인 중";
-    } else if (auth.busy) {
-      detail = "투표 요청 처리 중";
-    } else if (game.turn_status !== "VOTING" || left <= 0) {
-      detail = "서버 마감 처리 대기";
-    } else if (game.current_team !== me.team) {
-      detail = "상대 팀 투표 진행 중";
-    } else if (!game.can_vote) {
-      detail = "현재는 투표할 수 없습니다.";
-    }
-    playerStatus = `${team} 참가자 · ${detail}`;
-  }
-  const participantStatus =
-    playerStatus ?? "관전 중 · 이번 판에는 투표할 수 없습니다.";
   const { total, rows } = summarizeVotes(
     game?.vote_aggregation ?? [],
     game?.valid_voter_count ?? 0,
@@ -125,7 +106,9 @@ export function GamePanel({
               ? result
                 ? "최종 보드 · 보기 전용"
                 : "결과 확인 중 · 보기 전용"
-              : participantStatus}
+              : me?.role === "PLAYER"
+                ? `${me.team === "BLACK" ? "흑팀" : "백팀"} 참가자`
+                : "관전 중 · 이번 판에는 투표할 수 없습니다."}
         </p>
       </div>
       <div
@@ -232,11 +215,6 @@ export function GamePanel({
                   {isPlayer ? (
                     <>
                       <p>내 투표: {game.my_vote ?? "없음"}</p>
-                      {auth.busy && (
-                        <p role="status" className={screens.muted}>
-                          투표 요청을 처리하고 있습니다.
-                        </p>
-                      )}
                       <button
                         className={screens.secondaryButton}
                         disabled={!canVote || game.my_vote === null}
