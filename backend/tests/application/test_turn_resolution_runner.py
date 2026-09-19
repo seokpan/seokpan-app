@@ -18,7 +18,7 @@ from seokpan.game.application import (
     TurnProcessingStatus,
     TurnResolutionRunner,
 )
-from seokpan.game.domain import EndReason, GameStatus, Stone
+from seokpan.game.domain import Coordinate, EndReason, GameStatus, Stone
 from seokpan.persistence.memory import (
     InMemoryDueTurnSource,
     InMemoryGamePersistenceAdapter,
@@ -895,3 +895,44 @@ async def test_system_invalid_closure_persists_from_history_when_vote_runtime_is
     assert stored.status is GameStatus.SYSTEM_INVALID
     assert stored.end_reason is EndReason.SYSTEM_INVALID
     assert stored.rating_adjustments == ()
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_preserves_board_conclusion_proven_by_durable_moves() -> None:
+    runner, _clock, _rooms, votes, games, _ = await setup_runner()
+    for move_no, turn_no, coordinate in (
+        (1, 1, "A1"),
+        (2, 3, "B1"),
+        (3, 5, "C1"),
+        (4, 7, "D1"),
+        (5, 9, "E1"),
+    ):
+        await games.append_move(
+            OfficialMoveRecord(
+                game_id=GAME_ID,
+                turn_no=turn_no,
+                move_no=move_no,
+                team=Stone.BLACK,
+                coordinate=Coordinate.parse(coordinate),
+                final_vote_count=1,
+                valid_voter_count=1,
+                confirmed_at=datetime.fromtimestamp(turn_no, UTC),
+            )
+        )
+
+    invalidated = await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=20_000,
+    )
+
+    assert invalidated is False
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.FINISHED
+    assert stored.end_reason is EndReason.BLACK_WIN
+    assert stored.winner is Stone.BLACK
+    assert stored.ended_at == datetime.fromtimestamp(9, UTC)
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.ACTIVE
