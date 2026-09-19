@@ -6,7 +6,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from seokpan.game.application.history import CompletedGameReplay, replay_completed_game
@@ -46,6 +46,9 @@ from seokpan.vote.application import (
 from seokpan.vote.domain import ParticipantRole as VoteParticipantRole
 from seokpan.vote.domain import Voter, VoteRuleViolation
 
+if TYPE_CHECKING:
+    from seokpan.game.application.captured_startup import CapturedGameStartup
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -82,7 +85,9 @@ class GameApplicationService:
         votes: VoteRuntimePort,
         clock: MillisecondClock,
         events: RealtimeEventPort | None = None,
+        captured_startup: CapturedGameStartup | None = None,
     ) -> None:
+        self._captured_startup = captured_startup
         self._rooms = rooms
         self._games = games
         self._votes = votes
@@ -97,6 +102,14 @@ class GameApplicationService:
         request_id: str,
         expected_state_version: int,
     ) -> GameApplicationSnapshot:
+        if self._captured_startup is not None:
+            outcome = await self._captured_startup.start_game(
+                session=session, room_id=room_id, request_id=request_id,
+                expected_state_version=expected_state_version,
+            )
+            if outcome.initialized_now:
+                await self._game_started(outcome.snapshot, request_id)
+            return outcome.snapshot
         participation = await self._require_participation(session)
         if participation.room_id != room_id:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
