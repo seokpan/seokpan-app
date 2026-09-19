@@ -161,6 +161,53 @@ function mount(fetcher: typeof fetch) {
 }
 
 describe("room HTTP and receive-only connection integration", () => {
+  it("allows an explicit leave from a disconnected snapshot and retries only a definite stale rejection", async () => {
+    let left = false;
+    let leaveCalls = 0;
+    const fetcher = vi.fn<typeof fetch>(async (url, options) => {
+      if (url === "/api/v1/session/csrf")
+        return left
+          ? json({ ...identity, room_id: null, participant_id: null })
+          : json({ ...identity, room_id: "r1", participant_id: "p1" });
+      if (url === "/api/v1/rooms/r1/participants/me" && options?.method === "DELETE") {
+        leaveCalls += 1;
+        const body = JSON.parse(String(options.body));
+        if (leaveCalls === 1) {
+          expect(body.expected_state_version).toBe(3);
+          return new Response(
+            JSON.stringify({
+              code: "STALE_STATE",
+              current_version: 4,
+              request_id: "stale-leave",
+            }),
+            {
+              status: 409,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
+        expect(body.expected_state_version).toBe(4);
+        left = true;
+        return json(null);
+      }
+      if (url === "/api/v1/lobby/snapshot") return json({ rooms: [], stream_version: 1 });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    const socket = sockets.get("/ws/v1/rooms/r1")!;
+    act(() => socket.message(event("room.snapshot", 8, { room, game: null }, "r1")));
+    act(() => socket.disconnect(1006));
+
+    expect(screen.getByRole("heading", { name: room.name })).toBeInTheDocument();
+    const leave = screen.getByRole("button", { name: "방 나가기" });
+    expect(leave).toBeEnabled();
+    fireEvent.click(leave);
+
+    await waitFor(() => expect(leaveCalls).toBe(2));
+    expect(await screen.findByRole("heading", { name: "로비" })).toBeInTheDocument();
+  });
+
   it.each([true, false])(
     "keeps participation and the Socket on in-room Member login success=%s",
     async (success) => {

@@ -101,7 +101,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
   start() {
     if (this.#socket || this.#timer !== undefined) return;
     this.#attempt = 0;
-    this.#publish("connecting", null);
+    this.#publish("connecting", this.#view.snapshot);
     // StrictMode's setup/cleanup probe must not create a real Room disconnect.
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
@@ -131,7 +131,9 @@ export class SnapshotStream<T extends { stream_version: number }> {
     this.#publish("idle", null);
   }
   reconnect = () => {
+    const snapshot = this.#view.snapshot;
     this.stop();
+    if (snapshot) this.#publish("idle", snapshot);
     this.start();
   };
   #connect() {
@@ -194,7 +196,11 @@ export class SnapshotStream<T extends { stream_version: number }> {
         this.#block("연결을 복구하지 못했습니다. 잠시 후 다시 연결해 주세요.");
         return;
       }
-      this.#publish("disconnected", null, "연결이 끊겼습니다. 서버 상태를 다시 확인합니다.");
+      this.#publish(
+        "disconnected",
+        this.#view.snapshot,
+        "연결이 끊겼습니다. 서버 상태를 다시 확인합니다.",
+      );
       this.#timer = setTimeout(
         () => {
           this.#timer = undefined;
