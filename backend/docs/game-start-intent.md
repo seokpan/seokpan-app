@@ -7,7 +7,8 @@ Canonical Issue: #86 / Parent: #76
 
 **초기화 A에 이어 B의 captured 종료 복구·ACK 보존 경로를 opt-in으로 연결했다.**
 서비스 composition root는 아직 전환하지 않았다. 정상 완료된 경기의 intent 정리,
-legacy writer guard, 기존 데이터 이행과 실제 Provider Gate가 남아 있다.
+legacy 구버전 writer의 차단/이행과 실제 Provider Gate가 남아 있다.
+`58cd32f8...`에서 현재 Memory/Redis legacy initialize의 captured 기록 우회는 차단했다.
 
 현재 Source 연결:
 - `CapturedGameStartup`: trusted identity → atomic Room capture → 원본 DB command →
@@ -20,6 +21,13 @@ legacy writer guard, 기존 데이터 이행과 실제 Provider Gate가 남아 �
 - 다음 경기의 capture 후 이전 Runtime이 남은 경우, intent의 previous Game/turn과 일치하고
   실제 durable result가 있는 FINISHED Runtime만 정리 대상으로 허용한다. 다른 Runtime은 거절한다.
 - 기존 정상 결과를 덮어쓰지 않으며 신규 결과 확보 전에는 Runtime을 버리지 않는다.
+- legacy `initialize()`는 같은 Game의 intent/phase 중 하나라도 있으면 `CAPTURED_START_REQUIRED`로
+  거절한다. 손상/빈 값도 존재하는 기록이며 없는 것으로 간주하지 않는다. cache replay와
+  request-expiry 정리보다 먼저 검사한다. 새 captured initializer는 기존 경로를 우회 호출하지 않는다.
+- Memory captured initializer는 동일 Room stores를 Vote adapter에 reference로 바인딩한다.
+  다른 저장소로 재바인딩을 거절하고 async Room lookup 이후에도 존재 여부를 재검사한다.
+- Redis mutation v8의 legacy initialize는 기존 13/16개 key 뒤에 두 guard key를 선언한다
+  (총 15/18). 이전 Runtime 정리용 KEYS[14..16]은 그대로이며 다른 mutation은 13개를 유지한다.
 
 저장과 수명주기:
 - intent/phase는 기존 같은 Room hash tag의 per-game key를 사용한다.
@@ -40,19 +48,27 @@ legacy writer guard, 기존 데이터 이행과 실제 Provider Gate가 남아 �
 
 남은 활성화 조건:
 - 정상 종료 후 Room 재사용 경로의 intent/phase 정리.
-- 기존 initialize/replay의 captured phase 우회 방지 및 혼합 writer 정책.
+- 현재 코드의 initialize/replay guard 실제 Provider 검증 및 **구버전 binary writer drain 정책**.
+  새 script는 이미 실행 중인 이전 binary의 v7 호출을 소급 차단하지 않는다. 원본/phase가 모두
+  유실된 과거 경기까지 안전하게 구별하는 장치도 아니다. 부분 활성화 금지는 계속 유지한다.
 - 기존 intent 없는 경기의 처리·기존 pending marker 점검 및 composition root 주입/전환.
 - 고정 환경 전체 pytest/format/ruff/mypy, 실제 Redis/MariaDB/2-Pod 및 Browser gate.
 - 공개 HTTP schema, DB schema, UI, Rating 정책과 CI/CD는 바꾸지 않았다.
   다만 **기존 Room closure의 pending 보존과 ACK TTL 정책은 이번 Source에서 변경됐다.**
 
-### 이번 검증의 범위
+### 검증의 범위
 
-신규 closure/consumer/Memory 및 결합 흐름 61 + 기존 F15 18 = **79 PASS**.
+이전 `5cc374b0...` checkpoint: closure/consumer/Memory 및 결합 흐름 61 + F15 18 = **79 PASS**.
 실제 Source를 실행하지만 package import/Domain/Provider는 대체한 격리 환경이다.
 Lua 5.4 + Redis/cjson doubles에서 실제 Room mutation/read/ACK Source의 **22 시나리오 PASS**.
 실제 Redis의 Lua5.1/cjson/TTL/AOF/OOM, MariaDB, 전체 고정 환경, 2-Pod/Browser 결과가 아니다.
-이전 A의 147/21 결과는 별도 체크포인트 Evidence이며 최신 검증 합계에 중복 더하지 않는다.
+이전 A의 147/21 결과와 위 79/22는 저장된 과거 실행 근거이며 이번에 재실행한 합계가 아니다.
+
+`58cd32f8...`: 신규 guard 경계 33 + 기존 initializer 24 = **57 PASS**. 정확한 adapter/initializer
+Source를 실행하되 import/Domain/script runner를 대체했다. 별도 Lua 5.4/Redis-cjson doubles에서
+versioned mutation Source **37 시나리오 PASS**. 원본 v7이 INITIALIZED 기록을 무시하고 빈 첫 턴을
+만드는 동작도 같은 제한된 Lua 환경에서 재현했다. 전체 pinned repository/실제 Redis/2-Pod
+결과가 아니며 수정한 기존 Redis test의 key-count/version 기대값은 전체 저장소 Gate에서 재실행한다.
 
 ## 1. 실제 코드에서 확인한 문제
 
@@ -140,7 +156,8 @@ Room PLAYING 전이, 원래 roster/identity/Provider 시각의 intent, 초기 PE
 ### 4.2 초기화 완료 표식은 Runtime과 동시에 — opt-in Source 연결됨
 
 진행 표식의 전체 계약은 다음과 같다. 현재 PENDING capture와 INITIALIZED 기록이 구현됐다.
-논리적 CLOSED와 captured ACK 정리는 이번에 연결했다. 정상 완료·legacy guard·구성 전환은 남아 있다.
+논리적 CLOSED와 captured ACK, 현재 legacy initialize guard는 연결했다.
+정상 완료 정리·구버전 writer 이행·구성 전환은 남아 있다.
 
 ```text
 Room 수락: PENDING
@@ -195,7 +212,8 @@ backfill 추정하지 않으며 완료/격리/운영 전환 기준을 정한 뒤
 2. Room start atomic capture와 Memory/Redis 진입점 [Source 구현, 서비스 caller 미전환].
 3. Vote initialize + INITIALIZED witness 및 opt-in caller [Source 연결, 실제 Provider Gate 대기].
 4. F15 history 부재 소비 + closure/captured ACK [opt-in Source 연결].
-   정상 완료 정리 + legacy guard + composition 전환 + 이행/결합 검증은 다음 마무리 대상.
+   현재 legacy initialize/replay guard [Source 연결]. 정상 완료 정리 + composition 전환 +
+   구버전 writer/기존 데이터 이행 및 결합 검증은 다음 마무리 대상.
 5. 고정 의존성 전체 회귀, 실제 Redis/MariaDB/2 Replica, main 통합 후 Browser.
 
 위 2~4가 함께 검증되기 전에는 F09/F15 해결 완료나 main 승격 대상으로 판정하지 않는다.
