@@ -796,3 +796,57 @@ async def test_turn_resolution_runner_propagates_item_provider_failure() -> None
         await runner.run_once()
 
     votes.get.assert_awaited_once_with(due.room_id)
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_finalizes_persistence_and_vote_runtime_without_stats() -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+    clock.advance(1_234)
+
+    finalized = await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+
+    assert finalized is True
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.end_reason is EndReason.SYSTEM_INVALID
+    assert stored.winner is Stone.EMPTY
+    assert stored.rating_adjustments == ()
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.SYSTEM_INVALID
+    assert runtime.end_reason is EndReason.SYSTEM_INVALID
+    assert runtime.votes == ()
+    assert runtime.tally == ()
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_retry_is_idempotent() -> None:
+    games = CountingGamePersistenceAdapter()
+    runner, _clock, _rooms, votes, _, _ = await setup_runner(games=games)
+
+    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+    first = await votes.get(ROOM_ID)
+    assert first is not None
+    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+    second = await votes.get(ROOM_ID)
+
+    assert games.finalize_calls == 1
+    assert second == first
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_does_not_overwrite_existing_normal_result() -> None:
+    runner, clock, _rooms, _votes, games, _ = await setup_runner()
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is TurnProcessingStatus.PASS
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 2))).status is (
+        TurnProcessingStatus.GAME_ENDED
+    )
+    stored_before = await games.load_result(GAME_ID)
+    assert stored_before is not None
+    assert stored_before.end_reason is EndReason.JOINT_LOSS
+
+    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID) is False
+    assert await games.load_result(GAME_ID) == stored_before

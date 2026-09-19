@@ -21,7 +21,14 @@ from seokpan.api.identity import (
 from seokpan.api.problems import ApiProblem, room_problem_responses
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.room.application import RoomApplicationService, RoomMutationResult, RoomRuntimeSnapshot
-from seokpan.room.domain import RoomConfig, RoomRuleViolation, RoomStatus, RoomVisibility, Team
+from seokpan.room.domain import (
+    GameTermination,
+    RoomConfig,
+    RoomRuleViolation,
+    RoomStatus,
+    RoomVisibility,
+    Team,
+)
 
 
 UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
@@ -29,6 +36,8 @@ UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
 
 class ConfirmedDepartureFinalizer(Protocol):
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
+
+    async def finalize_system_invalid(self, *, room_id: str, game_id: str) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,16 +240,20 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 expected_state_version=payload.expected_state_version,
             ),
         )
-        if (
-            not result.replayed
-            and result.snapshot is not None
-            and result.snapshot.game_id is not None
-            and services.departures is not None
-        ):
-            await services.departures.finalize_departures(
-                room_id=room_id,
-                game_id=result.snapshot.game_id,
-            )
+        if services.departures is not None and not result.replayed:
+            if (
+                result.game_termination is GameTermination.SYSTEM_INVALID
+                and result.terminated_game_id is not None
+            ):
+                await services.departures.finalize_system_invalid(
+                    room_id=room_id,
+                    game_id=result.terminated_game_id,
+                )
+            elif result.snapshot is not None and result.snapshot.game_id is not None:
+                await services.departures.finalize_departures(
+                    room_id=room_id,
+                    game_id=result.snapshot.game_id,
+                )
         latest = await services.rooms.get(room_id)
         if latest is None:
             return None
