@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from typing import cast
 
 from sqlalchemy import select
@@ -41,6 +42,23 @@ from seokpan.persistence.mariadb.models import (
     RatingHistoryRow,
 )
 
+def _to_db_datetime(value: datetime) -> datetime:
+    """Store UTC in MariaDB DATETIME(3), which carries no timezone metadata."""
+    normalized = value if value.tzinfo is None else value.astimezone(UTC).replace(tzinfo=None)
+    return normalized.replace(microsecond=(normalized.microsecond // 1000) * 1000)
+
+
+def _from_db_datetime(value: datetime) -> datetime:
+    """Interpret timezone-naive MariaDB DATETIME values as UTC application time."""
+    normalized = value if value.tzinfo is None else value.astimezone(UTC).replace(tzinfo=None)
+    normalized = normalized.replace(microsecond=(normalized.microsecond // 1000) * 1000)
+    return normalized.replace(tzinfo=UTC)
+
+
+def _same_db_datetime(left: datetime, right: datetime) -> bool:
+    return _to_db_datetime(left) == _to_db_datetime(right)
+
+
 SessionFactory = Callable[[], AsyncSession]
 
 
@@ -61,7 +79,7 @@ class MariaDBGamePersistenceAdapter:
                     room_id=command.room_id,
                     voting_time_seconds=command.voting_time_seconds,
                     status="IN_PROGRESS",
-                    started_at=command.started_at,
+                    started_at=_to_db_datetime(command.started_at),
                     ended_at=None,
                 )
             )
@@ -120,7 +138,7 @@ class MariaDBGamePersistenceAdapter:
             result_row = self._result_row(command)
             session.add(result_row)
             game.status = self._game_status(command.result.status)
-            game.ended_at = command.ended_at
+            game.ended_at = _to_db_datetime(command.ended_at)
             if command.result.stats_eligible:
                 await self._apply_member_updates(session, command.result, members)
             result_row.reflected_to_stats = True
@@ -140,7 +158,7 @@ class MariaDBGamePersistenceAdapter:
                 game is None
                 or game.room_id is None
                 or game.ended_at is None
-                or game.ended_at != result.ended_at
+                or not _same_db_datetime(game.ended_at, result.ended_at)
                 or not result.reflected_to_stats
             ):
                 raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
@@ -179,7 +197,13 @@ class MariaDBGamePersistenceAdapter:
             }.get((game.status, result.end_reason, result.winner))
             if conclusion is None:
                 raise PersistenceRuleViolation("GAME_RESULT_INCOMPLETE")
-            stored = StoredGameResult(game_id, game.room_id, *conclusion, game.ended_at, ())
+            stored = StoredGameResult(
+                game_id,
+                game.room_id,
+                *conclusion,
+                _from_db_datetime(game.ended_at),
+                (),
+            )
             participant_rows = (
                 (
                     await session.execute(
@@ -330,7 +354,7 @@ class MariaDBGamePersistenceAdapter:
                     game_id=game.game_id,
                     room_id=cast(str, game.room_id),
                     voting_time_seconds=game.voting_time_seconds,
-                    started_at=game.started_at,
+                    started_at=_from_db_datetime(game.started_at),
                     participants=tuple(records),
                 ),
                 participants=tuple(participants),
@@ -581,7 +605,7 @@ class MariaDBGamePersistenceAdapter:
             pos_y=command.coordinate.row - 1,
             final_vote_count=command.final_vote_count,
             valid_voter_count=command.valid_voter_count,
-            confirmed_at=command.confirmed_at,
+            confirmed_at=_to_db_datetime(command.confirmed_at),
         )
 
     @staticmethod
@@ -594,7 +618,7 @@ class MariaDBGamePersistenceAdapter:
             coordinate=Coordinate(column=row.pos_x + 1, row=row.pos_y + 1),
             final_vote_count=row.final_vote_count,
             valid_voter_count=row.valid_voter_count,
-            confirmed_at=row.confirmed_at,
+            confirmed_at=_from_db_datetime(row.confirmed_at),
         )
 
     @staticmethod
@@ -604,7 +628,7 @@ class MariaDBGamePersistenceAdapter:
             winner=MariaDBGamePersistenceAdapter._winner(command.result),
             end_reason=MariaDBGamePersistenceAdapter._end_reason(command.result.end_reason),
             reflected_to_stats=False,
-            ended_at=command.ended_at,
+            ended_at=_to_db_datetime(command.ended_at),
         )
 
     @staticmethod
@@ -613,7 +637,7 @@ class MariaDBGamePersistenceAdapter:
             row.room_id == command.room_id
             and row.voting_time_seconds == command.voting_time_seconds
             and row.status == "IN_PROGRESS"
-            and row.started_at == command.started_at
+            and _same_db_datetime(row.started_at, command.started_at)
             and row.ended_at is None
         )
 
@@ -649,7 +673,7 @@ class MariaDBGamePersistenceAdapter:
             and row.pos_y == command.coordinate.row - 1
             and row.final_vote_count == command.final_vote_count
             and row.valid_voter_count == command.valid_voter_count
-            and row.confirmed_at == command.confirmed_at
+            and _same_db_datetime(row.confirmed_at, command.confirmed_at)
         )
 
     @staticmethod
@@ -658,7 +682,7 @@ class MariaDBGamePersistenceAdapter:
             row.winner == MariaDBGamePersistenceAdapter._winner(command.result)
             and row.end_reason
             == MariaDBGamePersistenceAdapter._end_reason(command.result.end_reason)
-            and row.ended_at == command.ended_at
+            and _same_db_datetime(row.ended_at, command.ended_at)
         )
 
     @staticmethod

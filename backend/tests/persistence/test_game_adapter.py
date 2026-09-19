@@ -41,6 +41,7 @@ ROOM_ID = "00000000-0000-4000-8000-000000000002"
 BLACK_ID = "00000000-0000-4000-8000-000000000003"
 WHITE_ID = "00000000-0000-4000-8000-000000000004"
 NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+DB_NOW = NOW.replace(tzinfo=None)
 
 
 class ResultBag:
@@ -407,6 +408,53 @@ async def test_existing_identical_game_start_is_idempotent_but_changed_start_con
 
 
 @pytest.mark.asyncio
+async def test_existing_start_treats_naive_mariadb_datetime_as_utc_for_idempotency() -> None:
+    command = start_command()
+    persisted = game_row()
+    persisted.started_at = DB_NOW
+    snapshots = MariaDBGamePersistenceAdapter._participant_rows(GAME_ID, participants())
+    session = FakeSession(
+        rows={(GameRow, GAME_ID): persisted},
+        execute_results=[snapshots],
+    )
+
+    outcome = await MariaDBGamePersistenceAdapter(SessionFactory(session)).start_game(command)
+
+    assert outcome is PersistenceOutcome.UNCHANGED
+
+
+@pytest.mark.asyncio
+async def test_existing_move_treats_naive_mariadb_datetime_as_utc_for_idempotency() -> None:
+    command = move_command()
+    existing = MariaDBGamePersistenceAdapter._move_row(command)
+    existing.confirmed_at = DB_NOW
+    session = FakeSession(
+        rows={(MoveRow, (GAME_ID, 1)): existing},
+        execute_results=[[existing]],
+    )
+
+    outcome = await MariaDBGamePersistenceAdapter(SessionFactory(session)).append_move(command)
+
+    assert outcome is PersistenceOutcome.UNCHANGED
+
+
+@pytest.mark.asyncio
+async def test_load_game_restores_mariadb_datetime_as_utc_application_time() -> None:
+    persisted = game_row()
+    persisted.started_at = DB_NOW
+    session = FakeSession(
+        rows={(GameRow, GAME_ID): persisted},
+        execute_results=[[], [], [], []],
+    )
+
+    snapshot = await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_game(GAME_ID)
+
+    assert snapshot is not None
+    assert snapshot.start.started_at == NOW
+    assert snapshot.start.started_at.tzinfo is UTC
+
+
+@pytest.mark.asyncio
 async def test_append_move_maps_canonical_coordinate_to_schema_zero_based_axes() -> None:
     session = FakeSession(execute_results=[[]])
     adapter = MariaDBGamePersistenceAdapter(SessionFactory(session))
@@ -537,6 +585,25 @@ async def test_existing_result_requires_matching_history_before_idempotent_succe
     with pytest.raises(PersistenceRuleViolation, match="GAME_RESULT_CONFLICT"):
         await MariaDBGamePersistenceAdapter(SessionFactory(incomplete)).finalize_game(command)
     assert incomplete.rollback_count == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_result_treats_naive_mariadb_datetime_as_utc_for_idempotency() -> None:
+    command = completed_result(system_invalid=True)
+    game = game_row()
+    game.status = "SYSTEM_INVALID"
+    game.ended_at = DB_NOW
+    result = MariaDBGamePersistenceAdapter._result_row(command)
+    result.ended_at = DB_NOW
+    result.reflected_to_stats = True
+    session = FakeSession(
+        rows={(GameRow, GAME_ID): game, (GameResultRow, GAME_ID): result},
+        execute_results=[[]],
+    )
+
+    outcome = await MariaDBGamePersistenceAdapter(SessionFactory(session)).finalize_game(command)
+
+    assert outcome is PersistenceOutcome.UNCHANGED
 
 
 @pytest.mark.asyncio
