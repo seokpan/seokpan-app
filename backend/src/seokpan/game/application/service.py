@@ -201,9 +201,10 @@ class GameApplicationService:
             or room.status is not RoomStatus.PLAYING
             or room.game_id is None
             or room.owner_id != participation.participant_id
-            or room.state_version != expected_state_version
         ):
             return None
+        if room.state_version != expected_state_version:
+            raise RoomRuleViolation("STATE_VERSION_CONFLICT")
 
         history = await self._games.load_game(room.game_id)
         runtime = await self._votes.get(room.room_id)
@@ -224,59 +225,83 @@ class GameApplicationService:
                 or not any(item.team is Team.WHITE for item in ready_players)
             ):
                 raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
-            persistence_outcome = await self._games.start_game(
-                StartGameCommand(
-                    game_id=room.game_id,
-                    room_id=room.room_id,
-                    voting_time_seconds=room.config.vote_seconds,
-                    started_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
-                    participants=tuple(
-                        [
-                            await self._persistence_participant(item.participant_id, item.team)
-                            for item in ready_players
-                        ]
-                    ),
-                )
+            intended_participants = tuple(
+                [
+                    await self._persistence_participant(item.participant_id, item.team)
+                    for item in ready_players
+                ]
             )
-            if persistence_outcome is not PersistenceOutcome.CREATED:
-                raise PersistenceRuleViolation("GAME_START_CONFLICT")
+            command = StartGameCommand(
+                game_id=room.game_id,
+                room_id=room.room_id,
+                voting_time_seconds=room.config.vote_seconds,
+                started_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+                participants=intended_participants,
+            )
+            try:
+                await self._games.start_game(command)
+            except PersistenceRuleViolation as error:
+                if error.code != "GAME_START_CONFLICT":
+                    raise
             history = await self._games.load_game(room.game_id)
             if history is None:
                 raise PersistenceRuleViolation("GAME_NOT_FOUND")
+            intended_roster = {
+                (item.participant_id, item.team) for item in intended_participants
+            }
+            persisted_roster = {
+                (item.participant_id, item.team) for item in history.start.participants
+            }
+            if (
+                history.start.room_id != room.room_id
+                or history.start.voting_time_seconds != room.config.vote_seconds
+                or persisted_roster != intended_roster
+            ):
+                raise PersistenceRuleViolation("GAME_START_CONFLICT")
         elif history.start.room_id != room.room_id:
             raise PersistenceRuleViolation("GAME_START_CONFLICT")
 
         persisted_players = tuple(history.participants)
         if not persisted_players:
             raise PersistenceRuleViolation("PARTICIPANTS_REQUIRED")
-        vote_result = await self._votes.initialize(
-            InitializeVoteRuntime(
-                room_id=room.room_id,
-                request_id=request_id,
-                game_id=room.game_id,
-                participants=tuple(
-                    Voter(
-                        participant_id=item.participant_id,
-                        team=item.team,
-                        role=VoteParticipantRole.PLAYER,
-                        connected=_connected(room, item.participant_id),
-                    )
-                    for item in persisted_players
-                ),
-                deadline_ms=self._clock.now_ms + room.config.vote_seconds * 1000,
-                expected_state_version=1,
-                previous_game_id=room.last_game_id,
-                previous_turn_no=room.last_game_turn_no,
-            )
+        initialize = InitializeVoteRuntime(
+            room_id=room.room_id,
+            request_id=request_id,
+            game_id=room.game_id,
+            participants=tuple(
+                Voter(
+                    participant_id=item.participant_id,
+                    team=item.team,
+                    role=VoteParticipantRole.PLAYER,
+                    connected=_connected(room, item.participant_id),
+                )
+                for item in persisted_players
+            ),
+            deadline_ms=self._clock.now_ms + room.config.vote_seconds * 1000,
+            expected_state_version=1,
+            previous_game_id=room.last_game_id,
+            previous_turn_no=room.last_game_turn_no,
         )
+        initialized_now = False
+        try:
+            vote_result = await self._votes.initialize(initialize)
+            runtime = vote_result.snapshot
+            initialized_now = not vote_result.replayed
+        except VoteRuleViolation as error:
+            if error.code != "GAME_RUNTIME_ALREADY_EXISTS":
+                raise
+            runtime = await self._votes.get(room.room_id)
+            if runtime is None or runtime.game_id != room.game_id:
+                raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED") from error
         snapshot = GameApplicationSnapshot(
             room,
-            vote_result.snapshot,
+            runtime,
             participation.participant_id,
             self._clock.now_ms,
             replayed=True,
         )
-        await self._game_started(snapshot, request_id)
+        if initialized_now:
+            await self._game_started(snapshot, request_id)
         return snapshot
 
     async def get_game(
