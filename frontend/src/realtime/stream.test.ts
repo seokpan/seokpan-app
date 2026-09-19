@@ -256,6 +256,11 @@ describe("receive-only snapshot stream", () => {
       phase: "disconnected",
       snapshot: { stream_version: 1, count: 1 },
     });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(stream.getSnapshot()).toMatchObject({
+      phase: "connecting",
+      snapshot: { stream_version: 1, count: 1 },
+    });
     for (let index = 0; index < 5; index++) {
       await vi.advanceTimersByTimeAsync(8000);
       sockets.at(-1)!.disconnect(1006);
