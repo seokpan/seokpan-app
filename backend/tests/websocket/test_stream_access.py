@@ -425,10 +425,14 @@ async def test_stream_access_replacement_sends_reconnect_required_and_closes_400
         await asyncio.Event().wait()
         return {}
 
+    async def receive_event() -> RealtimeEvent:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
     socket = SimpleNamespace(receive=receive, send_json=AsyncMock(), close=AsyncMock())
     subscription = cast(
         RealtimeSubscription,
-        SimpleNamespace(receive=AsyncMock(side_effect=lambda: asyncio.Event().wait())),
+        SimpleNamespace(receive=receive_event),
     )
     registry = ActiveWebSocketRegistry()
     registry.begin_runtime()
