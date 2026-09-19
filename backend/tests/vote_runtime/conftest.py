@@ -9,7 +9,7 @@ from seokpan.game.domain import AppliedMove, Coordinate, EndReason, Stone
 from seokpan.persistence.memory import InMemoryVoteRuntimeAdapter, ManualClock
 from seokpan.persistence.redis.common import VersionedJsonCodec
 from seokpan.persistence.redis.vote_adapter import RedisVoteRuntimeAdapter
-from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
+from seokpan.persistence.redis.vote_scripts import VOTE_DISCARD, VOTE_MUTATION, VOTE_READ
 from seokpan.vote.application import (
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
@@ -45,7 +45,7 @@ class EmulatedVoteRedisClient:
 
     def __init__(self, clock: ManualClock, *, scripts_loaded: bool = True) -> None:
         self.store = InMemoryVoteRuntimeAdapter(clock)
-        self.loaded = {VOTE_MUTATION.sha, VOTE_READ.sha} if scripts_loaded else set()
+        self.loaded = {VOTE_DISCARD.sha, VOTE_MUTATION.sha, VOTE_READ.sha} if scripts_loaded else set()
         self.evalsha_calls: list[tuple[str, int, tuple[object, ...]]] = []
         self.script_load_calls: list[str] = []
 
@@ -78,6 +78,16 @@ class EmulatedVoteRedisClient:
             return self._encode(
                 {"ok": True, "error": None, "snapshot": _snapshot(await self.store.get(room_id))}
             )
+        if sha == VOTE_DISCARD.sha:
+            current = await self.store.get(room_id)
+            if current is None:
+                return self._encode({"ok": True, "missing": True, "error": None})
+            if current.game_id != str(args[0]):
+                return self._encode({"ok": False, "error": "STALE_GAME"})
+            if current.turn_no != int(str(args[1])):
+                return self._encode({"ok": False, "error": "REDIS_SNAPSHOT_CHANGED"})
+            await self.store.discard_game(room_id, current.game_id)
+            return self._encode({"ok": True, "missing": False, "error": None})
         if sha != VOTE_MUTATION.sha:
             raise AssertionError("unknown script")
         operation = str(args[0])
@@ -91,7 +101,7 @@ class EmulatedVoteRedisClient:
 
     async def script_load(self, script: str) -> str:
         self.script_load_calls.append(script)
-        for candidate in (VOTE_MUTATION, VOTE_READ):
+        for candidate in (VOTE_DISCARD, VOTE_MUTATION, VOTE_READ):
             if candidate.source == script:
                 self.loaded.add(candidate.sha)
                 return candidate.sha

@@ -817,12 +817,7 @@ async def test_system_invalid_closure_finalizes_persistence_and_vote_runtime_wit
     assert stored.end_reason is EndReason.SYSTEM_INVALID
     assert stored.winner is Stone.EMPTY
     assert stored.rating_adjustments == ()
-    runtime = await votes.get(ROOM_ID)
-    assert runtime is not None
-    assert runtime.game_status is GameStatus.SYSTEM_INVALID
-    assert runtime.end_reason is EndReason.SYSTEM_INVALID
-    assert runtime.votes == ()
-    assert runtime.tally == ()
+    assert await votes.get(ROOM_ID) is None
 
 
 @pytest.mark.asyncio
@@ -835,17 +830,15 @@ async def test_system_invalid_closure_retry_is_idempotent() -> None:
         game_id=GAME_ID,
         closed_at_ms=1_000,
     )
-    first = await votes.get(ROOM_ID)
-    assert first is not None
+    assert await votes.get(ROOM_ID) is None
     assert await runner.finalize_system_invalid(
         room_id=ROOM_ID,
         game_id=GAME_ID,
         closed_at_ms=1_000,
     )
-    second = await votes.get(ROOM_ID)
+    assert await votes.get(ROOM_ID) is None
 
     assert games.finalize_calls == 1
-    assert second == first
 
 
 @pytest.mark.asyncio
@@ -934,9 +927,7 @@ async def test_system_invalid_closure_preserves_board_conclusion_proven_by_durab
     assert stored.end_reason is EndReason.BLACK_WIN
     assert stored.winner is Stone.BLACK
     assert stored.ended_at == datetime.fromtimestamp(9, UTC)
-    runtime = await votes.get(ROOM_ID)
-    assert runtime is not None
-    assert runtime.game_status is GameStatus.ACTIVE
+    assert await votes.get(ROOM_ID) is None
 
 
 @pytest.mark.asyncio
@@ -960,9 +951,7 @@ async def test_invalidation_reconciler_consumes_pending_marker_and_acks_completi
     assert stored is not None
     assert stored.status is GameStatus.SYSTEM_INVALID
     assert stored.ended_at == datetime.fromtimestamp(4.321, UTC)
-    runtime = await votes.get(ROOM_ID)
-    assert runtime is not None
-    assert runtime.game_status is GameStatus.SYSTEM_INVALID
+    assert await votes.get(ROOM_ID) is None
     acknowledge.assert_awaited_once_with(ROOM_ID, GAME_ID)
     assert clock.now_ms == 0
 

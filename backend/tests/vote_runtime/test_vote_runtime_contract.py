@@ -39,6 +39,22 @@ async def initialize(harness: VoteRuntimeHarness) -> int:
 
 
 @pytest.mark.asyncio
+async def test_discard_game_is_idempotent_and_rejects_a_different_game(
+    vote_harness: VoteRuntimeHarness,
+) -> None:
+    await initialize(vote_harness)
+
+    with pytest.raises(VoteRuleViolation, match="STALE_GAME"):
+        await vote_harness.adapter.discard_game("room-1", "game-other")
+
+    await vote_harness.adapter.discard_game("room-1", "game-1")
+    assert await vote_harness.adapter.get("room-1") is None
+
+    await vote_harness.adapter.discard_game("room-1", "game-1")
+    assert await vote_harness.adapter.get("room-1") is None
+
+
+@pytest.mark.asyncio
 async def test_vote_close_resolver_and_move_flow(vote_harness: VoteRuntimeHarness) -> None:
     version = await initialize(vote_harness)
     first = await vote_harness.adapter.cast_vote(

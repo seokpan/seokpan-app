@@ -7,7 +7,7 @@ from seokpan.game.domain import Stone
 from seokpan.persistence.memory import ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
 from seokpan.persistence.redis.vote_adapter import RedisVoteRuntimeAdapter, _list
-from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
+from seokpan.persistence.redis.vote_scripts import VOTE_DISCARD, VOTE_MUTATION, VOTE_READ
 from seokpan.vote.application import InitializeVoteRuntime
 from seokpan.vote.domain import Voter
 
@@ -32,6 +32,33 @@ def test_vote_keyspace_uses_one_room_hash_tag() -> None:
     assert "HGET', KEYS[1], 'state_version'" not in VOTE_MUTATION.source
     assert "'status') ~= 'PLAYING'" in VOTE_MUTATION.source
     assert "'game_id') ~= payload.game_id" in VOTE_MUTATION.source
+
+
+@pytest.mark.asyncio
+async def test_discard_game_uses_atomic_same_slot_cleanup() -> None:
+    client = EmulatedVoteRedisClient(ManualClock())
+    adapter = RedisVoteRuntimeAdapter(client)
+    await adapter.initialize(
+        InitializeVoteRuntime(
+            "room-1",
+            "init-discard",
+            "game-1",
+            (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE)),
+            1_000,
+            1,
+        )
+    )
+
+    await adapter.discard_game("room-1", "game-1")
+
+    sha, count, values = client.evalsha_calls[-1]
+    assert sha == VOTE_DISCARD.sha
+    assert count == 10
+    assert all("{room-1}" in str(key) for key in values[:count])
+    assert "game.game_id ~= ARGV[1]" in VOTE_DISCARD.source
+    assert "game.turn_no" in VOTE_DISCARD.source
+    assert "redis.call('DEL', unpack(KEYS))" in VOTE_DISCARD.source
+    assert await adapter.get("room-1") is None
 
 
 @pytest.mark.asyncio
