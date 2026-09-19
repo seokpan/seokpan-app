@@ -247,10 +247,12 @@ class GameApplicationService:
             if history is None:
                 raise PersistenceRuleViolation("GAME_NOT_FOUND")
             intended_roster = {
-                (item.participant_id, item.team) for item in intended_participants
+                (item.participant_id, item.team, item.member_id, item.guest_label)
+                for item in intended_participants
             }
             persisted_roster = {
-                (item.participant_id, item.team) for item in history.start.participants
+                (item.participant_id, item.team, item.member_id, item.guest_label)
+                for item in history.start.participants
             }
             if (
                 history.start.room_id != room.room_id
@@ -258,12 +260,39 @@ class GameApplicationService:
                 or persisted_roster != intended_roster
             ):
                 raise PersistenceRuleViolation("GAME_START_CONFLICT")
-        elif history.start.room_id != room.room_id:
+        if (
+            history.start.game_id != room.game_id
+            or history.start.room_id != room.room_id
+            or history.start.voting_time_seconds != room.config.vote_seconds
+        ):
             raise PersistenceRuleViolation("GAME_START_CONFLICT")
+        # Missing Redis state is not proof of an unfinished startup. Never reset
+        # a played or finalized Game to an empty first turn through this path.
+        if history.moves or await self._games.load_result(room.game_id) is not None:
+            raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
 
         persisted_players = tuple(history.participants)
         if not persisted_players:
             raise PersistenceRuleViolation("PARTICIPANTS_REQUIRED")
+        latest_room = await self._rooms.get(room.room_id)
+        if (
+            latest_room is None
+            or latest_room.status is not RoomStatus.PLAYING
+            or latest_room.game_id is None
+            or latest_room.game_id != room.game_id
+        ):
+            raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
+        if (
+            latest_room.state_version != expected_state_version
+            or latest_room.owner_id != participation.participant_id
+        ):
+            raise RoomRuleViolation("STATE_VERSION_CONFLICT")
+        present_ids = {item.participant_id for item in latest_room.participants}
+        if any(item.participant_id not in present_ids for item in persisted_players):
+            raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+        # This reread detects observed changes; Redis initialize remains the
+        # atomic Room/Game guard. It is not a cross-provider transaction.
+        room = latest_room
         initialize = InitializeVoteRuntime(
             room_id=room.room_id,
             request_id=request_id,
