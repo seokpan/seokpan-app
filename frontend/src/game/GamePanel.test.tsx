@@ -173,7 +173,7 @@ describe("game screen flow", () => {
     expect(panel.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some(([url]) => /analysis|prediction/.test(String(url)))).toBe(false);
   });
-  it("explains reconnect grace separately from immediate owner handoff without changing state", async () => {
+  it("explains explicit leave and reconnect-lease owner handoff without changing state", async () => {
     const { fetcher, socket } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
@@ -184,8 +184,18 @@ describe("game screen flow", () => {
     fireEvent.click(screen.getByText("자세한 규칙·재접속 안내"));
     expect(screen.getByText(/30초 안에 같은 사용자로/)).toBeInTheDocument();
     expect(screen.getByText(/이전 표는 자동 복원되지 않습니다/)).toBeInTheDocument();
-    expect(screen.getByText(/즉시 방장을 이어받고 모든 Ready가 해제/)).toBeInTheDocument();
-    expect(screen.getByText(/방장 권한은 자동으로 돌아오지 않습니다/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/직접 방 나가기를 선택하면 이탈이 즉시 확정/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/30초 동안 기존 방장과 Ready 상태를 유지/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/30초가 지나 이탈이 확정되면/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/방장 권한이 자동으로 돌아가지는 않습니다/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/서버 장애는 개인의 무투표나 이탈로 처리하지 않습니다/),
     ).toBeInTheDocument();
