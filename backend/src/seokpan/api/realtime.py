@@ -163,8 +163,6 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         except WebSocketDisconnect:
             return
         except Exception:
-            if established and not initial_snapshot_sent:
-                end = StreamEnd.SETUP_FAILED
             await _safe_close(websocket, 1011)
         finally:
             if subscription is not None:
@@ -258,6 +256,8 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         except WebSocketDisconnect:
             end = StreamEnd.CLIENT_DISCONNECT
         except Exception:
+            if established and not initial_snapshot_sent:
+                end = StreamEnd.SETUP_FAILED
             await _safe_close(websocket, 1011)
         finally:
             if subscription is not None:
