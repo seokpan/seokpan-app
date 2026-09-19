@@ -114,17 +114,20 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
       )}
       {(view.phase === "blocked" || view.phase === "disconnected") && (
         <div className={styles.recoveryActions} aria-label="연결 복구">
-          {view.snapshot && view.phase === "blocked" && (
-            <button className={styles.secondaryButton} onClick={() => void stream.refresh()}>
-              상태 다시 확인
-            </button>
-          )}
+          {view.snapshot &&
+            view.phase === "blocked" &&
+            view.blockReason !== "connection-replaced" && (
+              <button className={styles.secondaryButton} onClick={() => void stream.refresh()}>
+                상태 다시 확인
+              </button>
+            )}
           <button className={styles.secondaryButton} onClick={stream.reconnect}>
-            이 탭에서 다시 연결
+            {view.blockReason === "connection-replaced" ? "이 탭에서 계속하기" : "다시 연결"}
           </button>
           <p className={styles.muted}>
-            다른 탭에서 이 방을 사용 중이라면 그 탭을 계속 이용할 수 있습니다. 이 탭에서 나가려면
-            방 나가기를 선택하세요.
+            {view.blockReason === "connection-replaced"
+              ? "다른 탭의 연결을 유지하려면 그 탭을 계속 이용하세요. 이 탭에서 계속하면 기존 연결이 교체됩니다."
+              : "마지막으로 확인한 화면을 유지하고 있습니다. 연결을 복구하거나 방 참여를 종료할 수 있습니다."}
           </p>
         </div>
       )}

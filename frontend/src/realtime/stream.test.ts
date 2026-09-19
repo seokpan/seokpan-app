@@ -221,7 +221,10 @@ describe("receive-only snapshot stream", () => {
     await vi.advanceTimersByTimeAsync(60000);
     stream.resumeAfterSessionCheck();
     await vi.advanceTimersByTimeAsync(0);
-    expect(stream.getSnapshot().phase).toBe("blocked");
+    expect(stream.getSnapshot()).toMatchObject({
+      phase: "blocked",
+      blockReason: "connection-replaced",
+    });
     expect(factory).toHaveBeenCalledTimes(1);
   });
   it.each([2, 0, "1"])(

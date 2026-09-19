@@ -27,6 +27,7 @@ export type StreamView<T> = {
   phase: "idle" | "connecting" | "ready" | "syncing" | "disconnected" | "blocked" | "ended";
   snapshot: T | null;
   message: string;
+  blockReason: "connection-replaced" | null;
 };
 export type StreamOptions<T extends { stream_version: number }> = {
   path: string;
@@ -67,7 +68,12 @@ function envelope(data: unknown): Envelope {
 
 /** One receive-only socket. HTTP recovery never replaces a healthy connection. */
 export class SnapshotStream<T extends { stream_version: number }> {
-  #view: StreamView<T> = { phase: "idle", snapshot: null, message: "" };
+  #view: StreamView<T> = {
+    phase: "idle",
+    snapshot: null,
+    message: "",
+    blockReason: null,
+  };
   #listeners = new Set<() => void>();
   #socket: Socket | null = null;
   #epoch = 0;
@@ -94,8 +100,13 @@ export class SnapshotStream<T extends { stream_version: number }> {
       this.#listeners.delete(listener);
     };
   };
-  #publish(phase: StreamView<T>["phase"], snapshot = this.#view.snapshot, message = "") {
-    this.#view = { phase, snapshot, message };
+  #publish(
+    phase: StreamView<T>["phase"],
+    snapshot = this.#view.snapshot,
+    message = "",
+    blockReason: StreamView<T>["blockReason"] = null,
+  ) {
+    this.#view = { phase, snapshot, message, blockReason };
     this.#listeners.forEach((fn) => fn());
   }
   start() {
@@ -178,7 +189,10 @@ export class SnapshotStream<T extends { stream_version: number }> {
       this.#epoch++;
       if (this.#view.phase === "ended") return;
       if (event.code === 4001) {
-        this.#block("다른 탭에서 연결했습니다. 이 탭에서는 자동 재접속하지 않습니다.");
+        this.#block(
+          "다른 탭에서 이 방을 사용 중입니다.",
+          "connection-replaced",
+        );
         return;
       }
       if ([4401, 4403, 4404, 1008].includes(event.code)) {
@@ -210,7 +224,10 @@ export class SnapshotStream<T extends { stream_version: number }> {
       );
     };
   }
-  #block(message: string) {
+  #block(
+    message: string,
+    blockReason: StreamView<T>["blockReason"] = null,
+  ) {
     this.#authBlocked = false;
     clearTimeout(this.#timer);
     this.#timer = undefined;
@@ -219,7 +236,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
     this.#refreshAgain = false;
     this.#buffer.clear();
     // Preserve the connection: malformed state must not itself cause owner handoff.
-    this.#publish("blocked", this.#view.snapshot, message);
+    this.#publish("blocked", this.#view.snapshot, message, blockReason);
   }
   #remember(event: Envelope) {
     this.#seen.set(event.event_id, event.state_version);
@@ -228,7 +245,10 @@ export class SnapshotStream<T extends { stream_version: number }> {
   #message(event: Envelope) {
     if ((event.room_id ?? null) !== (this.options.roomId ?? null)) throw new Error("WRONG_STREAM");
     if (event.event_type === "connection.reconnect_required") {
-      this.#block("다른 탭에서 연결했습니다. 이 탭에서는 자동 재접속하지 않습니다.");
+      this.#block(
+        "다른 탭에서 이 방을 사용 중입니다.",
+        "connection-replaced",
+      );
       return;
     }
     if (event.event_type === "room.closed") {
