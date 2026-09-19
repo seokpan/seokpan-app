@@ -30,7 +30,6 @@ class ConfirmedDepartureFinalizer(Protocol):
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
 
 
-
 class DisconnectExpiryStatus(StrEnum):
     EXPIRED = "EXPIRED"
     STALE = "STALE"

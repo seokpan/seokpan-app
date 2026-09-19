@@ -38,7 +38,6 @@ class ConfirmedDepartureFinalizer(Protocol):
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
 
 
-
 @dataclass(frozen=True, slots=True)
 class RoomApiServices:
     identity: IdentityApiServices
