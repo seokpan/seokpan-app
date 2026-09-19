@@ -705,6 +705,8 @@ class RoomApplicationService(ParticipantSessionPort):
             participant_id=participation.participant_id,
             actor_type=replacement.actor_type,
             actor_id=replacement.actor_id,
+            connection_generation=participation.connection_generation,
+            connected=participation.connected,
         )
         self._unbind(participation)
         self._invalidate_participation_watch(updated.session_digest)
