@@ -1270,7 +1270,7 @@ def test_event_delivery_failure_does_not_roll_back_completed_http_mutation() -> 
 
 
 @pytest.mark.asyncio
-async def test_room_closure_forwards_exact_game_and_operation_time_to_finalizer() -> None:
+async def test_system_invalid_room_closure_is_left_for_background_reconciliation() -> None:
     rooms = Mock()
     rooms.disconnect_participant = AsyncMock(
         return_value=RoomMutationResult(
@@ -1289,7 +1289,6 @@ async def test_room_closure_forwards_exact_game_and_operation_time_to_finalizer(
     votes.get = AsyncMock(return_value=None)
     finalizer = Mock()
     finalizer.finalize_departures = AsyncMock()
-    finalizer.finalize_system_invalid = AsyncMock(return_value=True)
     coordinator = RoomConnectionCoordinator(
         rooms=rooms,
         votes=votes,
@@ -1303,11 +1302,6 @@ async def test_room_closure_forwards_exact_game_and_operation_time_to_finalizer(
         connection_generation=1,
     )
 
-    finalizer.finalize_system_invalid.assert_awaited_once_with(
-        room_id="room-closed",
-        game_id="game-closed",
-        closed_at_ms=12_345,
-    )
     finalizer.finalize_departures.assert_not_awaited()
 
 
