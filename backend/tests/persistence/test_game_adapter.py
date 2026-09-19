@@ -525,7 +525,7 @@ async def test_finalize_updates_result_stats_rating_and_history_atomically() -> 
     created_stats = next(
         row for row in session.added if isinstance(row, MemberStatsRow) and row.member_id == 2
     )
-    assert (game.status, game.ended_at) == ("COMPLETED", NOW)
+    assert (game.status, game.ended_at) == ("COMPLETED", DB_NOW)
     assert (result.winner, result.end_reason, result.reflected_to_stats) == (
         "BLACK",
         "NORMAL_WIN",
