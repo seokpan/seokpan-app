@@ -152,11 +152,11 @@ export class SnapshotStream<T extends { stream_version: number }> {
     this.#initial = false;
     this.#buffer.clear();
     this.#seen.clear();
-    this.#publish("connecting", null);
+    this.#publish("connecting", this.#view.snapshot);
     try {
       this.#socket = this.options.factory(this.options.path);
     } catch {
-      this.#publish("blocked", null, "실시간 연결을 열 수 없습니다.");
+      this.#publish("blocked", this.#view.snapshot, "실시간 연결을 열 수 없습니다.");
       return;
     }
     const socket = this.#socket;
