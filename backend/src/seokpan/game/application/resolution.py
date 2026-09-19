@@ -151,6 +151,7 @@ class TurnResolutionRunner:
         self._clock = clock
         self._runner_id = hashlib.sha256(runner_id.encode()).hexdigest()[:12]
         self._events = events or NullRealtimeEventAdapter()
+        self._invalidation_failures: set[tuple[str, str]] = set()
 
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool:
         """Finalize an active Game after Room state confirms player departures."""
@@ -298,7 +299,7 @@ class TurnResolutionRunner:
                 await self._rooms.complete_game_invalidation(room_id, game_id)
             return completed
         if runtime.game_status is not GameStatus.ACTIVE:
-            return False
+            raise VoteRuleViolation("GAME_RUNTIME_RESULT_CONFLICT")
 
         finalized = await self._votes.finalize_game(
             FinalizeRuntimeGame(
@@ -327,12 +328,14 @@ class TurnResolutionRunner:
         pending = await self._rooms.pending_game_invalidations(limit=limit)
         completed = 0
         for item in pending:
+            key = (item.room_id, item.game_id)
             try:
                 await self.finalize_system_invalid(
                     room_id=item.room_id,
                     game_id=item.game_id,
                     closed_at_ms=item.closed_at_ms,
                 )
+                self._invalidation_failures.discard(key)
                 completed += 1
             except (
                 VoteRuleViolation,
@@ -341,14 +344,16 @@ class TurnResolutionRunner:
                 GameResultRuleViolation,
                 RoomRuleViolation,
             ):
-                _LOGGER.exception(
-                    "Game invalidation item failed",
-                    extra={
-                        "event": "game_invalidation.item_failed",
-                        "room_id": item.room_id,
-                        "game_id": item.game_id,
-                    },
-                )
+                if key not in self._invalidation_failures:
+                    _LOGGER.exception(
+                        "Game invalidation item failed",
+                        extra={
+                            "event": "game_invalidation.item_failed",
+                            "room_id": item.room_id,
+                            "game_id": item.game_id,
+                        },
+                    )
+                    self._invalidation_failures.add(key)
         return completed
 
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:

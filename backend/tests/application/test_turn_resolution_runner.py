@@ -36,6 +36,7 @@ from seokpan.room.application import (
     CreateRoomRuntime,
     JoinRoomRuntime,
     RealtimeEventPort,
+    PendingGameInvalidation,
     RoomMutationResult,
     SetRoomReady,
     StartRoomGame,
@@ -936,3 +937,69 @@ async def test_system_invalid_closure_preserves_board_conclusion_proven_by_durab
     runtime = await votes.get(ROOM_ID)
     assert runtime is not None
     assert runtime.game_status is GameStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_invalidation_reconciler_consumes_pending_marker_and_acks_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, rooms, votes, games, _ = await setup_runner()
+    pending = PendingGameInvalidation(ROOM_ID, GAME_ID, 4_321)
+    monkeypatch.setattr(
+        rooms,
+        "pending_game_invalidations",
+        AsyncMock(return_value=(pending,)),
+    )
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(rooms, "complete_game_invalidation", acknowledge)
+
+    completed = await runner.reconcile_game_invalidations(limit=10)
+
+    assert completed == 1
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.ended_at == datetime.fromtimestamp(4.321, UTC)
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.SYSTEM_INVALID
+    acknowledge.assert_awaited_once_with(ROOM_ID, GAME_ID)
+    assert clock.now_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_invalidation_reconciler_logs_stable_failure_once_until_it_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = PendingGameInvalidation("room-missing", "game-missing", 1_000)
+    rooms = Mock()
+    rooms.pending_game_invalidations = AsyncMock(return_value=(pending,))
+    rooms.complete_game_invalidation = AsyncMock()
+    games = Mock()
+    games.load_game = AsyncMock(return_value=None)
+    votes = Mock()
+    log = Mock()
+    monkeypatch.setattr("seokpan.game.application.resolution._LOGGER.exception", log)
+    runner = TurnResolutionRunner(
+        due_turns=Mock(),
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=votes,
+        games=games,
+        rooms=rooms,
+        clock=ManualClock(),
+        runner_id="invalidation-retry",
+    )
+
+    assert await runner.reconcile_game_invalidations() == 0
+    assert await runner.reconcile_game_invalidations() == 0
+
+    log.assert_called_once_with(
+        "Game invalidation item failed",
+        extra={
+            "event": "game_invalidation.item_failed",
+            "room_id": "room-missing",
+            "game_id": "game-missing",
+        },
+    )
