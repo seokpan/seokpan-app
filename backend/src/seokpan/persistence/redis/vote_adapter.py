@@ -16,6 +16,7 @@ from seokpan.persistence.redis.common import (
     RedisProviderError,
     VersionedJsonCodec,
 )
+from seokpan.persistence.redis.start_capture_script import start_intent_key, start_phase_key
 from seokpan.persistence.redis.vote_scripts import VOTE_DISCARD, VOTE_MUTATION, VOTE_READ
 from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS
 from seokpan.vote.application import (
@@ -252,6 +253,14 @@ class RedisVoteRuntimeAdapter:
                     RedisKeyspace.room_vote_tally(room_id, previous_turn_no),
                     RedisKeyspace.room_resolver(room_id, previous_turn_no),
                 )
+            )
+            + (
+                (
+                    start_intent_key(room_id, _string(payload, "game_id")),
+                    start_phase_key(room_id, _string(payload, "game_id")),
+                )
+                if operation == "initialize"
+                else ()
             ),
             args=(
                 operation,

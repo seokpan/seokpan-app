@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -43,6 +43,7 @@ def memory() -> SimpleNamespace:
         _start_phases={(ROOM, GAME): "PENDING"}, _snapshot=lambda *args: room,
     )
     votes = SimpleNamespace(
+        bind_captured_start_records=Mock(),
         _states={}, _snapshot=lambda room_id, state: SimpleNamespace(
             room_id=room_id, game_id=state.game.game_id, turn_no=state.game.turn_no,
             deadline_ms=state.game.deadline_ms, participants=state.game.participants,
@@ -52,6 +53,9 @@ def memory() -> SimpleNamespace:
     init = InMemoryCapturedVoteInitializer(
         rooms=cast(InMemoryRoomRuntimeAdapter, rooms),
         votes=cast(InMemoryVoteRuntimeAdapter, votes), clock=cast(MillisecondClock, clock),
+    )
+    votes.bind_captured_start_records.assert_called_once_with(
+        rooms._start_intents, rooms._start_phases,
     )
     command = InitializeCapturedGame(intent, "init-1", BLACK, 7)
     return SimpleNamespace(**locals())

@@ -129,6 +129,23 @@ local function remember(result)
 end
 
 if operation == 'initialize' then
+  -- Append guard keys after the optional predecessor cleanup keys (14..16).
+  -- Reject before cached-response replay, expiry pruning or any state mutation.
+  local key_count = 15
+  if payload.previous_game_id ~= nil and payload.previous_game_id ~= cjson.null then
+    key_count = 18
+  end
+  if #KEYS ~= key_count then
+    return rejection('START_INITIALIZE_KEYS_INVALID')
+  end
+  local prefix = 'stone:v1:room:{' .. payload.room_id .. '}:'
+  if KEYS[key_count - 1] ~= prefix .. 'start-intent:' .. payload.game_id
+      or KEYS[key_count] ~= prefix .. 'start-phase:' .. payload.game_id then
+    return rejection('START_INITIALIZE_KEYS_INVALID')
+  end
+  if redis.call('EXISTS', KEYS[key_count - 1], KEYS[key_count]) > 0 then
+    return rejection('CAPTURED_START_REQUIRED')
+  end
   if redis.call('EXISTS', KEYS[1]) == 0 then return rejection('ROOM_NOT_FOUND') end
   if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING'
       or redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
@@ -419,7 +436,7 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=7,
+    version=8,
     source=_COMMON + _MUTATION,
 )
 

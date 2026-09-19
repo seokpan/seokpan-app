@@ -81,7 +81,7 @@ async def test_script_cache_miss_loads_exact_versioned_script() -> None:
     assert client.script_load_calls == [VOTE_MUTATION.source]
     assert len(client.evalsha_calls) == 2
     assert client.evalsha_calls[0][0] == VOTE_MUTATION.sha
-    assert client.evalsha_calls[0][1] == 13
+    assert client.evalsha_calls[0][1] == 15
 
 
 class FailingRedisClient:
@@ -124,7 +124,7 @@ async def test_replacement_declares_only_previous_turn_cleanup_keys() -> None:
         )
     )
     _, count, values = client.evalsha_calls[-1]
-    assert count == 16
+    assert count == 18
     assert values[13:16] == (
         RedisKeyspace.room_votes("room-1", 1),
         RedisKeyspace.room_vote_tally("room-1", 1),
@@ -185,7 +185,7 @@ def test_old_or_future_vote_snapshot_is_not_interpreted(version: int) -> None:
 
 
 def test_last_move_lua_write_is_persistence_gated_and_readable() -> None:
-    assert VOTE_MUTATION.version == 7
+    assert VOTE_MUTATION.version == 8
     assert VOTE_READ.version == 5
     assert VOTE_MUTATION.source.index("existing.schema_version ~= 3") < VOTE_MUTATION.source.index(
         "local expired"

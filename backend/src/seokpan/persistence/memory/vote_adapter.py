@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -71,8 +71,30 @@ class InMemoryVoteRuntimeAdapter:
         self._room_lookup = room_lookup
         self._states: dict[str, _VoteState] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
+        self._captured_start_records: tuple[
+            Mapping[tuple[str, str], object], Mapping[tuple[str, str], object]
+        ] | None = None
+
+    def bind_captured_start_records(
+        self,
+        intents: Mapping[tuple[str, str], object],
+        phases: Mapping[tuple[str, str], object],
+    ) -> None:
+        """Bind the shared Memory stores, never a snapshot copied before capture."""
+        current = self._captured_start_records
+        if current is not None and (current[0] is not intents or current[1] is not phases):
+            raise ValueError("CAPTURED_START_STORE_MISMATCH")
+        self._captured_start_records = (intents, phases)
+
+    def _require_legacy_initialization(self, command: InitializeVoteRuntime) -> None:
+        records = self._captured_start_records
+        key = (command.room_id, command.game_id)
+        if records is not None and any(key in store for store in records):
+            # Presence alone is sufficient: damaged or empty proof is not permission.
+            raise VoteRuleViolation("CAPTURED_START_REQUIRED")
 
     async def initialize(self, command: InitializeVoteRuntime) -> VoteMutationResult:
+        self._require_legacy_initialization(command)
         if self._room_lookup is not None:
             room = await self._room_lookup(command.room_id)
             if room is None:
@@ -84,6 +106,8 @@ class InMemoryVoteRuntimeAdapter:
                 or room.last_game_turn_no != command.previous_turn_no
             ):
                 raise VoteRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
+        # A captured start can appear while the optional Room lookup is suspended.
+        self._require_legacy_initialization(command)
         replay = self._replay(command)
         if replay is not None:
             return replay

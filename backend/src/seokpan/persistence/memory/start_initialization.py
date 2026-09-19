@@ -25,6 +25,7 @@ class InMemoryCapturedVoteInitializer:
         votes: InMemoryVoteRuntimeAdapter,
         clock: MillisecondClock,
     ) -> None:
+        votes.bind_captured_start_records(rooms._start_intents, rooms._start_phases)
         self._rooms = rooms
         self._votes = votes
         self._clock = clock
