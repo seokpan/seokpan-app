@@ -555,6 +555,7 @@ class RedisRoomRuntimeAdapter:
             new_owner_id=_optional_string(item, "new_owner_id"),
             room_closed=_boolean(item, "room_closed"),
             game_termination=GameTermination(_string(item, "game_termination")),
+            terminated_game_id=_optional_string(item, "terminated_game_id"),
         )
 
 

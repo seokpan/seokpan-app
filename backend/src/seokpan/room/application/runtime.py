@@ -330,6 +330,12 @@ class RoomMutationResult:
             return GameTermination.NONE
         return self.departure.game_termination
 
+    @property
+    def terminated_game_id(self) -> str | None:
+        if self.departure is None:
+            return None
+        return self.departure.terminated_game_id
+
 
 @dataclass(frozen=True, slots=True)
 class RoomSessionBinding:

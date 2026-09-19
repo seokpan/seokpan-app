@@ -158,12 +158,13 @@ local function update_game_player(participant_id, connected, vote_removed)
   return true
 end
 
-local function departure(previous_owner_id, new_owner_id, room_closed, termination)
+local function departure(previous_owner_id, new_owner_id, room_closed, termination, terminated_game_id)
   return {
     previous_owner_id = previous_owner_id == nil and cjson.null or previous_owner_id,
     new_owner_id = new_owner_id == nil and cjson.null or new_owner_id,
     room_closed = room_closed,
-    game_termination = termination
+    game_termination = termination,
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id
   }
 end
 
@@ -190,15 +191,17 @@ local function owner_departure(departed_id, previous_owner_id)
   end
   local status = redis.call('HGET', KEYS[1], 'status')
   local termination = status == 'PLAYING' and 'SYSTEM_INVALID' or 'NONE'
+  local game_id = redis.call('HGET', KEYS[1], 'game_id')
+  local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
   redis.call('SET', KEYS[7], '1', 'PX', tombstone_ttl_ms)
-  return departure(previous_owner_id, nil, true, termination)
+  return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=9,
+    version=10,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
