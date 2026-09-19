@@ -233,7 +233,7 @@ class TurnResolutionRunner:
         game_id: str,
         closed_at_ms: int,
     ) -> bool:
-        """Durably invalidate a Game after Room closure makes recovery impossible."""
+        """Converge a closed Room to one durable Game result, then remove ephemeral runtime."""
         history = await self._games.load_game(game_id)
         if history is None:
             raise PersistenceRuleViolation("GAME_NOT_FOUND")
@@ -242,18 +242,17 @@ class TurnResolutionRunner:
 
         stored = await self._games.load_result(game_id)
         runtime = await self._votes.get(room_id)
+        if runtime is not None and runtime.game_id != game_id:
+            raise VoteRuleViolation("STALE_GAME")
+
         if stored is not None and stored.end_reason is not EndReason.SYSTEM_INVALID:
+            await self._votes.discard_game(room_id, game_id)
             await self._rooms.complete_game_invalidation(room_id, game_id)
             return False
 
         if stored is None:
-            if runtime is not None and runtime.game_id != game_id:
-                raise VoteRuleViolation("STALE_GAME")
-
             history_game = replay_game_history(history)
             if history_game.status is not GameStatus.ACTIVE:
-                # Durable official Moves already prove a normal conclusion.
-                # Preserve that stronger fact instead of downgrading the game to SYSTEM_INVALID.
                 result = GameResultService(
                     game_id=game_id,
                     game=history_game,
@@ -267,14 +266,11 @@ class TurnResolutionRunner:
                 )
                 if not await self._games.result_matches(command):
                     await self._games.finalize_game(command)
+                await self._votes.discard_game(room_id, game_id)
                 await self._rooms.complete_game_invalidation(room_id, game_id)
                 return False
 
-            game = (
-                history_game
-                if runtime is None
-                else self._rebuild_before_turn(runtime, history)
-            )
+            game = history_game if runtime is None else self._rebuild_before_turn(runtime, history)
             result = GameResultService(
                 game_id=game_id,
                 game=game,
@@ -287,41 +283,9 @@ class TurnResolutionRunner:
             if not await self._games.result_matches(command):
                 await self._games.finalize_game(command)
 
-        runtime = await self._votes.get(room_id)
-        if runtime is None:
-            await self._rooms.complete_game_invalidation(room_id, game_id)
-            return True
-        if runtime.game_id != game_id:
-            raise VoteRuleViolation("STALE_GAME")
-        if runtime.game_status is GameStatus.SYSTEM_INVALID:
-            completed = runtime.end_reason is EndReason.SYSTEM_INVALID
-            if completed:
-                await self._rooms.complete_game_invalidation(room_id, game_id)
-            return completed
-        if runtime.game_status is not GameStatus.ACTIVE:
-            raise VoteRuleViolation("GAME_RUNTIME_RESULT_CONFLICT")
-
-        finalized = await self._votes.finalize_game(
-            FinalizeRuntimeGame(
-                room_id=room_id,
-                request_id=_stable_id(
-                    "system-invalid",
-                    DueTurn(room_id, game_id, runtime.turn_no),
-                ),
-                game_id=game_id,
-                turn_no=runtime.turn_no,
-                expected_state_version=runtime.state_version,
-                end_reason=EndReason.SYSTEM_INVALID,
-                winner=Stone.EMPTY,
-            )
-        )
-        completed = (
-            finalized.snapshot.game_status is GameStatus.SYSTEM_INVALID
-            and finalized.snapshot.end_reason is EndReason.SYSTEM_INVALID
-        )
-        if completed:
-            await self._rooms.complete_game_invalidation(room_id, game_id)
-        return completed
+        await self._votes.discard_game(room_id, game_id)
+        await self._rooms.complete_game_invalidation(room_id, game_id)
+        return True
 
     async def reconcile_game_invalidations(self, *, limit: int = 100) -> int:
         """Retry room-closure invalidations from durable Room provider markers."""

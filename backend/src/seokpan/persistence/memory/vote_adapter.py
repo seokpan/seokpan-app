@@ -277,6 +277,17 @@ class InMemoryVoteRuntimeAdapter:
             VoteMutationResult(self._snapshot(command.room_id, state)),
         )
 
+    async def discard_game(self, room_id: str, game_id: str) -> None:
+        state = self._states.get(room_id)
+        if state is None:
+            return
+        if state.game.game_id != game_id:
+            raise VoteRuleViolation("STALE_GAME")
+        self._states.pop(room_id, None)
+        for key in tuple(self._requests):
+            if key[0] == room_id:
+                self._requests.pop(key, None)
+
     def _require(self, command: _VoteCommand) -> _VoteState:
         state = self._states.get(command.room_id)
         if state is None:

@@ -423,6 +423,30 @@ VOTE_MUTATION = VersionedLuaScript(
     source=_COMMON + _MUTATION,
 )
 
+VOTE_DISCARD = VersionedLuaScript(
+    name="vote-runtime-discard",
+    version=1,
+    source=r"""
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({ok = true, missing = true, error = cjson.null})
+end
+local game = cjson.decode(raw)
+if game.schema_version ~= 3 then
+  return cjson.encode({ok = false, error = 'VOTE_SCHEMA_VERSION_MISMATCH'})
+end
+if game.game_id ~= ARGV[1] then
+  return cjson.encode({ok = false, error = 'STALE_GAME'})
+end
+if tonumber(game.turn_no) ~= tonumber(ARGV[2]) then
+  return cjson.encode({ok = false, error = 'REDIS_SNAPSHOT_CHANGED'})
+end
+redis.call('DEL', unpack(KEYS))
+return cjson.encode({ok = true, missing = false, error = cjson.null})
+""",
+)
+
+
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",
     version=5,
