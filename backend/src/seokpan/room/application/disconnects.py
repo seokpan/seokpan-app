@@ -9,7 +9,11 @@ from typing import Protocol
 
 from seokpan.identity.application import SessionRecord
 from seokpan.room.application.lobby import RoomApplicationService
-from seokpan.room.application.runtime import DueRoomDisconnect, DueRoomDisconnectSource
+from seokpan.room.application.runtime import (
+    DueRoomDisconnect,
+    DueRoomDisconnectSource,
+    RoomMutationResult,
+)
 from seokpan.room.domain import GameTermination, RoomRuleViolation
 from seokpan.vote.application import VoteRuntimePort
 from seokpan.vote.domain import TurnStatus
@@ -102,7 +106,11 @@ class RoomConnectionCoordinator:
             ),
         )
 
-    async def _finalize_game_transition(self, room_id: str, result) -> None:
+    async def _finalize_game_transition(
+        self,
+        room_id: str,
+        result: RoomMutationResult,
+    ) -> None:
         if self._departures is None or result.replayed:
             return
         if (
