@@ -188,7 +188,7 @@ class TurnResolutionRunner:
                 raise
             command = FinalizeGameCommand(
                 result=result,
-                ended_at=datetime.fromtimestamp(closed_at_ms / 1000, UTC),
+                ended_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
             )
             if not await self._games.result_matches(command):
                 await self._games.finalize_game(command)
