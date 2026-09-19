@@ -92,7 +92,9 @@ class InMemoryRoomRuntimeAdapter:
         self._rooms: dict[str, _RoomState] = {}
         self._start_intents: dict[tuple[str, str], RoomGameStartIntent] = {}
         self._start_phases: dict[tuple[str, str], str] = {}
-        self._tombstones: dict[str, int] = {}
+        self._start_record_expiries: dict[tuple[str, str], int] = {}
+        self._captured_closure_receipts: dict[tuple[str, str], str] = {}
+        self._tombstones: dict[str, int | None] = {}
         self._pending_game_invalidations: dict[str, PendingGameInvalidation] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
         self._votes: dict[tuple[str, int], set[str]] = {}
@@ -206,6 +208,7 @@ class InMemoryRoomRuntimeAdapter:
         if pending.game_id != game_id:
             raise RoomRuleViolation("STALE_GAME")
         self._pending_game_invalidations.pop(room_id, None)
+        self._tombstones[room_id] = self._clock.now_ms + ROOM_REQUEST_DEDUPE_TTL_MS
 
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult:
         replay = self._replay(command)
@@ -282,6 +285,7 @@ class InMemoryRoomRuntimeAdapter:
 
     async def get_start_intent(self, room_id: str, game_id: str) -> RoomGameStartIntent | None:
         validate_intent_lookup(room_id, game_id)
+        self._purge_expired()
         return self._start_intents.get((room_id, game_id))
 
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
@@ -614,7 +618,10 @@ class InMemoryRoomRuntimeAdapter:
             if departure.game_termination is GameTermination.SYSTEM_INVALID
             else ROOM_CLOSED_TOMBSTONE_TTL_MS
         )
-        self._tombstones[command.room_id] = self._clock.now_ms + closure_ttl_ms
+        self._tombstones[command.room_id] = (
+            None if departure.game_termination is GameTermination.SYSTEM_INVALID
+            else self._clock.now_ms + closure_ttl_ms
+        )
         if (
             departure.game_termination is GameTermination.SYSTEM_INVALID
             and departure.terminated_game_id is not None
@@ -655,8 +662,14 @@ class InMemoryRoomRuntimeAdapter:
 
     def _purge_expired(self) -> None:
         now_ms = self._clock.now_ms
+        for key, expiry in tuple(self._start_record_expiries.items()):
+            if expiry <= now_ms:
+                self._start_record_expiries.pop(key, None)
+                self._start_intents.pop(key, None)
+                self._start_phases.pop(key, None)
+                self._captured_closure_receipts.pop(key, None)
         for room_id, expires_at_ms in tuple(self._tombstones.items()):
-            if expires_at_ms <= now_ms:
+            if expires_at_ms is not None and expires_at_ms <= now_ms:
                 self._tombstones.pop(room_id, None)
                 self._pending_game_invalidations.pop(room_id, None)
         for key, cached in tuple(self._requests.items()):

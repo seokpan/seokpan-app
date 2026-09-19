@@ -193,23 +193,26 @@ local function owner_departure(departed_id, previous_owner_id)
   local termination = status == 'PLAYING' and 'SYSTEM_INVALID' or 'NONE'
   local game_id = redis.call('HGET', KEYS[1], 'game_id')
   local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
-  redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
-  local closure_ttl_ms = termination == 'SYSTEM_INVALID'
-      and math.max(tombstone_ttl_ms, request_ttl_ms)
-      or tombstone_ttl_ms
-  redis.call('SET', KEYS[7], cjson.encode({
+  local marker = cjson.encode({
     room_id = ARGV[1],
     terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id,
     closed_at_ms = current_ms,
     invalidation_pending = termination == 'SYSTEM_INVALID'
-  }), 'PX', closure_ttl_ms)
+  })
+  if termination == 'SYSTEM_INVALID' then
+    -- Unfinished durable work is not completed by a TTL expiry.
+    redis.call('SET', KEYS[7], marker)
+  else
+    redis.call('SET', KEYS[7], marker, 'PX', tombstone_ttl_ms)
+  end
+  redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
   return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=12,
+    version=13,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -539,7 +542,7 @@ return cjson.encode({ok = true, encoded_password = value, error = cjson.null})
 
 ROOM_INVALIDATION_ACK = VersionedLuaScript(
     name="room-invalidation-ack",
-    version=1,
+    version=2,
     source=r"""
 local raw = redis.call('GET', KEYS[1])
 if not raw then
@@ -549,13 +552,15 @@ local value = cjson.decode(raw)
 if value.terminated_game_id ~= ARGV[1] then
   return cjson.encode({ok = false, error = 'STALE_GAME'})
 end
-value.invalidation_pending = false
-local ttl = redis.call('PTTL', KEYS[1])
-if ttl > 0 then
-  redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
-else
-  redis.call('SET', KEYS[1], cjson.encode(value))
+if value.invalidation_pending == false then
+  return cjson.encode({ok = true, missing = false})
 end
+local ttl = tonumber(ARGV[2])
+if not ttl or ttl <= 0 or ttl ~= math.floor(ttl) then
+  return cjson.encode({ok = false, error = 'INVALID_INVALIDATION_RETENTION'})
+end
+value.invalidation_pending = false
+redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
 return cjson.encode({ok = true, missing = false})
 """,
 )

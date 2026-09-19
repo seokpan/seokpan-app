@@ -295,7 +295,7 @@ class RedisRoomRuntimeAdapter:
         result = await self._scripts.execute(
             ROOM_INVALIDATION_ACK,
             keys=(RedisKeyspace.room_closed(room_id),),
-            args=(game_id,),
+            args=(game_id, ROOM_REQUEST_DEDUPE_TTL_MS),
         )
         decoded = self._result(result)
         self._raise_rejection(decoded)

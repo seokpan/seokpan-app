@@ -5,58 +5,54 @@ Canonical Issue: #86 / Parent: #76
 
 ## 상태와 이번 변경 범위
 
-**Room capture에 이어 초기화 완료 표식과 opt-in Application 실행 경로를 연결했다.**
-기존 composition root는 변경하지 않아 HTTP 서비스는 여전히 legacy start를 사용한다.
-`GameApplicationService(captured_startup=...)`를 명시적으로 주입한 경우에만 새 경로가 실행된다.
-CLOSED/ACK/retention·F15 history 부재 복구·legacy writer guard와 실제 Provider Gate 전에
-서비스 구성을 전환하지 않는다. 이 Source는 F09/F15 전체 완료나 main 병합 준비 판정이 아니다.
+**초기화 A에 이어 B의 captured 종료 복구·ACK 보존 경로를 opt-in으로 연결했다.**
+서비스 composition root는 아직 전환하지 않았다. 정상 완료된 경기의 intent 정리,
+legacy writer guard, 기존 데이터 이행과 실제 Provider Gate가 남아 있다.
 
-현재 Source:
-- 원본 불변 값/codec 및 `CaptureRoomGameStart`의 Memory/Redis atomic capture.
-- `CapturedGameStartup`: trusted identity 준비 → Room 수락 → 원본 읽기 → 원본 persistence
-  → captured initialization. retry에서는 live Ready/identity로 원본을 재작성하지 않는다.
-- `InitializeCapturedGame`/`CapturedVoteInitializationPort`: 호출자 deadline/roster를 받지 않는다.
-- Memory initializer: **같은** Room/Vote adapter 인스턴스에서 await 없는 상태 전이.
-- Redis initializer: 별도 versioned `vote-start-initialize` script, 13/16개의 명시적 same-tag key.
-- 최초 Runtime 생성과 INITIALIZED witness를 같은 실행에 기록하며 Provider 시각으로 첫
-  deadline을 한 번 정한다. retry는 현재 Runtime을 읽고 첫 응답 cache로 되감지 않는다.
-- `GameApplicationService`의 선택적 DI 및 기존 game.started/lobby event 경로 재사용.
-  알림은 기존 best-effort 정책이며 exactly-once delivery 보장이 아니다.
+현재 Source 연결:
+- `CapturedGameStartup`: trusted identity → atomic Room capture → 원본 DB command →
+  첫 Vote Runtime과 INITIALIZED witness. `captured_startup` DI가 있어야 사용한다.
+- `CapturedGameInvalidation`: 원자적으로 읽은 실제 Room closure와 원본 intent/phase 대조 →
+  **PENDING으로 증명된 미초기화 경기만** history 보완 → 기존 F15 durable 결과 처리 →
+  Runtime discard → captured ACK. `TurnResolutionRunner(captured_invalidation=...)`로 연결한다.
+- 이미 INITIALIZED/FINALIZED인 경기의 history 부재는 새 시작 기록으로 감추지 않는다.
+- 같은 경기의 기존 history는 Game/Room/투표시간/원래 시각/Member·Guest 귀속까지 대조한다.
+- 다음 경기의 capture 후 이전 Runtime이 남은 경우, intent의 previous Game/turn과 일치하고
+  실제 durable result가 있는 FINISHED Runtime만 정리 대상으로 허용한다. 다른 Runtime은 거절한다.
+- 기존 정상 결과를 덮어쓰지 않으며 신규 결과 확보 전에는 Runtime을 버리지 않는다.
 
-저장 형태:
-- intent: `stone:v1:room:{room_id}:start-intent:{game_id}` — canonical JSON.
-- phase: `stone:v1:room:{room_id}:start-phase:{game_id}` — capture 직후 `PENDING` string.
-- 초기화 후 같은 phase key에 JSON witness를 저장한다:
-  `schema_version=1`, `phase=INITIALIZED`, `game_id`, `intent_fingerprint`,
-  `initialized_at_ms`, `first_deadline_ms`.
-- phase read는 initializer port의 `get_phase(intent)`가 맡는다. 값 부재를 PENDING으로
-  기본 변환하지 않는다. 원본 읽기는 기존 Room adapter의 `get_start_intent`를 사용한다.
+저장과 수명주기:
+- intent/phase는 기존 같은 Room hash tag의 per-game key를 사용한다.
+- 논리적 CLOSED의 authority는 **같은 Room mutation이 기록한 closure marker + live Room 부재**다.
+  INITIALIZED를 PENDING으로 되돌리거나 두 번째 CLOSED authority를 만들지 않는다.
+  phase는 시작 실행의 과거 사실을 보존하고 최종 ACK에서는 FINALIZED receipt로 바뀐다.
+- 신규 SYSTEM_INVALID pending marker는 TTL 없이 보존한다. 일반 WAITING Room tombstone은
+  기존 TTL을 유지한다. closure marker를 먼저 저장하고 live Room을 제거한다. 예기치 않은
+  Redis 오류는 rollback되지 않으므로 marker/live Room이 공존하면 복구를 거절하고 근거를 보존한다.
+- legacy F15 ACK는 완료 후에만 request-dedupe horizon의 TTL을 설정한다.
+- captured ACK는 결과와 Runtime 정리가 선행됐음을 caller/Provider에서 확인한다. terminal phase,
+  ACK receipt를 먼저 기록한 뒤 원본·phase·receipt에 **고정 절대 만료 시각**을 적용한다.
+  ACK 전에 TTL을 걸지 않으며, ACK 후 expiry 쓰기 실패는 재실행으로 같은 시각에 수렴한다.
+  반복 ACK로 보존기간을 계속 늘리지 않는다. 이 역시 Redis 전체 손실 복구 보장은 아니다.
+- 기존 배포가 이미 만든 TTL pending marker/유실 기록은 이번 변경으로 자동 복원하지 않는다.
+  기존 데이터 점검/이행은 서비스 전환 전 필수 항목이다.
+- Memory는 같은 Room/Vote 인스턴스를 공유하며 tombstone/원본/phase/receipt 수명을 함께 관리한다.
 
-안전 경계:
-- INITIALIZED + Runtime 없음, PENDING + 같은 Runtime 존재, 잘못된 phase/intent는 fail closed.
-- Room/owner/version/직전 Game을 Provider에서 재확인한다. pending initialize는 원본 PLAYER가
-  모두 현재 Room에 존재해야 한다. 현재 connected만 사용하고 원래 identity/team은 바꾸지 않는다.
-- INITIALIZED replay는 진행된 현재 Runtime을 읽는다. 기존 첫 deadline과 witness는 보존한다.
-- Redis 재조회 중 Runtime이 사라지거나 다른 Game으로 바뀌면 거절하며 legacy initialize로
-  fallback하지 않는다. cancellation/provider 오류도 전파한다.
-- 예상 가능한 key type/encoding 거절은 쓰기 전에 검사한다. witness를 먼저 기록해 이후
-  unexpected write failure가 PENDING 재초기화로 오인되지 않게 한다. Redis 오류는 rollback이
-  아니며 그런 중간 상태의 자동 복구까지 이번 단계에서 보장하지 않는다.
-- legacy initialize에는 아직 새 phase guard를 붙이지 않았다. 따라서 혼합 writer 또는
-  부분 활성화는 금지하며 다음 종료/이행 묶음에서 연결한다.
-- 원본/phase는 아직 TTL 없이 보존한다. 종료 ACK 이후 정리, 미종결 보존, F15 원본 소비는
-  다음 묶음의 활성화 전 필수 항목이다.
-- 공개 HTTP schema·Rating·DB schema·UI·기존 기본 실행 경로는 변경하지 않았다.
+남은 활성화 조건:
+- 정상 종료 후 Room 재사용 경로의 intent/phase 정리.
+- 기존 initialize/replay의 captured phase 우회 방지 및 혼합 writer 정책.
+- 기존 intent 없는 경기의 처리·기존 pending marker 점검 및 composition root 주입/전환.
+- 고정 환경 전체 pytest/format/ruff/mypy, 실제 Redis/MariaDB/2-Pod 및 Browser gate.
+- 공개 HTTP schema, DB schema, UI, Rating 정책과 CI/CD는 바꾸지 않았다.
+  다만 **기존 Room closure의 pending 보존과 ACK TTL 정책은 이번 Source에서 변경됐다.**
 
 ### 이번 검증의 범위
 
-신규 Application/initializer 경계 39 + 기존 F09 제어흐름 27 + 순수 codec 81 = 147 PASS.
-정확한 Source를 실행하지만 package import/Domain/Provider는 대체한 격리 환경이다.
-고정 의존성 전체 repository pytest/ruff/mypy, 실제 Redis/MariaDB/2-Pod/Browser PASS가 아니다.
-새 Lua source는 Lua 5.4 + Redis/cjson doubles로 21 시나리오 PASS. 실제 Redis Lua 5.1의
-AOF/replication/TTL/OOM 검증과 구분한다. AST/100자 line-length/blob 동일성도 확인한다.
-이전 capture의 16+81/13-case 결과는 이전 체크포인트의 별도 Evidence이며 이번 합계에
-중복 더하지 않는다.
+신규 closure/consumer/Memory 및 결합 흐름 61 + 기존 F15 18 = **79 PASS**.
+실제 Source를 실행하지만 package import/Domain/Provider는 대체한 격리 환경이다.
+Lua 5.4 + Redis/cjson doubles에서 실제 Room mutation/read/ACK Source의 **22 시나리오 PASS**.
+실제 Redis의 Lua5.1/cjson/TTL/AOF/OOM, MariaDB, 전체 고정 환경, 2-Pod/Browser 결과가 아니다.
+이전 A의 147/21 결과는 별도 체크포인트 Evidence이며 최신 검증 합계에 중복 더하지 않는다.
 
 ## 1. 실제 코드에서 확인한 문제
 
@@ -144,7 +140,7 @@ Room PLAYING 전이, 원래 roster/identity/Provider 시각의 intent, 초기 PE
 ### 4.2 초기화 완료 표식은 Runtime과 동시에 — opt-in Source 연결됨
 
 진행 표식의 전체 계약은 다음과 같다. 현재 PENDING capture와 INITIALIZED 기록이 구현됐다.
-CLOSED 전이와 종결 정리는 아직 연결하지 않았다.
+논리적 CLOSED와 captured ACK 정리는 이번에 연결했다. 정상 완료·legacy guard·구성 전환은 남아 있다.
 
 ```text
 Room 수락: PENDING
@@ -166,7 +162,7 @@ INITIALIZED/CLOSED는 PENDING으로 되돌리지 않는다. 표식만 유실되�
 
 동일 request replay도 이 phase 보호를 우회하지 못하게 검증한다.
 
-### 4.3 F09와 F15 소비 — F09 opt-in 연결, F15 history 부재 소비는 잔여
+### 4.3 F09와 F15 소비 — 두 opt-in 경로 연결, 서비스 구성 전환은 잔여
 
 새 F09 opt-in 경로는 `started_at`, roster, Member/Guest 귀속, config를 원본 intent에서만 구성한다.
 원래 수락 시각과 첫 투표 시작/마감의 시각은 구분해 설계해야 한다. 장애 후 재개 시
@@ -174,7 +170,7 @@ INITIALIZED/CLOSED는 PENDING으로 되돌리지 않는다. 표식만 유실되�
 재시도마다 deadline을 새로 늘리는 방식은 채택하지 않는다.
 
 F15에서 DB history가 없으면 검증된 원본 intent와 closure 표식을 함께 사용해
-동일 Game의 초기 history를 보완하는 경로를 구현한다. 가짜 참가자를 넣지 않는다.
+PENDING으로 증명된 동일 Game의 초기 history만 보완한다. INITIALIZED/FINALIZED의 history 유실은 거절한다. 가짜 참가자를 넣지 않는다.
 기존 Game row가 있으면 원본 identity/config/start-time 일치를 먼저 대조한다.
 정상 결과는 보존하고, 종료 결과 확보 → Runtime discard → invalidation ACK 순서를 유지한다.
 늦은 Start writer와 closure writer의 경쟁도 반드시 실제 Provider로 검증한다.
@@ -198,7 +194,8 @@ backfill 추정하지 않으며 완료/격리/운영 전환 기준을 정한 뒤
 1. 불변 값/codec 및 순수 테스트 [Source 완료].
 2. Room start atomic capture와 Memory/Redis 진입점 [Source 구현, 서비스 caller 미전환].
 3. Vote initialize + INITIALIZED witness 및 opt-in caller [Source 연결, 실제 Provider Gate 대기].
-4. F15 history 부재 소비 + CLOSED/ACK/retention + legacy guard + composition 전환. F09와 결합 검증.
+4. F15 history 부재 소비 + closure/captured ACK [opt-in Source 연결].
+   정상 완료 정리 + legacy guard + composition 전환 + 이행/결합 검증은 다음 마무리 대상.
 5. 고정 의존성 전체 회귀, 실제 Redis/MariaDB/2 Replica, main 통합 후 Browser.
 
 위 2~4가 함께 검증되기 전에는 F09/F15 해결 완료나 main 승격 대상으로 판정하지 않는다.
