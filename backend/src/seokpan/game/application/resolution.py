@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 
+from seokpan.game.application.history import replay_game_history
 from seokpan.game.application.persistence import (
     FinalizeGameCommand,
     GamePersistencePort,
