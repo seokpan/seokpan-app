@@ -194,19 +194,22 @@ local function owner_departure(departed_id, previous_owner_id)
   local game_id = redis.call('HGET', KEYS[1], 'game_id')
   local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
+  local closure_ttl_ms = termination == 'SYSTEM_INVALID'
+      and math.max(tombstone_ttl_ms, request_ttl_ms)
+      or tombstone_ttl_ms
   redis.call('SET', KEYS[7], cjson.encode({
     room_id = ARGV[1],
     terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id,
     closed_at_ms = current_ms,
     invalidation_pending = termination == 'SYSTEM_INVALID'
-  }), 'PX', tombstone_ttl_ms)
+  }), 'PX', closure_ttl_ms)
   return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=11,
+    version=12,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""

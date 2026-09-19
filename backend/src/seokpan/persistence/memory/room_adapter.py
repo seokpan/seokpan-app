@@ -567,7 +567,12 @@ class InMemoryRoomRuntimeAdapter:
         for vote_key in tuple(self._votes):
             if vote_key[0] == command.room_id:
                 self._votes.pop(vote_key, None)
-        self._tombstones[command.room_id] = self._clock.now_ms + ROOM_CLOSED_TOMBSTONE_TTL_MS
+        closure_ttl_ms = (
+            ROOM_REQUEST_DEDUPE_TTL_MS
+            if departure.game_termination is GameTermination.SYSTEM_INVALID
+            else ROOM_CLOSED_TOMBSTONE_TTL_MS
+        )
+        self._tombstones[command.room_id] = self._clock.now_ms + closure_ttl_ms
         if (
             departure.game_termination is GameTermination.SYSTEM_INVALID
             and departure.terminated_game_id is not None

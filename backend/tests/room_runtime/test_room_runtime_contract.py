@@ -5,6 +5,7 @@ import pytest
 from seokpan.room.application import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
+    ROOM_REQUEST_DEDUPE_TTL_MS,
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
@@ -347,6 +348,55 @@ async def test_last_member_departure_closes_room_with_tombstone_without_game_los
     room_harness.clock.advance(ROOM_CLOSED_TOMBSTONE_TTL_MS)
     recreated = await room_harness.adapter.create(create_room(request_id="create-3"))
     assert recreated.snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_playing_room_closure_records_retryable_game_invalidation(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room(minimum_ready=2))
+    await room_harness.adapter.join(
+        join_guest("guest-1", request_id="join-1", expected_state_version=1)
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "black", "member-1", Team.BLACK, 2)
+    )
+    await room_harness.adapter.set_ready(
+        SetRoomReady("room-1", "ready-black", "member-1", True, 3)
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "white", "guest-1", Team.WHITE, 4)
+    )
+    await room_harness.adapter.set_ready(
+        SetRoomReady("room-1", "ready-white", "guest-1", True, 5)
+    )
+    await room_harness.adapter.start_game(
+        StartRoomGame("room-1", "start", "member-1", "game-1", 6)
+    )
+
+    closed = await room_harness.adapter.leave(
+        LeaveRoomRuntime("room-1", "leave-owner", "member-1", 7)
+    )
+
+    assert closed.room_closed is True
+    assert closed.game_termination is GameTermination.SYSTEM_INVALID
+    assert closed.terminated_game_id == "game-1"
+    assert closed.operation_at_ms == 1_000
+    pending = await room_harness.adapter.pending_game_invalidations(limit=10)
+    assert [(item.room_id, item.game_id, item.closed_at_ms) for item in pending] == [
+        ("room-1", "game-1", 1_000)
+    ]
+
+    # The correctness marker outlives the ordinary 10-minute anti-reuse tombstone.
+    room_harness.clock.advance(ROOM_CLOSED_TOMBSTONE_TTL_MS)
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == pending
+
+    await room_harness.adapter.complete_game_invalidation("room-1", "game-1")
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == ()
+
+    # The closure marker still follows the request-dedupe horizon for bounded retention.
+    room_harness.clock.advance(ROOM_REQUEST_DEDUPE_TTL_MS)
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == ()
 
 
 @pytest.mark.asyncio
