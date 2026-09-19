@@ -29,8 +29,9 @@ from seokpan.room.application import (
     RealtimeSubscription,
     RoomApplicationService,
     RoomConnectionCoordinator,
+    RoomMutationResult,
 )
-from seokpan.room.domain import RoomConfig, RoomRuleViolation
+from seokpan.room.domain import DepartureResult, GameTermination, RoomConfig, RoomRuleViolation
 from seokpan.settings import Settings
 
 ORIGIN = "http://localhost:5173"
@@ -1266,6 +1267,48 @@ def test_event_delivery_failure_does_not_roll_back_completed_http_mutation() -> 
 
     assert snapshot.status_code == 200
     assert snapshot.json()["room_id"] == room["room_id"]
+
+
+@pytest.mark.asyncio
+async def test_room_closure_forwards_exact_game_and_operation_time_to_finalizer() -> None:
+    rooms = Mock()
+    rooms.disconnect_participant = AsyncMock(
+        return_value=RoomMutationResult(
+            snapshot=None,
+            departure=DepartureResult(
+                previous_owner_id="owner",
+                new_owner_id=None,
+                room_closed=True,
+                game_termination=GameTermination.SYSTEM_INVALID,
+                terminated_game_id="game-closed",
+            ),
+            operation_at_ms=12_345,
+        )
+    )
+    votes = Mock()
+    votes.get = AsyncMock(return_value=None)
+    finalizer = Mock()
+    finalizer.finalize_departures = AsyncMock()
+    finalizer.finalize_system_invalid = AsyncMock(return_value=True)
+    coordinator = RoomConnectionCoordinator(
+        rooms=rooms,
+        votes=votes,
+        clock=ManualClock(),
+        departures=finalizer,
+    )
+
+    await coordinator.disconnect(
+        room_id="room-closed",
+        participant_id="owner",
+        connection_generation=1,
+    )
+
+    finalizer.finalize_system_invalid.assert_awaited_once_with(
+        room_id="room-closed",
+        game_id="game-closed",
+        closed_at_ms=12_345,
+    )
+    finalizer.finalize_departures.assert_not_awaited()
 
 
 @pytest.mark.asyncio
