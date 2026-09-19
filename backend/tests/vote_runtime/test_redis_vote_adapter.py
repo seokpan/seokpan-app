@@ -158,7 +158,7 @@ def test_old_or_future_vote_snapshot_is_not_interpreted(version: int) -> None:
 
 
 def test_last_move_lua_write_is_persistence_gated_and_readable() -> None:
-    assert VOTE_MUTATION.version == 6
+    assert VOTE_MUTATION.version == 7
     assert VOTE_READ.version == 5
     assert VOTE_MUTATION.source.index("existing.schema_version ~= 3") < VOTE_MUTATION.source.index(
         "local expired"
@@ -237,3 +237,10 @@ async def test_old_game_read_stops_before_script_execution() -> None:
     with pytest.raises(RedisProviderError, match="VOTE_SCHEMA_VERSION_MISMATCH"):
         await RedisVoteRuntimeAdapter(client).get("room-1")
     assert client.evalsha_calls == []
+
+
+def test_external_finalization_lua_accepts_system_invalid_without_winner() -> None:
+    source = VOTE_MUTATION.source
+    assert "payload.end_reason == 'SYSTEM_INVALID'" in source
+    assert "payload.winner == 'EMPTY'" in source
+    assert "game.game_status = payload.end_reason == 'SYSTEM_INVALID'" in source
