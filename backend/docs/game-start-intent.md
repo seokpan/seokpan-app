@@ -5,15 +5,39 @@ Canonical Issue: #86 / Parent: #76
 
 ## 상태와 이번 변경 범위
 
-**공용 값/직렬화 계약과 순수 모듈 테스트를 추가한 준비 단계다.**
-실제 Room 시작, Redis Lua, Memory Adapter, F09 recovery, F15 reconciler는 아직
-이 모듈을 호출하지 않는다. Start intent 저장이나 시작 단계 구별이 이미 동작한다고
-해석하지 않는다. 기존 복구 경로와 그 잔여 위험은 그대로 남는다.
+**값 계약에 더해 기존 Memory/Redis Adapter의 atomic capture 진입점까지 구현했다.**
+`CaptureRoomGameStart`는 기존 `StartRoomGame`의 internal subtype이다. 두 Adapter의
+`start_game()`가 이 명령을 받으면 Room 수락과 원본 intent/PENDING 저장을 함께 처리한다.
+HTTP/Application은 아직 기존 명령을 사용한다. INIT witness/F09/F15/retention이 함께
+연결되기 전에는 신규 명령으로 전환하지 않는다. 따라서 실제 서비스의 결합 장애는 아직 미해결이다.
 
-- 구현: `room/application/start_intent.py`의 불변 값 객체와 엄격한 JSON codec.
-- 미구현: 아래 원자적 저장·Runtime 초기화 표식·F09/F15 소비 경로.
-- 변경하지 않음: 공개 API, Game 규칙, Rating, DB schema, UI, 기존 Provider 실행 경로.
-- 새 저장소·메시지 브로커·분산 트랜잭션 시스템을 추가하지 않는다.
+- 구현: 불변 값/codec, capture 명령/roster 검증, Memory/Redis Adapter 분기, 원본 읽기.
+- Redis: 기존 Room snapshot helper를 재사용하는 별도 versioned `ROOM_START_CAPTURE`.
+  9개 key 모두 KEYS 인수로 선언하고 같은 Room hash tag를 사용한다.
+- 원본 key: `stone:v1:room:{room_id}:start-intent:{game_id}` (JSON string).
+- 초기 표식 key: `stone:v1:room:{room_id}:start-phase:{game_id}` (`PENDING` string).
+- Reader: 두 Adapter의 `get_start_intent(room_id, game_id)`; live Room이 없어도 원본을 읽음.
+- 원본/PENDING은 이 단계에서 TTL 없이 보존한다. 종료 ACK 이후의 정리·이행 정책은
+  **활성화 전 필수 잔여**이며, 이를 연결하지 않고 실제 서비스에서 신규 명령을 쓰지 않는다.
+- 재실행: 정렬된 원래 identity와 request fingerprint를 대조하며 원본 시각/명단을 덮어쓰지 않음.
+  원본·PENDING 또는 현재 Game 근거가 없으면 replay를 거절한다. INITIALIZED replay는
+  다음 witness 구현에서 실제 Runtime과 함께 검증하여 연결한다.
+- 신뢰 경계: identity 값은 서버의 trusted resolver에서 준비해야 한다. Provider는 현재
+  Room version/owner/Ready roster/team/actor type을 대조하지만 Member ID 자체를 인증하지 않는다.
+- 미연결: trusted Application caller, 초기화 완료 표식, F09/F15 원본 소비, lifecycle cleanup.
+- 변경하지 않음: 기존 HTTP 실행 경로, 공개 API/응답, DB schema, UI, Rating.
+
+### 이번 검증의 범위
+
+신규 Adapter 경계 16 tests + 기존 순수 intent 81 tests: 격리 환경 97 PASS.
+Domain 전이/Redis client는 테스트 대역이며 전체 repository/실제 Provider PASS가 아니다.
+Lua source는 Lua 5.4 + Redis/cjson test doubles로 13 시나리오를 실행했다.
+Redis 8.10.1의 Lua 5.1/cjson/replication/TTL/2-Replica를 검증한 결과가 아니다.
+
+원본 숫자는 CJSON 정밀도 설정을 16으로 올리지 않고 integer JSON literal로 직렬화한다.
+큰 Member ID는 계속 문자열이고, millisecond/Room version 정밀도는 테스트로 확인한다.
+예상 가능한 key type/roster 거절 및 모든 JSON encoding은 첫 쓰기 전에 끝낸다.
+unexpected Redis 오류/OOM 이후 부분 쓰기는 별도 실제 Provider failure-injection Gate다.
 
 ## 1. 실제 코드에서 확인한 문제
 
@@ -47,7 +71,7 @@ F15는 DB history 자체가 없으면 그 기록을 임의로 만들 수 없다.
 
 불변 시작 사실과 실행 진행 표식을 구분한다. 하나를 저장했다고 다른 것도 증명한 것이 아니다.
 
-## 3. 이번에 추가한 불변 데이터 계약
+## 3. 불변 데이터 계약
 
 `RoomGameStartIntent`는 다음 사실만 직렬화한다.
 
@@ -80,9 +104,9 @@ OWNER가 미Ready SPECTATOR인 것도 현재 Domain에서 허용되므로, owner
 Session cookie, CSRF token, session digest, password, Ready/connected의 live 복사본,
 닉네임과 UI fallback은 이 기록에 넣지 않는다. 공개 snapshot/UI로 반환하지 않는다.
 
-## 4. 다음 저장/진행 계약 — 아직 미구현
+## 4. 저장/진행 계약과 남은 연결
 
-### 4.1 Room 수락과 불변 intent
+### 4.1 Room 수락과 불변 intent — Provider 진입점 구현, Application caller 미전환
 
 Application은 trusted identity resolver로 candidate identity를 준비한다.
 실제 수락은 Room의 원자적 start에서 기존 owner/version/Ready 규칙과 정확한 roster를
@@ -95,12 +119,13 @@ Room PLAYING 전이, 원래 roster/identity/Provider 시각의 intent, 초기 PE
 
 새 Redis key는 기존 `stone:v1:room:{room_id}:...` hash tag를 공유해야 하며, 사용하는
 모든 key를 KEYS 인수로 명시한다. key 이름/개수, versioned Lua digest, key type 검사,
-Adapter와 emulated Redis test client를 함께 갱신한다. 구체적인 key layout은 다음
-Provider diff 검토에서 고정하며, 현재 Redis 설정을 변경하지 않는다.
+현재 capture script는 위에 명시한 9-key layout을 사용한다. 기존 emulated client의
+전체 계약 테스트 연결과 실제 Redis 실행은 후속 Gate다. 현재 Redis 설정은 변경하지 않는다.
 
 ### 4.2 초기화 완료 표식은 Runtime과 동시에
 
-개념적인 진행 표식은 다음과 같다(이번 모듈에 enum/전이 구현은 아직 없음).
+진행 표식의 전체 계약은 다음과 같다. 현재 capture 진입점의 PENDING 기록만 구현됐고,
+INITIALIZED/CLOSED 전이와 종결 정리는 아직 연결하지 않았다.
 
 ```text
 Room 수락: PENDING
@@ -151,8 +176,8 @@ backfill 추정하지 않으며 완료/격리/운영 전환 기준을 정한 뒤
 
 ## 5. 구현 순서와 검증 게이트
 
-1. **이번 단계:** 불변 값/codec 및 순수 테스트. Provider wiring 없음.
-2. Room start atomic capture와 Memory/Redis 공통 계약, unknown/malformed/replay tests.
+1. 불변 값/codec 및 순수 테스트 [Source 완료].
+2. Room start atomic capture와 Memory/Redis 진입점 [Source 구현, 서비스 caller 미전환].
 3. Vote initialize + INITIALIZED witness 원자적 연결, response loss/Pass-only Runtime loss tests.
 4. F09 원본 소비 + F15 history 부재 closure 연결. 둘을 묶은 failure injection.
 5. 고정 의존성 전체 회귀, 실제 Redis/MariaDB/2 Replica, main 통합 후 Browser.

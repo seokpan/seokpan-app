@@ -20,6 +20,11 @@ from seokpan.persistence.redis.room_scripts import (
     ROOM_PRIVATE_HASH_READ,
     ROOM_READ,
 )
+from seokpan.persistence.redis.start_capture_script import (
+    ROOM_START_CAPTURE,
+    start_intent_key,
+    start_phase_key,
+)
 from seokpan.room.application.runtime import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
@@ -33,11 +38,11 @@ from seokpan.room.application.runtime import (
     CreateRoomRuntime,
     DisconnectRoomParticipant,
     DueRoomDisconnect,
-    PendingGameInvalidation,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
     KickRoomParticipant,
     LeaveRoomRuntime,
+    PendingGameInvalidation,
     RoomMutationResult,
     RoomRuntimeParticipant,
     RoomRuntimeSnapshot,
@@ -46,6 +51,11 @@ from seokpan.room.application.runtime import (
     StartRoomGame,
     validate_room_id,
 )
+from seokpan.room.application.start_capture import (
+    CaptureRoomGameStart,
+    validate_intent_lookup,
+)
+from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import (
     ActorType,
     DepartureResult,
@@ -369,7 +379,49 @@ class RedisRoomRuntimeAdapter:
             },
         )
 
+    async def get_start_intent(self, room_id: str, game_id: str) -> RoomGameStartIntent | None:
+        validate_intent_lookup(room_id, game_id)
+        try:
+            raw = await self._client.get(start_intent_key(room_id, game_id))
+        except RedisError as error:
+            raise RedisProviderError() from error
+        if raw is None:
+            return None
+        try:
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            intent = RoomGameStartIntent.from_json(text)
+        except ValueError as error:
+            raise RedisProviderError("START_INTENT_INVALID") from error
+        if intent.room_id != room_id or intent.game_id != game_id:
+            raise RedisProviderError("START_INTENT_INVALID")
+        return intent
+
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
+        if isinstance(command, CaptureRoomGameStart):
+            result = await self._scripts.execute(
+                ROOM_START_CAPTURE,
+                keys=(
+                    *self._read_keys(command.room_id),
+                    RedisKeyspace.room_requests(command.room_id),
+                    RedisKeyspace.room_request_expiries(command.room_id),
+                    RedisKeyspace.room_closed(command.room_id),
+                    start_intent_key(command.room_id, command.game_id),
+                    start_phase_key(command.room_id, command.game_id),
+                ),
+                args=(
+                    command.room_id,
+                    command.request_id,
+                    command.game_id,
+                    command.actor_id,
+                    command.expected_state_version,
+                    command.players_json(),
+                    ROOM_REQUEST_DEDUPE_TTL_MS,
+                    ROOM_RUNTIME_SCHEMA_VERSION,
+                ),
+            )
+            decoded = self._result(result)
+            self._raise_rejection(decoded)
+            return self._mutation_result(decoded)
         return await self._mutate(
             command.room_id,
             command.request_id,

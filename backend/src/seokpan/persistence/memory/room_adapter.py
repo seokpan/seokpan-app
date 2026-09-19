@@ -32,6 +32,12 @@ from seokpan.room.application.runtime import (
     StartRoomGame,
     validate_room_id,
 )
+from seokpan.room.application.start_capture import (
+    CaptureRoomGameStart,
+    accepted_start_intent,
+    validate_intent_lookup,
+)
+from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import (
     ActorType,
     DepartureResult,
@@ -84,6 +90,8 @@ class InMemoryRoomRuntimeAdapter:
         self._clock = clock
         self._vote_connections = vote_connections
         self._rooms: dict[str, _RoomState] = {}
+        self._start_intents: dict[tuple[str, str], RoomGameStartIntent] = {}
+        self._start_phases: dict[tuple[str, str], str] = {}
         self._tombstones: dict[str, int] = {}
         self._pending_game_invalidations: dict[str, PendingGameInvalidation] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
@@ -272,8 +280,42 @@ class InMemoryRoomRuntimeAdapter:
         )
         return self._remember_result(command, state)
 
+    async def get_start_intent(self, room_id: str, game_id: str) -> RoomGameStartIntent | None:
+        validate_intent_lookup(room_id, game_id)
+        return self._start_intents.get((room_id, game_id))
+
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
         replay = self._replay(command)
+        if isinstance(command, CaptureRoomGameStart):
+            state = self._require_room(command.room_id)
+            existing = self._start_intents.get((command.room_id, command.game_id))
+            if replay is not None:
+                if (
+                    existing is None
+                    or state.room.game_id != command.game_id
+                    or self._start_phases.get((command.room_id, command.game_id)) != "PENDING"
+                ):
+                    raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+                return replay
+            if existing is not None or (command.room_id, command.game_id) in self._start_phases:
+                raise RoomRuleViolation("START_INTENT_ALREADY_EXISTS")
+            intent = accepted_start_intent(
+                command, self._snapshot(command.room_id, state), self._clock.now_ms
+            )
+            # Both mutations below execute without an await. Admission/serialization
+            # failure has already been checked; the Domain retains its own guards.
+            intent.to_json()
+            roster = state.room.start_game(actor_id=command.actor_id, game_id=command.game_id)
+            self._start_intents[(command.room_id, command.game_id)] = intent
+            self._start_phases[(command.room_id, command.game_id)] = "PENDING"
+            return self._remember(
+                command,
+                RoomMutationResult(
+                    snapshot=self._snapshot(command.room_id, state),
+                    start_roster=roster,
+                    operation_at_ms=intent.started_at_ms,
+                ),
+            )
         if replay is not None:
             return replay
         state = self._require_room(command.room_id)
