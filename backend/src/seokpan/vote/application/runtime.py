@@ -190,7 +190,7 @@ class FinalizeRuntimeGame:
             self.end_reason is EndReason.FORFEIT
             and self.winner in {Stone.BLACK, Stone.WHITE}
         ) or (
-            self.end_reason is EndReason.JOINT_LOSS
+            self.end_reason in {EndReason.JOINT_LOSS, EndReason.SYSTEM_INVALID}
             and self.winner is Stone.EMPTY
         )
         if not valid:

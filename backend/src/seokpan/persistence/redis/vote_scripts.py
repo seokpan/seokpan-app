@@ -400,9 +400,10 @@ if operation == 'finalize_game' then
   end
   local valid = (payload.end_reason == 'FORFEIT'
       and (payload.winner == 'BLACK' or payload.winner == 'WHITE'))
-      or (payload.end_reason == 'JOINT_LOSS' and payload.winner == 'EMPTY')
+      or ((payload.end_reason == 'JOINT_LOSS' or payload.end_reason == 'SYSTEM_INVALID')
+          and payload.winner == 'EMPTY')
   if not valid then return rejection('INVALID_EXTERNAL_GAME_RESULT') end
-  game.game_status = 'FINISHED'
+  game.game_status = payload.end_reason == 'SYSTEM_INVALID' and 'SYSTEM_INVALID' or 'FINISHED'
   game.end_reason = payload.end_reason
   game.deadline_ms = cjson.null
   game.turn_status = 'PASSED'
@@ -418,7 +419,7 @@ return rejection('VOTE_OPERATION_INVALID')
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=6,
+    version=7,
     source=_COMMON + _MUTATION,
 )
 

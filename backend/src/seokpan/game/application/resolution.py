@@ -225,6 +225,64 @@ class TurnResolutionRunner:
         await self._complete_room(due)
         return True
 
+    async def finalize_system_invalid(self, *, room_id: str, game_id: str) -> bool:
+        """Durably invalidate a Game after Room closure makes recovery impossible."""
+        history = await self._games.load_game(game_id)
+        if history is None:
+            raise PersistenceRuleViolation("GAME_NOT_FOUND")
+        if history.start.room_id != room_id:
+            raise PersistenceRuleViolation("GAME_START_CONFLICT")
+
+        stored = await self._games.load_result(game_id)
+        runtime = await self._votes.get(room_id)
+        if stored is not None and stored.end_reason is not EndReason.SYSTEM_INVALID:
+            return False
+
+        if stored is None:
+            if runtime is None or runtime.game_id != game_id:
+                raise VoteRuleViolation("GAME_RUNTIME_NOT_FOUND")
+            game = self._rebuild_before_turn(runtime, history)
+            result = GameResultService(
+                game_id=game_id,
+                game=game,
+                participants=history.participants,
+            ).finalize_system_invalid()
+            command = FinalizeGameCommand(
+                result=result,
+                ended_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+            )
+            if not await self._games.result_matches(command):
+                await self._games.finalize_game(command)
+
+        runtime = await self._votes.get(room_id)
+        if runtime is None:
+            return True
+        if runtime.game_id != game_id:
+            raise VoteRuleViolation("STALE_GAME")
+        if runtime.game_status is GameStatus.SYSTEM_INVALID:
+            return runtime.end_reason is EndReason.SYSTEM_INVALID
+        if runtime.game_status is not GameStatus.ACTIVE:
+            return False
+
+        finalized = await self._votes.finalize_game(
+            FinalizeRuntimeGame(
+                room_id=room_id,
+                request_id=_stable_id(
+                    "system-invalid",
+                    DueTurn(room_id, game_id, runtime.turn_no),
+                ),
+                game_id=game_id,
+                turn_no=runtime.turn_no,
+                expected_state_version=runtime.state_version,
+                end_reason=EndReason.SYSTEM_INVALID,
+                winner=Stone.EMPTY,
+            )
+        )
+        return (
+            finalized.snapshot.game_status is GameStatus.SYSTEM_INVALID
+            and finalized.snapshot.end_reason is EndReason.SYSTEM_INVALID
+        )
+
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
             raise ValueError("INVALID_DUE_TURN_LIMIT")
