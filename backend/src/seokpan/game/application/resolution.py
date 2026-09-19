@@ -242,6 +242,7 @@ class TurnResolutionRunner:
         stored = await self._games.load_result(game_id)
         runtime = await self._votes.get(room_id)
         if stored is not None and stored.end_reason is not EndReason.SYSTEM_INVALID:
+            await self._rooms.complete_game_invalidation(room_id, game_id)
             return False
 
         if stored is None:
@@ -265,6 +266,7 @@ class TurnResolutionRunner:
                 )
                 if not await self._games.result_matches(command):
                     await self._games.finalize_game(command)
+                await self._rooms.complete_game_invalidation(room_id, game_id)
                 return False
 
             game = (
@@ -286,11 +288,15 @@ class TurnResolutionRunner:
 
         runtime = await self._votes.get(room_id)
         if runtime is None:
+            await self._rooms.complete_game_invalidation(room_id, game_id)
             return True
         if runtime.game_id != game_id:
             raise VoteRuleViolation("STALE_GAME")
         if runtime.game_status is GameStatus.SYSTEM_INVALID:
-            return runtime.end_reason is EndReason.SYSTEM_INVALID
+            completed = runtime.end_reason is EndReason.SYSTEM_INVALID
+            if completed:
+                await self._rooms.complete_game_invalidation(room_id, game_id)
+            return completed
         if runtime.game_status is not GameStatus.ACTIVE:
             return False
 
@@ -308,10 +314,42 @@ class TurnResolutionRunner:
                 winner=Stone.EMPTY,
             )
         )
-        return (
+        completed = (
             finalized.snapshot.game_status is GameStatus.SYSTEM_INVALID
             and finalized.snapshot.end_reason is EndReason.SYSTEM_INVALID
         )
+        if completed:
+            await self._rooms.complete_game_invalidation(room_id, game_id)
+        return completed
+
+    async def reconcile_game_invalidations(self, *, limit: int = 100) -> int:
+        """Retry room-closure invalidations from durable Room provider markers."""
+        pending = await self._rooms.pending_game_invalidations(limit=limit)
+        completed = 0
+        for item in pending:
+            try:
+                await self.finalize_system_invalid(
+                    room_id=item.room_id,
+                    game_id=item.game_id,
+                    closed_at_ms=item.closed_at_ms,
+                )
+                completed += 1
+            except (
+                VoteRuleViolation,
+                PersistenceRuleViolation,
+                GameRuleViolation,
+                GameResultRuleViolation,
+                RoomRuleViolation,
+            ):
+                _LOGGER.exception(
+                    "Game invalidation item failed",
+                    extra={
+                        "event": "game_invalidation.item_failed",
+                        "room_id": item.room_id,
+                        "game_id": item.game_id,
+                    },
+                )
+        return completed
 
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
