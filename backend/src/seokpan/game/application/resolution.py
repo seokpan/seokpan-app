@@ -247,8 +247,28 @@ class TurnResolutionRunner:
         if stored is None:
             if runtime is not None and runtime.game_id != game_id:
                 raise VoteRuleViolation("STALE_GAME")
+
+            history_game = replay_game_history(history)
+            if history_game.status is not GameStatus.ACTIVE:
+                # Durable official Moves already prove a normal conclusion.
+                # Preserve that stronger fact instead of downgrading the game to SYSTEM_INVALID.
+                result = GameResultService(
+                    game_id=game_id,
+                    game=history_game,
+                    participants=history.participants,
+                ).finalize_completed_game()
+                if not history.moves:
+                    raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH")
+                command = FinalizeGameCommand(
+                    result=result,
+                    ended_at=history.moves[-1].confirmed_at,
+                )
+                if not await self._games.result_matches(command):
+                    await self._games.finalize_game(command)
+                return False
+
             game = (
-                replay_game_history(history)
+                history_game
                 if runtime is None
                 else self._rebuild_before_turn(runtime, history)
             )
