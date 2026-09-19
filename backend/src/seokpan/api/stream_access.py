@@ -17,6 +17,7 @@ class StreamAccessState(StrEnum):
     ALLOWED = "ALLOWED"
     EXPIRED = "EXPIRED"
     LEFT = "LEFT"
+    REPLACED = "REPLACED"
 
 
 class StreamAccess:
@@ -30,12 +31,14 @@ class StreamAccess:
         rooms: RoomApplicationService | None = None,
         room_id: str | None = None,
         participant_id: str | None = None,
+        connection_generation: int | None = None,
     ) -> None:
         self._identity = identity
         self._session = session
         self._rooms = rooms
         self._room_id = room_id
         self._participant_id = participant_id
+        self._connection_generation = connection_generation
 
     async def check(self) -> StreamAccessState:
         # Unknown/slow storage must not become an expired-session verdict.
@@ -55,6 +58,14 @@ class StreamAccess:
             binding = await self._rooms.resolve_participant_identity(self._participant_id)
             if binding is None or binding.room_id != self._room_id:
                 return StreamAccessState.LEFT
+            if self._connection_generation is not None:
+                if binding.connection_generation is None:
+                    raise SessionTransitionUnavailable
+                if (
+                    binding.connection_generation != self._connection_generation
+                    or not binding.connected
+                ):
+                    return StreamAccessState.REPLACED
             current = await self._identity.sessions.find(binding.session_digest)
             # A completed Guest login may have replaced the digest during the read.
             if await self._rooms.resolve_participant_identity(self._participant_id) != binding:

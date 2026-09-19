@@ -361,3 +361,97 @@ async def test_missing_or_different_room_binding_ends_access() -> None:
     assert await access.check() is StreamAccessState.LEFT
     binding.value = None
     assert await access.check() is StreamAccessState.LEFT
+
+
+@pytest.mark.asyncio
+async def test_room_access_rejects_superseded_shared_connection_generation() -> None:
+    store = InMemorySessionAdapter(ManualClock())
+    previous = await store.create(command("a", SessionActorType.MEMBER))
+    binding = Binding(previous)
+    assert binding.value is not None
+    binding.value = replace(
+        binding.value,
+        connection_generation=2,
+        connected=True,
+    )
+    identity = IdentityApiServices(
+        Settings(environment="test"),
+        cast(MemberIdentityService, None),
+        AuthSessionService(InMemorySessionWorkflow(store, binding), UnusedTokens()),
+    )
+    access = StreamAccess(
+        identity,
+        previous,
+        rooms=cast(RoomApplicationService, binding),
+        room_id="room",
+        participant_id="participant",
+        connection_generation=1,
+    )
+
+    assert await access.check() is StreamAccessState.REPLACED
+
+
+@pytest.mark.asyncio
+async def test_room_access_requires_current_generation_to_remain_connected() -> None:
+    store = InMemorySessionAdapter(ManualClock())
+    previous = await store.create(command("a", SessionActorType.MEMBER))
+    binding = Binding(previous)
+    assert binding.value is not None
+    binding.value = replace(
+        binding.value,
+        connection_generation=3,
+        connected=False,
+    )
+    identity = IdentityApiServices(
+        Settings(environment="test"),
+        cast(MemberIdentityService, None),
+        AuthSessionService(InMemorySessionWorkflow(store, binding), UnusedTokens()),
+    )
+    access = StreamAccess(
+        identity,
+        previous,
+        rooms=cast(RoomApplicationService, binding),
+        room_id="room",
+        participant_id="participant",
+        connection_generation=3,
+    )
+
+    assert await access.check() is StreamAccessState.REPLACED
+
+
+@pytest.mark.asyncio
+async def test_stream_access_replacement_sends_reconnect_required_and_closes_4001() -> None:
+    async def receive() -> dict[str, object]:
+        await asyncio.Event().wait()
+        return {}
+
+    socket = SimpleNamespace(receive=receive, send_json=AsyncMock(), close=AsyncMock())
+    subscription = cast(
+        RealtimeSubscription,
+        SimpleNamespace(receive=AsyncMock(side_effect=lambda: asyncio.Event().wait())),
+    )
+    registry = ActiveWebSocketRegistry()
+    registry.begin_runtime()
+    result = await asyncio.wait_for(
+        _stream_events(
+            cast(WebSocket, socket),
+            subscription,
+            registry,
+            access=cast(
+                StreamAccess,
+                SimpleNamespace(check=AsyncMock(return_value=StreamAccessState.REPLACED)),
+            ),
+            room_id="room",
+            participant_id="participant",
+            state_version=lambda: 9,
+            snapshot_version=8,
+        ),
+        2,
+    )
+
+    assert result is StreamEnd.REPLACED
+    message = socket.send_json.await_args.args[0]
+    assert message["event_type"] == "connection.reconnect_required"
+    assert message["state_version"] == 9
+    assert message["payload"] == {"reason": "CONNECTION_REPLACED"}
+    socket.close.assert_awaited_once_with(code=4001)

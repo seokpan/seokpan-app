@@ -206,6 +206,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 rooms=services.rooms.rooms,
                 room_id=room_id,
                 participant_id=participation.participant_id,
+                connection_generation=generation,
             )
             access_state = await access.check()
             if services.registry.shutting_down:
@@ -215,7 +216,12 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 end = StreamEnd.REPLACED
                 await _safe_close(websocket, 4001)
                 return
-            access_end = await _end_access(websocket, access_state)
+            access_end = await _end_access(
+                websocket,
+                access_state,
+                room_id=room_id,
+                state_version=services.events.room_version(room_id),
+            )
             if access_end is not None:
                 end = access_end
                 return
@@ -368,7 +374,14 @@ async def _stream_events(
                 or (replaced is not None and replaced.is_set())
             ):
                 continue
-            access_end = await _end_access(websocket, access_state)
+            access_end = await _end_access(
+                websocket,
+                access_state,
+                room_id=room_id,
+                state_version=(
+                    snapshot_version if state_version is None else state_version()
+                ),
+            )
             if access_end is not None:
                 return access_end
             if event_wait not in done:
@@ -399,13 +412,30 @@ async def _check_access(websocket: WebSocket, access: StreamAccess) -> StreamEnd
     return await _end_access(websocket, await access.check())
 
 
-async def _end_access(websocket: WebSocket, state: StreamAccessState) -> StreamEnd | None:
+async def _end_access(
+    websocket: WebSocket,
+    state: StreamAccessState,
+    *,
+    room_id: str | None = None,
+    state_version: int = 1,
+) -> StreamEnd | None:
     if state is StreamAccessState.EXPIRED:
         await _safe_close(websocket, 4401)
         return StreamEnd.SESSION_EXPIRED
     if state is StreamAccessState.LEFT:
         await _safe_close(websocket, 1000)
         return StreamEnd.ROOM_ACCESS_ENDED
+    if state is StreamAccessState.REPLACED:
+        await websocket.send_json(
+            _snapshot_envelope(
+                "connection.reconnect_required",
+                state_version,
+                {"reason": "CONNECTION_REPLACED"},
+                room_id=room_id,
+            )
+        )
+        await _safe_close(websocket, 4001)
+        return StreamEnd.REPLACED
     return None
 
 
