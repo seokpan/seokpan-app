@@ -12,7 +12,7 @@ from seokpan.persistence.memory import (
     ManualClock,
 )
 from seokpan.room.application import RoomApplicationService
-from seokpan.room.domain import RoomConfig, Team
+from seokpan.room.domain import RoomConfig, RoomRuleViolation, Team
 from seokpan.vote.application import InitializeVoteRuntime, VoteMutationResult
 
 
@@ -22,6 +22,18 @@ class UnusedPasswordPort:
 
     async def verify(self, encoded_password: str, candidate_password: str) -> bool:
         raise AssertionError(encoded_password, candidate_password)
+
+
+class FailFirstPersistenceAdapter(InMemoryGamePersistenceAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.start_calls = 0
+
+    async def start_game(self, command):
+        self.start_calls += 1
+        if self.start_calls == 1:
+            raise RuntimeError("simulated Game persistence failure")
+        return await super().start_game(command)
 
 
 class FailFirstInitializeAdapter(InMemoryVoteRuntimeAdapter):
@@ -163,3 +175,257 @@ async def test_start_retry_continues_after_vote_initialization_failure() -> None
     assert replay.replayed is True
     assert events.room_version(room_id) == stream_version
     await room_events.close()
+
+
+@pytest.mark.asyncio
+async def test_new_request_recovers_after_game_persistence_failure() -> None:
+    clock = ManualClock(now_ms=1_000)
+    rooms = RoomApplicationService(InMemoryRoomRuntimeAdapter(clock), UnusedPasswordPort())
+    owner = _session("a", 1)
+    white = _session("b", 2)
+    room_result = await rooms.create_room(
+        session=owner,
+        request_id="create-persistence",
+        config=RoomConfig(name="persistence-retry", minimum_ready=2),
+        password=None,
+    )
+    assert room_result.snapshot is not None
+    room_id = room_result.snapshot.room_id
+    joined = await rooms.join_room(
+        session=white,
+        room_id=room_id,
+        request_id="join-persistence",
+        expected_state_version=1,
+        password=None,
+    )
+    assert joined.snapshot is not None
+    black = await rooms.change_team(
+        session=owner,
+        request_id="team-black-persistence",
+        expected_state_version=2,
+        team=Team.BLACK,
+    )
+    assert black.snapshot is not None
+    black_ready = await rooms.set_ready(
+        session=owner,
+        request_id="ready-black-persistence",
+        expected_state_version=3,
+        ready=True,
+    )
+    assert black_ready.snapshot is not None
+    white_team = await rooms.change_team(
+        session=white,
+        request_id="team-white-persistence",
+        expected_state_version=4,
+        team=Team.WHITE,
+    )
+    assert white_team.snapshot is not None
+    white_ready = await rooms.set_ready(
+        session=white,
+        request_id="ready-white-persistence",
+        expected_state_version=5,
+        ready=True,
+    )
+    assert white_ready.snapshot is not None
+
+    persistence = FailFirstPersistenceAdapter()
+    votes = InMemoryVoteRuntimeAdapter(clock)
+    service = GameApplicationService(
+        rooms=rooms,
+        games=persistence,
+        votes=votes,
+        clock=clock,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated Game persistence failure"):
+        await service.start_game(
+            session=owner,
+            room_id=room_id,
+            request_id="start-failed",
+            expected_state_version=6,
+        )
+
+    partial = await rooms.get(room_id)
+    assert partial is not None
+    assert partial.status.value == "PLAYING"
+    assert partial.game_id is not None
+    assert await votes.get(room_id) is None
+    assert persistence.games == {}
+
+    clock.advance(2_000)
+    recovered = await service.start_game(
+        session=owner,
+        room_id=room_id,
+        request_id="start-recover",
+        expected_state_version=partial.state_version,
+    )
+
+    assert recovered.replayed is True
+    assert recovered.game.game_id == partial.game_id
+    assert recovered.game.deadline_ms == 18_000
+    assert len(persistence.games) == 1
+    assert persistence.start_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_new_request_recovers_after_vote_initialization_failure() -> None:
+    clock = ManualClock(now_ms=1_000)
+    rooms = RoomApplicationService(InMemoryRoomRuntimeAdapter(clock), UnusedPasswordPort())
+    owner = _session("a", 1)
+    white = _session("b", 2)
+    room_result = await rooms.create_room(
+        session=owner,
+        request_id="create-vote",
+        config=RoomConfig(name="vote-retry", minimum_ready=2),
+        password=None,
+    )
+    assert room_result.snapshot is not None
+    room_id = room_result.snapshot.room_id
+    joined = await rooms.join_room(
+        session=white,
+        room_id=room_id,
+        request_id="join-vote",
+        expected_state_version=1,
+        password=None,
+    )
+    assert joined.snapshot is not None
+    black = await rooms.change_team(
+        session=owner,
+        request_id="team-black-vote",
+        expected_state_version=2,
+        team=Team.BLACK,
+    )
+    assert black.snapshot is not None
+    black_ready = await rooms.set_ready(
+        session=owner,
+        request_id="ready-black-vote",
+        expected_state_version=3,
+        ready=True,
+    )
+    assert black_ready.snapshot is not None
+    white_team = await rooms.change_team(
+        session=white,
+        request_id="team-white-vote",
+        expected_state_version=4,
+        team=Team.WHITE,
+    )
+    assert white_team.snapshot is not None
+    white_ready = await rooms.set_ready(
+        session=white,
+        request_id="ready-white-vote",
+        expected_state_version=5,
+        ready=True,
+    )
+    assert white_ready.snapshot is not None
+
+    persistence = InMemoryGamePersistenceAdapter()
+    votes = FailFirstInitializeAdapter(clock)
+    service = GameApplicationService(
+        rooms=rooms,
+        games=persistence,
+        votes=votes,
+        clock=clock,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated Vote provider failure"):
+        await service.start_game(
+            session=owner,
+            room_id=room_id,
+            request_id="start-vote-failed",
+            expected_state_version=6,
+        )
+
+    partial = await rooms.get(room_id)
+    assert partial is not None
+    assert partial.game_id is not None
+    assert len(persistence.games) == 1
+    assert await votes.get(room_id) is None
+
+    clock.advance(3_000)
+    recovered = await service.start_game(
+        session=owner,
+        room_id=room_id,
+        request_id="start-vote-recover",
+        expected_state_version=partial.state_version,
+    )
+
+    assert recovered.replayed is True
+    assert recovered.game.game_id == partial.game_id
+    assert recovered.game.deadline_ms == 19_000
+    assert len(persistence.games) == 1
+    assert votes.initialize_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_new_start_request_does_not_mask_an_already_complete_game_start() -> None:
+    clock = ManualClock(now_ms=1_000)
+    rooms = RoomApplicationService(InMemoryRoomRuntimeAdapter(clock), UnusedPasswordPort())
+    owner = _session("a", 1)
+    white = _session("b", 2)
+    room_result = await rooms.create_room(
+        session=owner,
+        request_id="create-complete",
+        config=RoomConfig(name="complete-start", minimum_ready=2),
+        password=None,
+    )
+    assert room_result.snapshot is not None
+    room_id = room_result.snapshot.room_id
+    joined = await rooms.join_room(
+        session=white,
+        room_id=room_id,
+        request_id="join-complete",
+        expected_state_version=1,
+        password=None,
+    )
+    assert joined.snapshot is not None
+    black = await rooms.change_team(
+        session=owner,
+        request_id="team-black-complete",
+        expected_state_version=2,
+        team=Team.BLACK,
+    )
+    assert black.snapshot is not None
+    black_ready = await rooms.set_ready(
+        session=owner,
+        request_id="ready-black-complete",
+        expected_state_version=3,
+        ready=True,
+    )
+    assert black_ready.snapshot is not None
+    white_team = await rooms.change_team(
+        session=white,
+        request_id="team-white-complete",
+        expected_state_version=4,
+        team=Team.WHITE,
+    )
+    assert white_team.snapshot is not None
+    white_ready = await rooms.set_ready(
+        session=white,
+        request_id="ready-white-complete",
+        expected_state_version=5,
+        ready=True,
+    )
+    assert white_ready.snapshot is not None
+
+    persistence = InMemoryGamePersistenceAdapter()
+    votes = InMemoryVoteRuntimeAdapter(clock)
+    service = GameApplicationService(
+        rooms=rooms,
+        games=persistence,
+        votes=votes,
+        clock=clock,
+    )
+    started = await service.start_game(
+        session=owner,
+        room_id=room_id,
+        request_id="start-complete",
+        expected_state_version=6,
+    )
+
+    with pytest.raises(RoomRuleViolation, match="ROOM_NOT_WAITING"):
+        await service.start_game(
+            session=owner,
+            room_id=room_id,
+            request_id="another-start",
+            expected_state_version=started.room.state_version,
+        )
