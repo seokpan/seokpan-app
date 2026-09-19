@@ -292,12 +292,13 @@ class Room:
 
         previous_owner_id = self.owner_id
         self._participants[participant_id] = replace(participant, connected=False)
-        result = self._resolve_owner_departure(
-            departed_id=participant_id,
-            previous_owner_id=previous_owner_id,
-        )
         self._advance_version()
-        return result
+        return DepartureResult(
+            previous_owner_id=previous_owner_id,
+            new_owner_id=previous_owner_id,
+            room_closed=False,
+            game_termination=GameTermination.NONE,
+        )
 
     def reconnect(self, *, participant_id: str) -> None:
         self._require_not_closed()

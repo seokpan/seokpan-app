@@ -198,7 +198,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=9,
+    version=10,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -435,13 +435,12 @@ if operation == 'disconnect' then
   redis.call('HSET', KEYS[4], payload.participant_id, cjson.encode(connection))
   local vote_removed = remove_vote(payload.participant_id)
   update_game_player(payload.participant_id, false, vote_removed)
-  local resolved = owner_departure(payload.participant_id, previous_owner_id)
-  if not resolved.room_closed then advance_version() end
+  advance_version()
   return save({
     snapshot = snapshot(),
     disconnect_expires_at_ms = connection.disconnect_expires_at_ms,
     vote_removed = vote_removed,
-    departure = resolved
+    departure = departure(previous_owner_id, previous_owner_id, false, 'NONE')
   })
 end
 

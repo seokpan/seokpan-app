@@ -226,7 +226,7 @@ async def test_new_generation_supersedes_old_and_stale_disconnect_is_ignored(
 
 
 @pytest.mark.asyncio
-async def test_owner_disconnect_immediately_promotes_member_and_clears_ready(
+async def test_owner_disconnect_lease_preserves_owner_until_expiry(
     room_harness: RoomRuntimeHarness,
 ) -> None:
     await room_harness.adapter.create(create_room())
@@ -269,18 +269,24 @@ async def test_owner_disconnect_immediately_promotes_member_and_clears_ready(
     )
 
     assert result.snapshot is not None
-    assert result.snapshot.owner_id == "member-2"
-    assert all(not participant.ready for participant in result.snapshot.participants)
+    assert result.snapshot.owner_id == "member-1"
+    assert result.snapshot.participants[0].connected is False
+    assert all(participant.ready for participant in result.snapshot.participants)
     assert result.disconnect_expires_at_ms == 1_000 + ROOM_DISCONNECT_LEASE_MS
 
-    reconnected = await room_harness.adapter.connect(
-        ConnectRoomParticipant(
-            "room-1", "reconnect-1", "member-1", digest("d"), expected_version + 1
+    room_harness.clock.advance(ROOM_DISCONNECT_LEASE_MS)
+    expired = await room_harness.adapter.expire_disconnect(
+        ExpireRoomDisconnect(
+            "room-1",
+            "expire-owner",
+            "member-1",
+            1,
+            expected_version + 1,
         )
     )
-    assert reconnected.snapshot is not None
-    assert reconnected.snapshot.owner_id == "member-2"
-    assert reconnected.snapshot.state_version == expected_version + 2
+    assert expired.snapshot is not None
+    assert expired.snapshot.owner_id == "member-2"
+    assert all(not participant.ready for participant in expired.snapshot.participants)
 
 
 @pytest.mark.asyncio

@@ -684,10 +684,12 @@ def test_new_room_socket_replaces_old_generation_without_disconnecting_participa
                 assert current.json()["participants"][0]["connected"] is True
 
 
-def test_owner_socket_disconnect_promotes_member_and_clears_ready(
+def test_owner_socket_disconnect_preserves_owner_until_lease_expiry(
     headless: tuple[FastAPI, ApplicationServices],
 ) -> None:
-    application, _services = headless
+    application, services = headless
+    assert services.disconnect_expiry is not None
+    assert services.headless_clock is not None
     with (
         TestClient(application, base_url=ORIGIN) as owner,
         TestClient(application, base_url=ORIGIN) as member,
@@ -733,8 +735,18 @@ def test_owner_socket_disconnect_promotes_member_and_clears_ready(
 
         current = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
         assert current.status_code == 200
-        assert current.json()["owner_id"] == successor_id
-        assert all(not item["ready"] for item in current.json()["participants"])
+        assert current.json()["owner_id"] == room["owner_id"]
+        assert current.json()["participants"][0]["connected"] is False
+        assert all(item["ready"] for item in current.json()["participants"])
+
+        assert member.portal is not None
+        services.headless_clock.advance(30_000)
+        expired = member.portal.call(services.disconnect_expiry.run_once)
+        assert len(expired) == 1
+        after_expiry = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert after_expiry.status_code == 200
+        assert after_expiry.json()["owner_id"] == successor_id
+        assert all(not item["ready"] for item in after_expiry.json()["participants"])
 
 
 def test_explicit_leave_closes_that_participants_room_socket(
