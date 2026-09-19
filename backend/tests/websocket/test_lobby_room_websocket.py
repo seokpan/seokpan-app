@@ -1143,6 +1143,53 @@ def test_event_setup_failure_does_not_change_disconnected_participant() -> None:
         assert disconnected["connected"] is False
 
 
+def test_room_setup_failure_after_generation_claim_starts_disconnect_lease(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, services = headless
+    assert services.realtime_api is not None
+
+    async def fail_snapshot(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("snapshot provider failed after connect")
+
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as member,
+    ):
+        owner_csrf = _member(owner, "setup-owner")
+        room = _create_room(owner, owner_csrf)
+        member_csrf = _member(member, "setup-member")
+        joined = _join(
+            member,
+            member_csrf,
+            str(room["room_id"]),
+            int(room["state_version"]),
+        )
+        participant_id = str(joined["participants"][1]["participant_id"])
+
+        monkeypatch.setattr("seokpan.api.realtime.SnapshotReader.room", fail_snapshot)
+        with (
+            pytest.raises(WebSocketDisconnect) as failed,
+            member.websocket_connect(
+                f"/ws/v1/rooms/{room['room_id']}",
+                headers=_ws_headers(member),
+            ),
+        ):
+            pass
+        assert failed.value.code == 1011
+
+        current = owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert current.status_code == 200
+        participant = next(
+            item
+            for item in current.json()["participants"]
+            if item["participant_id"] == participant_id
+        )
+        assert participant["connected"] is False
+        assert current.json()["owner_id"] == joined["owner_id"]
+
+
 @pytest.mark.asyncio
 async def test_slow_consumer_receives_snapshot_required_instead_of_unbounded_queue() -> None:
     events = InMemoryRealtimeEventAdapter(max_queue_size=1)

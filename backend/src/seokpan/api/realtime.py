@@ -47,6 +47,7 @@ class RealtimeApiServices:
 
 class StreamEnd(StrEnum):
     CLIENT_DISCONNECT = "CLIENT_DISCONNECT"
+    SETUP_FAILED = "SETUP_FAILED"
     REPLACED = "REPLACED"
     ROOM_ACCESS_ENDED = "ROOM_ACCESS_ENDED"
     SHUTDOWN = "SHUTDOWN"
@@ -162,6 +163,8 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         except WebSocketDisconnect:
             return
         except Exception:
+            if established and not initial_snapshot_sent:
+                end = StreamEnd.SETUP_FAILED
             await _safe_close(websocket, 1011)
         finally:
             if subscription is not None:
@@ -184,6 +187,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
         generation: int | None = None
         replaced: asyncio.Event | None = None
         established = False
+        initial_snapshot_sent = False
         end = StreamEnd.SHUTDOWN
         try:
             subscription = await services.events.subscribe_room(room_id)
@@ -239,6 +243,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                     game_id=snapshot.room.game_id,
                 )
             )
+            initial_snapshot_sent = True
             end = await _stream_events(
                 websocket,
                 subscription,
@@ -266,6 +271,7 @@ def realtime_router(services: RealtimeApiServices) -> APIRouter:
                 in (
                     StreamEnd.CLIENT_DISCONNECT,
                     StreamEnd.SESSION_EXPIRED,
+                    StreamEnd.SETUP_FAILED,
                 )
             ):
                 with suppress(ApiProblem, RoomRuleViolation):
