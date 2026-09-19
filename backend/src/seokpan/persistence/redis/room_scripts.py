@@ -194,14 +194,19 @@ local function owner_departure(departed_id, previous_owner_id)
   local game_id = redis.call('HGET', KEYS[1], 'game_id')
   local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
-  redis.call('SET', KEYS[7], '1', 'PX', tombstone_ttl_ms)
+  redis.call('SET', KEYS[7], cjson.encode({
+    room_id = ARGV[1],
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id,
+    closed_at_ms = current_ms,
+    invalidation_pending = termination == 'SYSTEM_INVALID'
+  }), 'PX', tombstone_ttl_ms)
   return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=10,
+    version=11,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -525,5 +530,29 @@ ROOM_PRIVATE_HASH_READ = VersionedLuaScript(
 local value = redis.call('HGET', KEYS[1], 'password_hash')
 if not value or value == '' then value = cjson.null end
 return cjson.encode({ok = true, encoded_password = value, error = cjson.null})
+""",
+)
+
+
+ROOM_INVALIDATION_ACK = VersionedLuaScript(
+    name="room-invalidation-ack",
+    version=1,
+    source=r"""
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({ok = true, missing = true})
+end
+local value = cjson.decode(raw)
+if value.terminated_game_id ~= ARGV[1] then
+  return cjson.encode({ok = false, error = 'STALE_GAME'})
+end
+value.invalidation_pending = false
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
+else
+  redis.call('SET', KEYS[1], cjson.encode(value))
+end
+return cjson.encode({ok = true, missing = false})
 """,
 )

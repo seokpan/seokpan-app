@@ -15,6 +15,7 @@ from seokpan.persistence.redis.common import (
     VersionedJsonCodec,
 )
 from seokpan.persistence.redis.room_scripts import (
+    ROOM_INVALIDATION_ACK,
     ROOM_MUTATION,
     ROOM_PRIVATE_HASH_READ,
     ROOM_READ,
@@ -32,6 +33,7 @@ from seokpan.room.application.runtime import (
     CreateRoomRuntime,
     DisconnectRoomParticipant,
     DueRoomDisconnect,
+    PendingGameInvalidation,
     ExpireRoomDisconnect,
     JoinRoomRuntime,
     KickRoomParticipant,
@@ -232,6 +234,61 @@ class RedisRoomRuntimeAdapter:
         decoded = self._result(result)
         self._raise_rejection(decoded)
         return self._optional_snapshot(decoded.get("snapshot"))
+
+    async def pending_game_invalidations(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PendingGameInvalidation, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_GAME_INVALIDATION_LIMIT")
+        pattern = RedisKeyspace.room_closed("*")
+        prefix = "stone:v1:room:{"
+        suffix = "}:closed"
+        pending: list[PendingGameInvalidation] = []
+        try:
+            async for raw_key in self._client.scan_iter(match=pattern, count=100):
+                key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else raw_key
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(prefix)
+                    or not key.endswith(suffix)
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                raw = await self._client.get(key)
+                if raw is None:
+                    continue
+                value = VersionedJsonCodec.decode(raw)
+                if value.get("invalidation_pending") is not True:
+                    continue
+                room_id = value.get("room_id")
+                game_id = value.get("terminated_game_id")
+                closed_at_ms = value.get("closed_at_ms")
+                if (
+                    not isinstance(room_id, str)
+                    or not isinstance(game_id, str)
+                    or type(closed_at_ms) is not int
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                validate_room_id(room_id)
+                pending.append(PendingGameInvalidation(room_id, game_id, closed_at_ms))
+                if len(pending) >= limit:
+                    break
+        except RedisProviderError:
+            raise
+        except (RedisError, UnicodeDecodeError) as error:
+            raise RedisProviderError() from error
+        return tuple(sorted(pending, key=lambda item: (item.closed_at_ms, item.room_id)))
+
+    async def complete_game_invalidation(self, room_id: str, game_id: str) -> None:
+        validate_room_id(room_id)
+        result = await self._scripts.execute(
+            ROOM_INVALIDATION_ACK,
+            keys=(RedisKeyspace.room_closed(room_id),),
+            args=(game_id,),
+        )
+        decoded = self._result(result)
+        self._raise_rejection(decoded)
 
     async def get_private_access_hash(self, room_id: str) -> str | None:
         validate_room_id(room_id)
