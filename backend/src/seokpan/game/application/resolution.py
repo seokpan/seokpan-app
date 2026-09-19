@@ -188,7 +188,7 @@ class TurnResolutionRunner:
                 raise
             command = FinalizeGameCommand(
                 result=result,
-                ended_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+                ended_at=datetime.fromtimestamp(closed_at_ms / 1000, UTC),
             )
             if not await self._games.result_matches(command):
                 await self._games.finalize_game(command)
@@ -225,7 +225,13 @@ class TurnResolutionRunner:
         await self._complete_room(due)
         return True
 
-    async def finalize_system_invalid(self, *, room_id: str, game_id: str) -> bool:
+    async def finalize_system_invalid(
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
+    ) -> bool:
         """Durably invalidate a Game after Room closure makes recovery impossible."""
         history = await self._games.load_game(game_id)
         if history is None:
@@ -239,9 +245,13 @@ class TurnResolutionRunner:
             return False
 
         if stored is None:
-            if runtime is None or runtime.game_id != game_id:
-                raise VoteRuleViolation("GAME_RUNTIME_NOT_FOUND")
-            game = self._rebuild_before_turn(runtime, history)
+            if runtime is not None and runtime.game_id != game_id:
+                raise VoteRuleViolation("STALE_GAME")
+            game = (
+                replay_game_history(history)
+                if runtime is None
+                else self._rebuild_before_turn(runtime, history)
+            )
             result = GameResultService(
                 game_id=game_id,
                 game=game,

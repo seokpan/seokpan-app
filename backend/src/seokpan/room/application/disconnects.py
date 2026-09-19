@@ -29,7 +29,13 @@ class MillisecondClock(Protocol):
 class ConfirmedDepartureFinalizer(Protocol):
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
 
-    async def finalize_system_invalid(self, *, room_id: str, game_id: str) -> bool: ...
+    async def finalize_system_invalid(
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
+    ) -> bool: ...
 
 
 class DisconnectExpiryStatus(StrEnum):
@@ -117,9 +123,12 @@ class RoomConnectionCoordinator:
             result.game_termination is GameTermination.SYSTEM_INVALID
             and result.terminated_game_id is not None
         ):
+            if result.operation_at_ms is None:
+                raise RoomRuleViolation("ROOM_OPERATION_TIME_MISSING")
             await self._departures.finalize_system_invalid(
                 room_id=room_id,
                 game_id=result.terminated_game_id,
+                closed_at_ms=result.operation_at_ms,
             )
             return
         if result.snapshot is not None and result.snapshot.game_id is not None:

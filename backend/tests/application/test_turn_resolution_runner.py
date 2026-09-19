@@ -803,7 +803,11 @@ async def test_system_invalid_closure_finalizes_persistence_and_vote_runtime_wit
     runner, clock, _rooms, votes, games, _ = await setup_runner()
     clock.advance(1_234)
 
-    finalized = await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+    finalized = await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=clock.now_ms,
+    )
 
     assert finalized is True
     stored = await games.load_result(GAME_ID)
@@ -825,10 +829,18 @@ async def test_system_invalid_closure_retry_is_idempotent() -> None:
     games = CountingGamePersistenceAdapter()
     runner, _clock, _rooms, votes, _, _ = await setup_runner(games=games)
 
-    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=1_000,
+    )
     first = await votes.get(ROOM_ID)
     assert first is not None
-    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID)
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=1_000,
+    )
     second = await votes.get(ROOM_ID)
 
     assert games.finalize_calls == 1
@@ -848,5 +860,38 @@ async def test_system_invalid_closure_does_not_overwrite_existing_normal_result(
     assert stored_before is not None
     assert stored_before.end_reason is EndReason.JOINT_LOSS
 
-    assert await runner.finalize_system_invalid(room_id=ROOM_ID, game_id=GAME_ID) is False
+    assert (
+        await runner.finalize_system_invalid(
+            room_id=ROOM_ID,
+            game_id=GAME_ID,
+            closed_at_ms=clock.now_ms,
+        )
+        is False
+    )
     assert await games.load_result(GAME_ID) == stored_before
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_persists_from_history_when_vote_runtime_is_missing() -> None:
+    clock = ManualClock(now_ms=2_000)
+    rooms = InMemoryRoomRuntimeAdapter(clock)
+    votes = InMemoryVoteRuntimeAdapter(clock)
+    games = InMemoryGamePersistenceAdapter({1: 1000, 2: 1000, 3: 1000})
+    runner, _, _, _, _, _ = await setup_runner(
+        rooms=rooms,
+        votes=votes,
+        games=games,
+    )
+    # Simulate a provider-loss boundary where durable Game history remains but Vote runtime is gone.
+    votes._states.pop(ROOM_ID, None)
+
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=2_000,
+    )
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.end_reason is EndReason.SYSTEM_INVALID
+    assert stored.rating_adjustments == ()
