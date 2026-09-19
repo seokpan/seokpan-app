@@ -151,6 +151,10 @@ class CapturedGameStartup:
             # already matching Runtime is also ambiguous, not safe to overwrite.
             if phase != "PENDING" or (active is not None and active.game_id == game_id):
                 raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+            # Check before the first write; a later result check cannot undo
+            # history creation when a result already exists or its read fails.
+            if await self._games.load_result(game_id) is not None:
+                raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH")
             try:
                 await self._games.start_game(command)
             except PersistenceRuleViolation as error:
