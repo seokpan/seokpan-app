@@ -65,6 +65,11 @@ This is an event-loop reference implementation, not process-restart durability o
   admission reservation requires cleanup. Temporary disconnect still counts until the real exit.
 - Identity replacement and connect use the same new-digest gate as admission; another binding cannot
   be overwritten. Existing Session rotation/logout authority and ambiguity detection are preserved.
+- Logout now acquires the same per-Session admission lease before Room leave and holds it through
+  Session revoke. This closes the leave→revoke window where the still-live Cookie could otherwise
+  enter another Room. A busy lease fails before leave/revoke; release is token-scoped and bounded.
+- Guest→Member rotation does not expose the replacement raw Session token until the complete workflow
+  returns. Delayed requests using the previous Session are rejected by the final live-Session fence.
 - Current Session validation at the final write narrows the revoked-session race. This is not a claim
   that the complete multi-step logout/rotation workflow became a transaction; test those interleavings.
 - A committed write with a lost response remains visible to subsequent binding reads. An unexecuted

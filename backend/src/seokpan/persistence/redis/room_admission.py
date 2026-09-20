@@ -109,6 +109,22 @@ def admission_key(digest: str) -> str:
 class SessionAdmissionRedisRoomAdapter(RedisRoomRuntimeAdapter):
     """Serializes admission reads; the actual Room write checks the same lease."""
 
+    async def acquire_session_admission(self, digest: str) -> str:
+        key = admission_key(digest)
+        token = uuid4().hex
+        acquired = await self._scripts.execute(
+            ACQUIRE_ADMISSION,
+            keys=(key,),
+            args=(token, ADMISSION_LEASE_MS),
+        )
+        if type(acquired) is not int or acquired != 1:
+            raise SessionRuleViolation("ROOM_ADMISSION_BUSY")
+        return token
+
+    async def release_session_admission(self, digest: str, token: str) -> None:
+        key = admission_key(digest)
+        await self._scripts.execute(RELEASE_ADMISSION, keys=(key,), args=(token,))
+
     async def _mutate(
         self, room_id: str, request_id: str, operation: str, payload: Mapping[str, object],
         *, active_vote_turn: int | None = None,
@@ -121,14 +137,8 @@ class SessionAdmissionRedisRoomAdapter(RedisRoomRuntimeAdapter):
         participant_id = payload.get("owner_id" if operation == "create" else "participant_id")
         if not isinstance(digest, str) or not isinstance(participant_id, str):
             raise RoomRuleViolation("INVALID_PARTICIPANT_ID")
-        key, token = admission_key(digest), uuid4().hex
-        acquired = await self._scripts.execute(
-            ACQUIRE_ADMISSION, keys=(key,), args=(token, ADMISSION_LEASE_MS),
-        )
-        if type(acquired) is not int or acquired != 1:
-            # Existing SessionRuleViolation handler maps non-not-found codes to
-            # 503. This is a retryable admission failure, not proof of membership.
-            raise SessionRuleViolation("ROOM_ADMISSION_BUSY")
+        key = admission_key(digest)
+        token = await self.acquire_session_admission(digest)
         try:
             existing = await self._find_binding(session_digest=digest)
             if existing is not None and (
@@ -159,7 +169,7 @@ class SessionAdmissionRedisRoomAdapter(RedisRoomRuntimeAdapter):
             try:
                 # A late owner must never remove a successor's lease. If a
                 # queued Room write arrives after release, its fence rejects it.
-                await self._scripts.execute(RELEASE_ADMISSION, keys=(key,), args=(token,))
+                await self.release_session_admission(digest, token)
             except Exception:
                 # The lease expires; do not turn a committed admission into an
                 # error or hide the original failure. Cancellation propagates.

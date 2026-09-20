@@ -190,7 +190,7 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         resolver,
     )
     sessions = AuthSessionService(
-        RedisSessionWorkflow(providers.sessions, room_service),
+        RedisSessionWorkflow(providers.sessions, room_service, providers.rooms),
         providers.tokens,
     )
     members = MemberIdentityService(

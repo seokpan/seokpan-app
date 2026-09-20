@@ -174,6 +174,56 @@ async def test_session_workflow_does_not_rollback_an_unconfirmed_room_write() ->
     sessions.restore_after_failed_rotation.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_logout_holds_session_admission_gate_until_revocation() -> None:
+    current = session("a")
+    order: list[str] = []
+
+    async def acquire(_digest: str) -> str:
+        order.append("acquire")
+        return "lease-token"
+
+    async def leave(_current: SessionRecord) -> None:
+        order.append("leave")
+
+    async def revoke(_digest: str) -> bool:
+        order.append("revoke")
+        return True
+
+    async def release(_digest: str, _token: str) -> None:
+        order.append("release")
+
+    admissions = SimpleNamespace(
+        acquire_session_admission=AsyncMock(side_effect=acquire),
+        release_session_admission=AsyncMock(side_effect=release),
+    )
+    participants = SimpleNamespace(leave=AsyncMock(side_effect=leave))
+    sessions = SimpleNamespace(revoke=AsyncMock(side_effect=revoke))
+
+    assert await RedisSessionWorkflow(sessions, participants, admissions).logout(current) is True
+    assert order == ["acquire", "leave", "revoke", "release"]
+
+
+@pytest.mark.asyncio
+async def test_logout_busy_admission_does_not_leave_or_revoke() -> None:
+    current = session("a")
+    admissions = SimpleNamespace(
+        acquire_session_admission=AsyncMock(
+            side_effect=SessionRuleViolation("ROOM_ADMISSION_BUSY")
+        ),
+        release_session_admission=AsyncMock(),
+    )
+    participants = SimpleNamespace(leave=AsyncMock())
+    sessions = SimpleNamespace(revoke=AsyncMock())
+
+    with pytest.raises(SessionRuleViolation, match="ROOM_ADMISSION_BUSY"):
+        await RedisSessionWorkflow(sessions, participants, admissions).logout(current)
+
+    participants.leave.assert_not_awaited()
+    sessions.revoke.assert_not_awaited()
+    admissions.release_session_admission.assert_not_awaited()
+
+
 class TieRedisClient:
     def __init__(self) -> None:
         self.calls: list[tuple[int, tuple[object, ...]]] = []
