@@ -33,10 +33,14 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
   const leaveImpact =
     room?.status === "PLAYING" && gameMe?.role === "PLAYER"
       ? `게임 중 나가면 현재 판의 이탈 처리로 팀 결과에 영향을 줄 수 있습니다.${
-          room.owner_id === me?.participant_id ? " 방장 권한도 다른 Member에게 넘어갈 수 있습니다." : ""
+          room.owner_id === me?.participant_id
+            ? " 방장이라면 접속 중인 Member에게 권한이 넘어가며, 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
+            : ""
         }`
       : room?.owner_id === me?.participant_id
-        ? "방장이 나가면 접속 중인 Member에게 권한이 넘어가고 Ready가 모두 해제됩니다. 승계할 Member가 없으면 방이 종료됩니다."
+        ? room.status === "PLAYING"
+          ? "방장이 나가면 접속 중인 Member에게 권한이 넘어갑니다. 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
+          : "방장이 나가면 접속 중인 Member에게 권한이 넘어가고 Ready가 모두 해제됩니다. 승계할 Member가 없으면 방이 종료됩니다."
         : "";
   const [kick, setKick] = useState<{
     id: string;
