@@ -51,6 +51,7 @@ from seokpan.vote.domain import (
 )
 
 if TYPE_CHECKING:
+    from seokpan.game.application.captured_completion import CapturedGameCompletion
     from seokpan.game.application.captured_invalidation import CapturedGameInvalidation
 
 _LOGGER = logging.getLogger(__name__)
@@ -143,6 +144,7 @@ class TurnResolutionRunner:
         runner_id: str,
         events: RealtimeEventPort | None = None,
         captured_invalidation: CapturedGameInvalidation | None = None,
+        captured_completion: CapturedGameCompletion | None = None,
     ) -> None:
         if not runner_id:
             raise ValueError("INVALID_RUNNER_ID")
@@ -158,6 +160,7 @@ class TurnResolutionRunner:
         self._events = events or NullRealtimeEventAdapter()
         self._invalidation_failures: set[tuple[str, str]] = set()
         self._captured_invalidation = captured_invalidation
+        self._captured_completion = captured_completion
 
     async def finalize_departures(self, *, room_id: str, game_id: str) -> bool:
         """Finalize an active Game after Room state confirms player departures."""
@@ -353,6 +356,12 @@ class TurnResolutionRunner:
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
             raise ValueError("INVALID_DUE_TURN_LIMIT")
+        if self._captured_completion is not None:
+            try:
+                # Independent of PLAYING Room discovery; repair WAITING/successor tasks too.
+                await self._captured_completion.reconcile(limit=limit)
+            except Exception:
+                _LOGGER.exception("Normal completion discovery failed")
         due = await self._due_turns.due_turns(now_ms=self._clock.now_ms, limit=limit)
         results: list[TurnProcessingResult] = []
         for item in due:
@@ -632,6 +641,16 @@ class TurnResolutionRunner:
         return room
 
     async def _complete_room(self, due_turn: DueTurn) -> None:
+        if self._captured_completion is not None:
+            changed = await self._captured_completion.complete(
+                room_id=due_turn.room_id,
+                game_id=due_turn.game_id,
+                final_turn_no=due_turn.turn_no,
+            )
+            if changed is not None:
+                if changed:
+                    await self._room_completed_events(due_turn)
+                return
         room = await self._rooms.get(due_turn.room_id)
         if room is None:
             raise VoteRuleViolation("ROOM_NOT_FOUND")
@@ -653,6 +672,9 @@ class TurnResolutionRunner:
         )
         if completed.replayed or completed.snapshot is None:
             return
+        await self._room_completed_events(due_turn)
+
+    async def _room_completed_events(self, due_turn: DueTurn) -> None:
         try:
             await self._events.room_changed(
                 event_type="snapshot.required",
