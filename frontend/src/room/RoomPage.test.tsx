@@ -393,6 +393,48 @@ describe("room HTTP and receive-only connection integration", () => {
     });
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
   });
+  it("does not count disconnected Ready participants toward the start condition", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    act(() =>
+      sockets.get("/ws/v1/rooms/r1")!.message(
+        event(
+          "room.snapshot",
+          8,
+          {
+            room: {
+              ...room,
+              minimum_ready: 2,
+              owner_id: "p1",
+              participants: [
+                { ...participant, team: "BLACK", ready: true, connected: true },
+                {
+                  ...participant,
+                  participant_id: "p2",
+                  display_name: "돌둘",
+                  joined_order: 2,
+                  team: "WHITE",
+                  ready: true,
+                  connected: false,
+                },
+              ],
+            },
+            game: null,
+          },
+          "r1",
+        ),
+      ),
+    );
+
+    expect(screen.getByText("Ready 1명 / 최소 2명")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
+  });
+
   it("joins with the latest lobby version and never exposes a private password in the URL", async () => {
     const listed = {
       ...room,

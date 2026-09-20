@@ -21,8 +21,8 @@ it("offers five steps first and keeps detailed rules in a separate disclosure", 
     "무승부와 양 팀 공동 패배는 서로 다른 결과",
     "이전 표는 자동 복원되지 않습니다",
     "직접 방 나가기를 선택하면 이탈이 즉시 확정",
-    "30초 동안 기존 방장과 Ready 상태를 유지",
-    "30초가 지나 이탈이 확정되면",
+    "10초 동안 기존 방장과 Ready 상태를 유지",
+    "10초가 지나 이탈이 확정되면",
     "경기 무효는 정상 패배가 아닙니다",
   ])
     expect(dialog).toHaveTextContent(rule);

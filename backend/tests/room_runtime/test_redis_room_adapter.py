@@ -45,6 +45,18 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "rejection('CONNECTION_NOT_FOUND')" in participant_guard
 
 
+def test_start_game_uses_connected_ready_participants_only() -> None:
+    source = ROOM_MUTATION.source
+    start = source.split("if operation == 'start_game' then", 1)[1].split(
+        "if operation == 'complete_game' then", 1
+    )[0]
+
+    assert "PARTICIPANT_DISCONNECTED" in start
+    assert "and value.connected" in start
+    assert "connected_ready_count" in start
+    assert "MINIMUM_READY_NOT_MET" in start
+
+
 def test_complete_game_is_not_blocked_by_participant_guard() -> None:
     source = ROOM_MUTATION.source
     guard = source.index(

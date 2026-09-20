@@ -49,7 +49,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
       : null;
   const canChange =
     active && !auth.busy && view.phase === "ready" && room?.status === "WAITING" && me?.connected;
-  const readyPlayers = room?.participants.filter((p) => p.ready) ?? [];
+  const readyPlayers = room?.participants.filter((p) => p.ready && p.connected) ?? [];
   const canStart =
     canChange &&
     room?.owner_id === me?.participant_id &&

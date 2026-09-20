@@ -351,9 +351,11 @@ if operation == 'start_game' then
   if redis.call('HGET', KEYS[1], 'owner_id') ~= payload.actor_id then
     return rejection('OWNER_REQUIRED')
   end
-  local ready_ids = redis.call('SMEMBERS', KEYS[3])
+  if not current_participant.connected then
+    return rejection('PARTICIPANT_DISCONNECTED')
+  end
   local minimum_ready = tonumber(redis.call('HGET', KEYS[1], 'minimum_ready'))
-  if #ready_ids < minimum_ready then return rejection('MINIMUM_READY_NOT_MET') end
+  local connected_ready_count = 0
   local has_black = false
   local has_white = false
   local values = redis.call('HGETALL', KEYS[2])
@@ -361,7 +363,8 @@ if operation == 'start_game' then
   for index = 1, #values, 2 do
     local participant_id = values[index]
     local value = cjson.decode(values[index + 1])
-    local ready = redis.call('SISMEMBER', KEYS[3], participant_id) == 1
+    local ready = redis.call('SISMEMBER', KEYS[3], participant_id) == 1 and value.connected
+    if ready then connected_ready_count = connected_ready_count + 1 end
     if ready and value.team == 'BLACK' then has_black = true end
     if ready and value.team == 'WHITE' then has_white = true end
     table.insert(roster, {
@@ -370,6 +373,9 @@ if operation == 'start_game' then
       role = ready and 'PLAYER' or 'SPECTATOR',
       joined_order = value.joined_order
     })
+  end
+  if connected_ready_count < minimum_ready then
+    return rejection('MINIMUM_READY_NOT_MET')
   end
   if not has_black or not has_white then return rejection('BOTH_TEAMS_REQUIRED') end
   table.sort(roster, function(left, right) return left.joined_order < right.joined_order end)
