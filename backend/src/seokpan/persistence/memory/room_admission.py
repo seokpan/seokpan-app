@@ -33,9 +33,6 @@ class SessionAdmissionMemoryRoomAdapter(InMemoryRoomRuntimeAdapter):
         return await super().create(command)
 
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult:
-        if self._replay(command) is None:
-            state = self._require_room(command.room_id)
-            self._require_expected_version(state, command.expected_state_version)
         self._require_single_binding(
             command.session_digest, command.room_id, command.participant_id,
         )
