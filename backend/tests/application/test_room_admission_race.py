@@ -106,6 +106,26 @@ async def prepared():
     return runtime, rooms
 
 
+@pytest.mark.asyncio
+async def test_guarded_memory_join_uses_current_state_when_observation_is_stale():
+    runtime, rooms = await prepared()
+    app = service(runtime)
+    actor = session(3)
+    snapshot = await runtime.get(rooms[0])
+    assert snapshot is not None
+
+    joined = await app.join_room(
+        session=actor,
+        room_id=rooms[0],
+        request_id="stale-observation",
+        expected_state_version=snapshot.state_version + 10,
+        password=None,
+    )
+
+    assert joined.snapshot is not None
+    assert runtime.memberships(actor.session_digest) == [(rooms[0], actor.actor_id)]
+
+
 async def admit(app, actor, action, room_id, request_id):
     if action == "create":
         return await app.create_room(
