@@ -19,6 +19,7 @@ from seokpan.api.statistics import StatisticsApiServices, statistics_router
 from seokpan.clock import MillisecondClock
 from seokpan.game.application import GameApplicationService, TurnResolutionRunner
 from seokpan.game.application.resolution import DueTurnSource, TieSelector
+from seokpan.game_lifecycle import build_memory_game_lifecycle, build_redis_game_lifecycle
 from seokpan.health import RuntimeReadiness
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
@@ -113,12 +114,17 @@ def build_headless_services(
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
     games = InMemoryGamePersistenceAdapter(member_ratings)
+    lifecycle = build_memory_game_lifecycle(
+        mode=settings.game_lifecycle_mode, rooms=room_runtime, votes=votes, games=games,
+        room_service=room_service, clock=clock,
+    )
     game_service = GameApplicationService(
         rooms=room_service,
         games=games,
         votes=votes,
         clock=clock,
         events=events,
+        captured_startup=lifecycle.startup,
     )
     game_api = GameApiServices(identity_api, game_service)
     registry = ActiveWebSocketRegistry()
@@ -136,6 +142,8 @@ def build_headless_services(
         clock=clock,
         runner_id="headless",
         events=events,
+        captured_invalidation=lifecycle.invalidation,
+        captured_completion=lifecycle.completion,
     )
     room_api = RoomApiServices(identity_api, room_service, turn_resolution)
     connections = RoomConnectionCoordinator(
@@ -197,12 +205,16 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         dummy_password_hash=providers.passwords.hash(providers.tokens.issue()),
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
+    lifecycle = build_redis_game_lifecycle(
+        mode=settings.game_lifecycle_mode, providers=providers, room_service=room_service,
+    )
     game_service = GameApplicationService(
         rooms=room_service,
         games=providers.games,
         votes=providers.votes,
         clock=providers.clock,
         events=providers.realtime,
+        captured_startup=lifecycle.startup,
     )
     game_api = GameApiServices(identity_api, game_service)
     registry = ActiveWebSocketRegistry()
@@ -223,6 +235,8 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         clock=providers.clock,
         runner_id=settings.instance_id,
         events=providers.realtime,
+        captured_invalidation=lifecycle.invalidation,
+        captured_completion=lifecycle.completion,
     )
     room_api = RoomApiServices(identity_api, room_service, turn_resolution)
     connections = RoomConnectionCoordinator(

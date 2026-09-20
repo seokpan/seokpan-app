@@ -4,8 +4,9 @@ Canonical: APP #86, Parent #76. `game-start-intent.md`의 시작/closure 계약�
 
 ## 현재 Source 범위
 
-`TurnResolutionRunner(captured_completion=...)`에 선택적으로 연결한다. 서비스 구성의
-기본값과 `app.py`는 변경하지 않았다. 이 문서는 실제 배포·Provider PASS를 뜻하지 않는다.
+`TurnResolutionRunner(captured_completion=...)`에 연결한다. 서비스 구성은
+`game-lifecycle-rollout.md`의 단일 `game_lifecycle_mode`로 시작/closure/정상 완료를 함께
+선택한다. 기본값은 legacy이며 실제 배포·Provider PASS를 뜻하지 않는다.
 
 `CapturedGameCompletion`은 원본 intent, 영속 history/result 및 finalized 상태를 대조한다.
 결과·Rating·Stats를 새로 계산하지 않는다. Provider는 해당 FINISHED Runtime의 Game/turn과
@@ -57,6 +58,8 @@ Redis script의 예기치 않은 오류는 rollback되지 않는다. 이 코드�
 - 이전 미반영 patch의 45/32 결과를 위 합계에 더하지 않는다.
 - 하네스는 import/Domain/Provider 경계를 대체했다. 고정 저장소 전체 pytest/format/ruff/mypy,
   실제 Redis Lua/cjson/TTL/AOF/OOM, MariaDB/2-Pod/Browser PASS가 아니다.
-- 실제 composition root에 동일 Room/Vote와 startup/invalidation/completion을 함께 연결해야 한다.
-- 구버전 writer drain·intent 없는 기존 Game·기존 TTL marker 이행·결합 회귀는 미완료다.
+- 실제 composition root의 동일 Room/Vote와 세 coordinator 연결은 구현됐다. 설정 선택과
+  실제 운영 전환의 조건은 `game-lifecycle-rollout.md`를 따른다.
+- 구버전 writer drain·기존 Game/TTL marker의 전환 기준은 rollout 문서에 정의했다.
+  실제 운영 이행·Provider 결합 회귀는 미실행이다.
 - main/배포/CI 변경 및 Source Freeze 완료 판정은 이 변경에 포함하지 않는다.
