@@ -110,6 +110,30 @@ Room script body is not executed in that check; this is not real Redis or 2-Pod 
 Syntax/100-character line length and baseline/changed Git blob checks were run. The source tree in
 the checkpoint is partial; its import/Provider doubles must never be copied into the service tree.
 
+## F01: Lobby version is not the Join concurrency boundary
+
+The same branch also fixes the confirmed F01 false-conflict source. Lobby recovery deliberately does
+not publish for Ready/team-only changes because those fields are not part of the public list. Those
+changes still advance the aggregate Room `state_version`. Requiring an exact Room version on Join
+therefore turns a valid current-state admission into `STATE_VERSION_CONFLICT` even when capacity,
+password and Room lifecycle still allow entry.
+
+The existing request field remains for compatibility and request observation, but **Join no longer
+uses it as a provider mutation precondition**. Memory and Redis both evaluate current existence,
+capacity, password authorization, duplicate participant and Session admission at the write. Other
+Room mutations keep optimistic version checks. This also preserves the UX branch's safe refresh path
+for old/mixed servers without making automatic mutation replay a requirement.
+
+This is preferable to publishing Lobby events for every Ready/team toggle: those changes are not
+Lobby data and would add list refresh traffic solely to keep a precondition that admission does not
+need. It is also preferable to adding a second public `join_version` for the current MVP; the actual
+join script already owns all admission-relevant current-state rules. A future contract cleanup can
+rename/remove the observed version only with explicit API compatibility work.
+
+Direct contract tests cover stale Join acceptance and continued stale rejection for versioned Room
+mutations. Redis Source tests require current capacity/password/duplicate checks while asserting no
+full-version gate inside the Join block. Actual Redis and Browser confirmation remain Provider Gates.
+
 ## Remaining acceptance
 
 - Run the real Memory/Domain and entire configured repository tests, format/ruff/mypy.

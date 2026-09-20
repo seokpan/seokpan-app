@@ -182,7 +182,7 @@ async def test_sequential_other_room_admission_is_rejected(service_count):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("service_count", [1, 2])
-async def test_same_room_version_check_still_rejects_one_overlapping_write(service_count):
+async def test_same_session_same_room_overlap_still_has_one_admission(service_count):
     runtime, rooms = await prepared()
     first = service(runtime)
     second = first if service_count == 1 else service(runtime)
@@ -196,5 +196,5 @@ async def test_same_room_version_check_still_rejects_one_overlapping_write(servi
     failures = [outcome for outcome in outcomes if isinstance(outcome, BaseException)]
     assert len(failures) == 1
     assert isinstance(failures[0], RoomRuleViolation)
-    assert failures[0].code == "STATE_VERSION_CONFLICT"
+    assert failures[0].code == "SESSION_ALREADY_IN_ROOM"
     assert len(runtime.memberships(actor.session_digest)) == 1
