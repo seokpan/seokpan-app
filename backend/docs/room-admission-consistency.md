@@ -20,7 +20,7 @@ replay check -> require_not_participating(session) -> Provider work -> local bin
 
 The participation read may use shared Redis state, but it is separate from the Room write.
 Room version checks serialize conflicting writes to the same Room, not to different Rooms.
-`RedisRoomRuntimeAdapter._find_participation()` already rejects multiple matches with
+`RedisRoomRuntimeAdapter._find_binding()` already rejects multiple matches with
 `ROOM_PARTICIPATION_AMBIGUOUS`. That is detection after duplicate admission, not prevention.
 The HTTP routes authenticate/validate the Session and call these use cases; `RedisSessionWorkflow`
 rotation/logout does not enclose create/join as a cross-Room atomic admission operation.
@@ -36,7 +36,8 @@ admission pre-check, schedules the second request, then releases the first write
 - same-Room version conflict as a control.
 
 A shared participation reader is used so the reproducer does not rely on two empty local caches.
-The test has a bounded timeout and cleans up tasks; cancellation/setup errors are not xfailed.
+The test has a bounded timeout and cleans up tasks. The xfail filter accepts AssertionError only;
+timeout and cancellation are not accepted as the known invariant failure.
 The six invariant cases are strict xfails for the known unfixed F05, not successful regression fixes.
 Running with `--runxfail` exposes the underlying invariant failures. Remove the xfail when the shared
 admission implementation is connected. These expected failures must not justify closing F05 or
