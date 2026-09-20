@@ -189,6 +189,16 @@ def _identity_status(code: str) -> tuple[int, str]:
 
 
 def _room_status(code: str) -> tuple[int, str]:
+    if code in {
+        "GAME_CLOSURE_UNCONFIRMED",
+        "GAME_START_RECOVERY_REQUIRED",
+        "GAME_START_RESULT_INVALID",
+        "GAME_START_TIME_MISSING",
+        "PARTICIPANT_IDENTITY_NOT_FOUND",
+        "START_CLOSURE_INVALID",
+        "START_COMPLETION_INVALID",
+    }:
+        return 503, "Room state unavailable"
     if code in {"ROOM_NOT_FOUND", "PARTICIPANT_NOT_FOUND"}:
         return 404, "Room or participant not found"
     if code in {
@@ -219,8 +229,19 @@ def _room_status(code: str) -> tuple[int, str]:
 
 
 def _game_status(code: str) -> tuple[int, str]:
-    if code in {"GAME_RESULT_INCOMPLETE", "GAME_RESULT_HISTORY_MISMATCH", "GAME_HISTORY_INVALID"}:
-        return 503, "Game result unavailable"
+    if code in {
+        "GAME_END_REASON_MISSING",
+        "GAME_HISTORY_INVALID",
+        "GAME_RESULT_INCOMPLETE",
+        "GAME_RESULT_HISTORY_MISMATCH",
+        "GAME_RUNTIME_HISTORY_MISMATCH",
+        "GAME_START_RECOVERY_REQUIRED",
+        "INVALID_NEXT_DEADLINE",
+        "RESOLUTION_CANDIDATES_MISSING",
+        "TURN_CLOSURE_MISSING",
+        "VALID_VOTER_COUNT_MISSING",
+    }:
+        return 503, "Game state unavailable"
     if code in {"GAME_NOT_FOUND", "GAME_RUNTIME_NOT_FOUND"}:
         return 404, "Game not found"
     if code in {
