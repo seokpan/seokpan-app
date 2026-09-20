@@ -79,6 +79,8 @@ parent branch is required after semantic merge.
 
 - Preserve #86 captured lifecycle/start-intent support.
 - Preserve F01 Join current-state semantics: no exact aggregate version gate for Join.
+- The guarded `SessionAdmissionMemoryRoomAdapter.join()` must not reintroduce
+  `_require_expected_version(...)` before delegating to the base current-state Join.
 - Preserve F05 shared-store Session admission check immediately before create/join/identity/connect
   binding writes.
 - Preserve #88 temporary-disconnect semantics and 10-second lease through the shared runtime
@@ -120,6 +122,7 @@ Do not discard one branch's tests simply because the production file conflicts.
    - Join exact-version guard inside the Join operation.
    - unguarded production `RedisRoomRuntimeAdapter` construction.
    - two-argument production `RedisSessionWorkflow(providers.sessions, room_service)`.
+   - guarded Memory Join calling `_require_expected_version` before the base Join.
 3. Confirm the admission wrapper references the final imported `ROOM_MUTATION.source`.
 4. Bump the final Room mutation script version after semantic merge.
 5. Run targeted shared Room contract tests before the broader pinned suite.
