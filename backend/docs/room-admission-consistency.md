@@ -139,6 +139,31 @@ Direct contract tests cover stale Join acceptance and continued stale rejection 
 mutations. Redis Source tests require current capacity/password/duplicate checks while asserting no
 full-version gate inside the Join block. Actual Redis and Browser confirmation remain Provider Gates.
 
+## F06: cross-Pod application response replay boundary
+
+The Room application keeps a small process-local `_results` cache for create/join/leave response
+replay. The provider also has shared request-id dedupe, but a request can be rejected by application
+preconditions before a retry on another Pod reaches that provider cache. Therefore **same-request
+application response replay is not guaranteed across Backend Pods for every Room mutation**.
+
+This is a real contract limitation, but no new shared result store is added for the current MVP:
+
+- `ApiClient` explicitly performs **no automatic retries**, including after CSRF recovery.
+- User actions generate a fresh request id. The safe stale-state retry paths also issue a new command
+  rather than blindly replaying an uncertain mutation.
+- The current Browser contract therefore does not depend on cross-Pod replaying the same uncertain
+  create/join/leave response.
+- Provider request-id dedupe remains useful once a command reaches the provider and for same-process
+  application replay, but it must not be described as an end-to-end exactly-once guarantee.
+
+If a future client, reverse proxy or job runner introduces automatic retry of uncertain mutations with
+the same request id, reopen F06 and add a **shared application response/replay contract** (or redesign
+the command boundary) before enabling that behavior. Do not infer non-commit from timeout/network
+failure and do not add speculative automatic retries to work around this limitation.
+
+This disposition is intentionally narrower than “bug fixed”: current MVP Source needs no additional
+retry mechanism, while the limitation remains documented and testable.
+
 ## Remaining acceptance
 
 - Run the real Memory/Domain and entire configured repository tests, format/ruff/mypy.
