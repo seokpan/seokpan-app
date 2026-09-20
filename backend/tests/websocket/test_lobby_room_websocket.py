@@ -22,6 +22,7 @@ from seokpan.persistence.memory import (
     ManualClock,
 )
 from seokpan.room.application import (
+    ROOM_DISCONNECT_LEASE_MS,
     DisconnectExpiryResult,
     DisconnectExpiryRunner,
     DisconnectExpiryStatus,
@@ -740,7 +741,7 @@ def test_owner_socket_disconnect_preserves_owner_until_lease_expiry(
         assert all(item["ready"] for item in current.json()["participants"])
 
         assert member.portal is not None
-        services.headless_clock.advance(30_000)
+        services.headless_clock.advance(ROOM_DISCONNECT_LEASE_MS)
         expired = member.portal.call(services.disconnect_expiry.run_once)
         assert len(expired) == 1
         after_expiry = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
@@ -1297,7 +1298,7 @@ async def test_participant_left_event_is_delayed_until_disconnect_lease_expires(
     assert disconnected.payload["room_state_version"] == 3
     assert await runner.run_once() == ()
 
-    clock.advance(30_000)
+    clock.advance(ROOM_DISCONNECT_LEASE_MS)
     assert len(await runner.run_once()) == 1
     left = await subscription.receive()
 
