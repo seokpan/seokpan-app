@@ -356,6 +356,62 @@ describe("room HTTP and receive-only connection integration", () => {
     });
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
   });
+  it("warns a playing owner that no successor can close the room and invalidate the game", async () => {
+    const playingRoom = {
+      ...room,
+      status: "PLAYING",
+      state_version: 4,
+      game_id: "g1",
+      participants: [{ ...participant, ready: true, team: "BLACK" }],
+    };
+    const playingGame = {
+      room_id: "r1",
+      game_id: "g1",
+      game_status: "ACTIVE",
+      state_version: 1,
+      turn_no: 1,
+      move_no: 0,
+      current_team: "BLACK",
+      turn_status: "VOTING",
+      deadline_ms: 10_000,
+      server_now_ms: 1_000,
+      valid_voter_count: 1,
+      can_vote: true,
+      participants: [
+        {
+          participant_id: "p1",
+          actor_type: "MEMBER",
+          connected: true,
+          role: "PLAYER",
+          team: "BLACK",
+        },
+      ],
+      vote_aggregation: [],
+      board: [],
+      last_move: null,
+      forbidden_for_black: [],
+      candidates: [],
+      my_vote: null,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      if (url === "/api/v1/rooms/r1/state")
+        return json({ room: playingRoom, game: playingGame, stream_version: 9 });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+
+    mount(fetcher);
+
+    expect(
+      await screen.findByText(/승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
+  });
+
   it("joins with the latest lobby version and never exposes a private password in the URL", async () => {
     const listed = {
       ...room,
