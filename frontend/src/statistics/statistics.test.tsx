@@ -141,6 +141,10 @@ describe("rankings and user record screens", () => {
     const board = screen.getByRole("grid");
     fireEvent.click(screen.getByRole("link", { name: "랭킹" }));
     await screen.findByRole("region", { name: "내 순위와 전적" });
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
+    expect(screen.getByText(/로그아웃하면 참여 중인 방에서도 나갑니다/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "로그아웃" })).toHaveAttribute("aria-describedby");
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(board.isConnected).toBe(true);
     expect(board).not.toBeVisible();
     room = { ...room, name: "변경된 방", state_version: 2 };

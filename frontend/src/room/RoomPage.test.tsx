@@ -328,6 +328,16 @@ describe("room HTTP and receive-only connection integration", () => {
     const emptyCell = screen.getByRole("button", { name: "H8 빈 자리" });
     expect(emptyCell).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Ready 0명 / 최소 2명")).toBeInTheDocument();
+    expect(screen.getByText(/방장이 나가면 접속 중인 Member에게 권한이 넘어가고/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
+    expect(screen.getByLabelText("투표 제한 시간")).toHaveAttribute(
+      "aria-describedby",
+      "room-vote-seconds-impact",
+    );
+    expect(screen.getByText("투표 시간을 바꾸면 모든 참가자의 Ready가 해제됩니다.")).toBeInTheDocument();
     const requestsBeforeClick = fetcher.mock.calls.length;
     fireEvent.click(emptyCell);
     expect(fetcher.mock.calls).toHaveLength(requestsBeforeClick);
