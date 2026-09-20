@@ -32,7 +32,6 @@ from seokpan.persistence.memory import (
     InMemoryGamePersistenceAdapter,
     InMemoryIdentityAdapter,
     InMemoryRealtimeEventAdapter,
-    InMemoryRoomRuntimeAdapter,
     InMemorySessionAdapter,
     InMemorySessionWorkflow,
     InMemoryTieSelectionAudit,
@@ -44,6 +43,9 @@ from seokpan.persistence.memory import (
 from seokpan.persistence.memory.chat_adapter import InMemoryChatAdapter
 from seokpan.persistence.memory.presence_adapter import InMemoryPresenceAdapter
 from seokpan.persistence.memory.resolution import MemoryRoomTurnSource
+from seokpan.persistence.memory.room_admission import (
+    SessionAdmissionMemoryRoomAdapter as InMemoryRoomRuntimeAdapter,
+)
 from seokpan.persistence.memory.statistics_adapter import InMemoryStatisticsAdapter
 from seokpan.room.application import (
     DisconnectExpiryRunner,

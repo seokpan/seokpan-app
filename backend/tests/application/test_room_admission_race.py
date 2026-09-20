@@ -1,7 +1,7 @@
 """F05 regression: per-Room versions do not serialize a Session across Rooms.
 
-The strict xfail documents the unfixed admission invariant, not a passing fix.
-Remove it when the shared admission implementation is connected.
+The guarded Memory Provider uses the same committed Room store as both services.
+Actual Redis/2-Pod evidence is a separate gate.
 """
 
 import asyncio
@@ -11,7 +11,9 @@ import pytest
 
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.identity.application.session import digest_opaque_token
-from seokpan.persistence.memory.room_adapter import InMemoryRoomRuntimeAdapter
+from seokpan.persistence.memory.room_admission import (
+    SessionAdmissionMemoryRoomAdapter as InMemoryRoomRuntimeAdapter,
+)
 from seokpan.room.application.lobby import RoomApplicationService, RoomParticipation
 from seokpan.room.domain import RoomConfig, RoomRuleViolation
 
@@ -143,9 +145,6 @@ async def overlap(runtime, first, second):
 @pytest.mark.parametrize("service_count", [1, 2])
 @pytest.mark.parametrize(
     "actions", [("join", "join"), ("create", "join"), ("create", "create")],
-)
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="F05: Session admission is not atomic",
 )
 async def test_one_session_cannot_be_admitted_to_two_rooms(service_count, actions):
     runtime, rooms = await prepared()
