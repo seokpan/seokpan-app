@@ -146,7 +146,13 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                                 : "팀 미선택"}
                           </h2>
                           <ul
-                            aria-label={`${team === "BLACK" ? "흑팀" : team === "WHITE" ? "백팀" : "팀 미선택"} 참가자`}
+                            aria-label={`${
+                              team === "BLACK"
+                                ? "흑팀"
+                                : team === "WHITE"
+                                  ? "백팀"
+                                  : "팀 미선택"
+                            } 참가자`}
                             tabIndex={0}
                           >
                             {room.participants
