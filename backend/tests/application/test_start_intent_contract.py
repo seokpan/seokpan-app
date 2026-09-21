@@ -91,7 +91,13 @@ def test_member_identifier_must_be_canonical_unsigned_bigint_string(member_id: o
 
 @pytest.mark.parametrize(
     ("member_id", "guest_label"),
-    [(None, None), ("1", "Guest-0001"), (None, "참가자"), (None, "Guest-12345"), (None, "Guest-１２３４")],
+    [
+        (None, None),
+        ("1", "Guest-0001"),
+        (None, "참가자"),
+        (None, "Guest-12345"),
+        (None, "Guest-１２３４"),
+    ],
 )
 def test_identity_is_not_guessed_or_replaced_by_ui_fallback(
     member_id: str | None, guest_label: str | None
@@ -209,8 +215,12 @@ def test_invalid_or_oversized_json_never_creates_default_intent(payload: str) ->
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("room_id", OTHER), ("game_id", OTHER), ("original_request_id", "other-request"),
-        ("owner_id", OTHER), ("accepted_state_version", 8), ("started_at_ms", 1235),
+        ("room_id", OTHER),
+        ("game_id", OTHER),
+        ("original_request_id", "other-request"),
+        ("owner_id", OTHER),
+        ("accepted_state_version", 8),
+        ("started_at_ms", 1235),
         ("vote_seconds", 30),
     ],
 )
