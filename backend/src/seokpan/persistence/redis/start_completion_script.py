@@ -2,12 +2,15 @@
 
 from seokpan.persistence.redis.common import VersionedLuaScript
 
+
 def completion_pending_key(room_id: str, game_id: str) -> str:
     return f"stone:v1:room:{{{room_id}}}:normal-completion-pending:{game_id}"
 
 
 START_COMPLETION_READ = VersionedLuaScript(
-    name="normal-start-proof-read", version=1, source=r"""
+    name="normal-start-proof-read",
+    version=1,
+    source=r"""
 for _, key in ipairs(KEYS) do
   local t = redis.call('TYPE', key).ok
   if t ~= 'none' and t ~= 'string' then
@@ -21,7 +24,9 @@ return cjson.encode({ok=true,error=cjson.null,
 )
 
 NORMAL_START_COMPLETE = VersionedLuaScript(
-    name="normal-start-complete", version=2, source=r"""
+    name="normal-start-complete",
+    version=2,
+    source=r"""
 local function reject(code) return cjson.encode({ok=false,error=code}) end
 local function integer(n,min) return type(n)=='number' and n==math.floor(n)
   and n>=(min or 0) and n<9007199254740992 end
