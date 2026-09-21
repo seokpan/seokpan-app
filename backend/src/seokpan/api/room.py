@@ -238,16 +238,17 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 expected_state_version=payload.expected_state_version,
             ),
         )
-        if services.departures is not None and not result.replayed:
-            if (
-                result.game_termination is not GameTermination.SYSTEM_INVALID
-                and result.snapshot is not None
-                and result.snapshot.game_id is not None
-            ):
-                await services.departures.finalize_departures(
-                    room_id=room_id,
-                    game_id=result.snapshot.game_id,
-                )
+        if (
+            services.departures is not None
+            and not result.replayed
+            and result.game_termination is not GameTermination.SYSTEM_INVALID
+            and result.snapshot is not None
+            and result.snapshot.game_id is not None
+        ):
+            await services.departures.finalize_departures(
+                room_id=room_id,
+                game_id=result.snapshot.game_id,
+            )
         latest = await services.rooms.get(room_id)
         if latest is None:
             return None
