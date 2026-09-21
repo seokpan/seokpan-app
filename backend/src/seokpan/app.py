@@ -115,8 +115,12 @@ def build_headless_services(
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
     games = InMemoryGamePersistenceAdapter(member_ratings)
     lifecycle = build_memory_game_lifecycle(
-        mode=settings.game_lifecycle_mode, rooms=room_runtime, votes=votes, games=games,
-        room_service=room_service, clock=clock,
+        mode=settings.game_lifecycle_mode,
+        rooms=room_runtime,
+        votes=votes,
+        games=games,
+        room_service=room_service,
+        clock=clock,
     )
     game_service = GameApplicationService(
         rooms=room_service,
@@ -206,7 +210,9 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
     lifecycle = build_redis_game_lifecycle(
-        mode=settings.game_lifecycle_mode, providers=providers, room_service=room_service,
+        mode=settings.game_lifecycle_mode,
+        providers=providers,
+        room_service=room_service,
     )
     game_service = GameApplicationService(
         rooms=room_service,
