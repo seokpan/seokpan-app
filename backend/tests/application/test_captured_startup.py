@@ -1,5 +1,6 @@
 """Application boundaries; real Provider integration remains a separate gate."""
 
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -88,7 +89,7 @@ async def test_initial_start_captures_trusted_identity_then_uses_original_time(f
     command = flow.initializer.initialize.await_args.args[0]
     assert command.intent == flow.intent
     assert command.expected_room_version == 7
-    assert not hasattr(command, "deadline_ms")
+    assert "deadline_ms" not in {field.name for field in fields(command)}
 
 
 @pytest.mark.asyncio
