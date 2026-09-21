@@ -80,7 +80,8 @@ class InMemoryCapturedVoteInitializer:
             ):
                 raise VoteRuleViolation("GAME_START_RECOVERY_REQUIRED")
             return VoteMutationResult(
-                self._votes._snapshot(intent.room_id, previous), replayed=True,
+                self._votes._snapshot(intent.room_id, previous),
+                replayed=True,
             )
         if previous is not None:
             if previous.game.game_id == intent.game_id:
@@ -113,17 +114,26 @@ class InMemoryCapturedVoteInitializer:
             raise VoteRuleViolation("INVALID_DEADLINE")
         new_state = _VoteState(
             game=VoteTurnGame(
-                game_id=intent.game_id, participants=participants,
-                deadline_ms=deadline, game=Game(),
+                game_id=intent.game_id,
+                participants=participants,
+                deadline_ms=deadline,
+                game=Game(),
             ),
             state_version=2,
         )
         result = VoteMutationResult(self._votes._snapshot(intent.room_id, new_state))
-        witness_json = json.dumps({
-            "schema_version": 1, "phase": "INITIALIZED", "game_id": intent.game_id,
-            "intent_fingerprint": intent.fingerprint,
-            "initialized_at_ms": now, "first_deadline_ms": deadline,
-        }, sort_keys=True, separators=(",", ":"))
+        witness_json = json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "INITIALIZED",
+                "game_id": intent.game_id,
+                "intent_fingerprint": intent.fingerprint,
+                "initialized_at_ms": now,
+                "first_deadline_ms": deadline,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         self._votes._states[intent.room_id] = new_state
         self._rooms._start_phases[key] = witness_json
         return result
