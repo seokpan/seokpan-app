@@ -49,7 +49,12 @@ class EmulatedRoomRedisClient:
     def __init__(self, clock: ManualClock, *, scripts_loaded: bool = True) -> None:
         self.store = InMemoryRoomRuntimeAdapter(clock)
         self.loaded = (
-            {ROOM_MUTATION.sha, ROOM_READ.sha, ROOM_PRIVATE_HASH_READ.sha, ROOM_INVALIDATION_ACK.sha}
+            {
+                ROOM_MUTATION.sha,
+                ROOM_READ.sha,
+                ROOM_PRIVATE_HASH_READ.sha,
+                ROOM_INVALIDATION_ACK.sha,
+            }
             if scripts_loaded
             else set()
         )
