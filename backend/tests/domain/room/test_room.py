@@ -354,7 +354,7 @@ def test_game_start_freezes_player_and_spectator_roster() -> None:
     assert room.state_version == version_before + 1
 
 
-def test_owner_disconnect_immediately_promotes_earliest_connected_member() -> None:
+def test_owner_disconnect_keeps_owner_and_ready_state_during_reconnect_lease() -> None:
     room = create_room()
     room.join(participant_id="guest-first", actor_type=ActorType.GUEST)
     room.join(participant_id="member-earliest", actor_type=ActorType.MEMBER)
@@ -370,16 +370,20 @@ def test_owner_disconnect_immediately_promotes_earliest_connected_member() -> No
         reason=DisconnectReason.PARTICIPANT_CONNECTION_LOST,
     )
 
-    assert result.new_owner_id == "member-earliest"
+    assert result.new_owner_id == "member-owner"
     assert result.room_closed is False
-    assert room.owner_id == "member-earliest"
-    assert all(not participant.ready for participant in room.participants)
+    assert room.owner_id == "member-owner"
+    assert room.participant("member-owner").connected is False
+    assert room.participant("member-owner").ready is True
+    assert room.participant("member-earliest").ready is True
     assert room.state_version == version_before + 1
 
 
-def test_previous_owner_reconnects_without_automatic_owner_restore() -> None:
+def test_owner_reconnect_within_lease_preserves_ownership_and_ready_state() -> None:
     room = create_room()
     room.join(participant_id="member-2", actor_type=ActorType.MEMBER)
+    room.change_team(participant_id="member-owner", team=Team.BLACK)
+    room.set_ready(participant_id="member-owner", ready=True)
     room.disconnect(
         participant_id="member-owner",
         reason=DisconnectReason.PARTICIPANT_CONNECTION_LOST,
@@ -388,8 +392,9 @@ def test_previous_owner_reconnects_without_automatic_owner_restore() -> None:
 
     room.reconnect(participant_id="member-owner")
 
-    assert room.owner_id == "member-2"
+    assert room.owner_id == "member-owner"
     assert room.participant("member-owner").connected is True
+    assert room.participant("member-owner").ready is True
     assert room.state_version == version_before + 1
 
     room.reconnect(participant_id="member-owner")
@@ -415,6 +420,42 @@ def test_non_owner_disconnect_preserves_ready_during_reconnect_lease() -> None:
     assert room.participant("member-2").ready is True
     assert room.participant("member-2").connected is False
     assert room.state_version == version_before + 1
+
+
+def test_disconnected_ready_participant_is_not_eligible_to_start() -> None:
+    room = create_room(minimum_ready=2)
+    room.change_team(participant_id="member-owner", team=Team.BLACK)
+    room.set_ready(participant_id="member-owner", ready=True)
+    join_ready_player(room, "member-2", Team.WHITE)
+    room.disconnect(
+        participant_id="member-2",
+        reason=DisconnectReason.PARTICIPANT_CONNECTION_LOST,
+    )
+
+    assert room.participant("member-2").ready is True
+    assert room.participant("member-2").connected is False
+    assert_rejected_without_mutation(
+        room,
+        "MINIMUM_READY_NOT_MET",
+        lambda: room.start_game(actor_id="member-owner", game_id="game-1"),
+    )
+
+
+def test_disconnected_owner_cannot_start_during_reconnect_lease() -> None:
+    room = create_room(minimum_ready=2)
+    room.change_team(participant_id="member-owner", team=Team.BLACK)
+    room.set_ready(participant_id="member-owner", ready=True)
+    join_ready_player(room, "member-2", Team.WHITE)
+    room.disconnect(
+        participant_id="member-owner",
+        reason=DisconnectReason.PARTICIPANT_CONNECTION_LOST,
+    )
+
+    assert_rejected_without_mutation(
+        room,
+        "PARTICIPANT_DISCONNECTED",
+        lambda: room.start_game(actor_id="member-owner", game_id="game-1"),
+    )
 
 
 def test_waiting_room_closes_without_game_action_when_no_successor_exists() -> None:

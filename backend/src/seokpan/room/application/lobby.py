@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
@@ -477,6 +477,13 @@ class RoomApplicationService(ParticipantSessionPort):
                 if error.code != "STATE_VERSION_CONFLICT" or attempt == 2:
                     raise
         assert result is not None
+        if result.connection_generation is None:
+            raise RoomRuleViolation("CONNECTION_GENERATION_MISSING")
+        self._update_local_connection(
+            participation,
+            generation=result.connection_generation,
+            connected=True,
+        )
         await self._room_changed(
             "snapshot.required",
             result,
@@ -537,6 +544,13 @@ class RoomApplicationService(ParticipantSessionPort):
         assert result is not None
         if result.stale_connection or result.replayed:
             return result
+        local_participation = self._by_participant.get(participant_id)
+        if local_participation is not None:
+            self._update_local_connection(
+                local_participation,
+                generation=connection_generation,
+                connected=False,
+            )
         if result.room_closed:
             self._unbind_room(room_id)
             await self._closed(room_id)
@@ -691,6 +705,8 @@ class RoomApplicationService(ParticipantSessionPort):
             participant_id=participation.participant_id,
             actor_type=replacement.actor_type,
             actor_id=replacement.actor_id,
+            connection_generation=participation.connection_generation,
+            connected=participation.connected,
         )
         self._unbind(participation)
         self._invalidate_participation_watch(updated.session_digest)
@@ -738,6 +754,25 @@ class RoomApplicationService(ParticipantSessionPort):
         )
         self._by_session[session.session_digest] = participation
         self._by_participant[participant_id] = participation
+
+    def _update_local_connection(
+        self,
+        participation: RoomParticipation,
+        *,
+        generation: int,
+        connected: bool,
+    ) -> None:
+        if self._participation_resolver is not None:
+            return
+        updated = replace(
+            participation,
+            connection_generation=generation,
+            connected=connected,
+        )
+        if self._by_session.get(participation.session_digest) == participation:
+            self._by_session[participation.session_digest] = updated
+        if self._by_participant.get(participation.participant_id) == participation:
+            self._by_participant[participation.participant_id] = updated
 
     def _unbind(self, participation: RoomParticipation) -> None:
         if self._by_session.get(participation.session_digest) == participation:

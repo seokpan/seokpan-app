@@ -36,7 +36,7 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "HDEL', KEYS[4], payload.target_id" in kick
     assert "advance_version()" in kick
     assert "remove_vote(" not in kick and "update_game_player(" not in kick
-    assert ROOM_MUTATION.version == 12
+    assert ROOM_MUTATION.version == 14
     participant_guard = ROOM_MUTATION.source.split(
         "local current_participant_id = payload.participant_id or payload.actor_id", 1
     )[1].split("if operation ~= 'disconnect'", 1)[0]
@@ -47,6 +47,18 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "operation ~= 'complete_game'" in participant_guard
     assert "operation == 'disconnect' or operation == 'expire_disconnect'" in participant_guard
     assert "rejection('CONNECTION_NOT_FOUND')" in participant_guard
+
+
+def test_start_game_uses_connected_ready_participants_only() -> None:
+    source = ROOM_MUTATION.source
+    start = source.split("if operation == 'start_game' then", 1)[1].split(
+        "if operation == 'complete_game' then", 1
+    )[0]
+
+    assert "PARTICIPANT_DISCONNECTED" in start
+    assert "and value.connected" in start
+    assert "connected_ready_count" in start
+    assert "MINIMUM_READY_NOT_MET" in start
 
 
 def test_complete_game_is_not_blocked_by_participant_guard() -> None:
@@ -254,11 +266,17 @@ def test_lua_schema_rejection_is_a_provider_error_not_user_input_error() -> None
         )
 
 
-def test_system_invalid_tombstone_source_keeps_retry_metadata_and_longer_ttl() -> None:
+def test_system_invalid_tombstone_stays_pending_without_ttl_until_ack() -> None:
     source = ROOM_MUTATION.source
     assert "invalidation_pending = termination == 'SYSTEM_INVALID'" in source
     assert "terminated_game_id" in source
     assert "closed_at_ms = current_ms" in source
-    assert "math.max(tombstone_ttl_ms, request_ttl_ms)" in source
-    assert ROOM_INVALIDATION_ACK.version == 1
+
+    pending = source.split(
+        "if termination == 'SYSTEM_INVALID' then", 1
+    )[1].split("else", 1)[0]
+    assert "redis.call('SET', KEYS[7], marker)" in pending
+    assert "'PX'" not in pending
+
+    assert ROOM_INVALIDATION_ACK.version == 2
     assert "value.invalidation_pending = false" in ROOM_INVALIDATION_ACK.source

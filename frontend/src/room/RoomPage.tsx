@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ApiFailure } from "../api/client";
 import { useSession } from "../session/context";
 import { useRoomConnection } from "./context";
 import type { RoomView } from "./model";
@@ -48,7 +49,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
       : null;
   const canChange =
     active && !auth.busy && view.phase === "ready" && room?.status === "WAITING" && me?.connected;
-  const readyPlayers = room?.participants.filter((p) => p.ready) ?? [];
+  const readyPlayers = room?.participants.filter((p) => p.ready && p.connected) ?? [];
   const canStart =
     canChange &&
     room?.owner_id === me?.participant_id &&
@@ -66,6 +67,31 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
   });
   const path = () => ({ room_id: room!.room_id });
   const mutate = auth.mutate;
+  const canLeave = active && !!room && !auth.busy && view.phase !== "ended";
+  const leaveRoom = async () => {
+    if (!room) return;
+    const send = (expected_state_version: number) =>
+      auth.api.request("/api/v1/rooms/{room_id}/participants/me", "delete", {
+        path: { room_id: room.room_id },
+        body: {
+          request_id: crypto.randomUUID(),
+          expected_state_version,
+        },
+      });
+    try {
+      await send(room.state_version);
+    } catch (error) {
+      if (
+        !(error instanceof ApiFailure) ||
+        error.status !== 409 ||
+        error.code !== "STALE_STATE" ||
+        error.currentVersion === null
+      ) {
+        throw error;
+      }
+      await send(error.currentVersion);
+    }
+  };
   return (
     <section className={`${styles.card} ${styles.roomCard}`} aria-labelledby="room-title">
       <div className={styles.sectionHeading}>
@@ -75,17 +101,8 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
         </div>
         <button
           className={styles.secondaryButton}
-          disabled={!room || view.phase !== "ready" || auth.busy}
-          onClick={() =>
-            void auth.run(
-              () =>
-                auth.api.request("/api/v1/rooms/{room_id}/participants/me", "delete", {
-                  path: path(),
-                  body: versioned(),
-                }),
-              "방에서 나왔습니다.",
-            )
-          }
+          disabled={!canLeave}
+          onClick={() => void auth.run(leaveRoom, "방에서 나왔습니다.")}
         >
           방 나가기
         </button>
@@ -95,20 +112,24 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
           {view.message || "최신 방 상태를 확인하고 있습니다. 잠시 기다려 주세요."}
         </div>
       )}
-      {(view.phase === "blocked" || view.phase === "disconnected" || view.phase === "ended") && (
-        <>
-          {view.snapshot && view.phase === "blocked" && (
-            <button className={styles.secondaryButton} onClick={() => void stream.refresh()}>
-              상태 다시 확인
-            </button>
-          )}{" "}
+      {(view.phase === "blocked" || view.phase === "disconnected") && (
+        <div className={styles.recoveryActions} aria-label="연결 복구">
+          {view.snapshot &&
+            view.phase === "blocked" &&
+            view.blockReason !== "connection-replaced" && (
+              <button className={styles.secondaryButton} onClick={() => void stream.refresh()}>
+                상태 다시 확인
+              </button>
+            )}
           <button className={styles.secondaryButton} onClick={stream.reconnect}>
-            이 탭에서 다시 연결
+            {view.blockReason === "connection-replaced" ? "이 탭에서 계속하기" : "다시 연결"}
           </button>
           <p className={styles.muted}>
-            다시 연결은 기존 연결을 교체합니다. 다른 탭에서 이용 중이면 그 탭을 계속 사용해 주세요.
+            {view.blockReason === "connection-replaced"
+              ? "다른 탭의 연결을 유지하려면 그 탭을 계속 이용하세요. 이 탭에서 계속하면 기존 연결이 교체됩니다."
+              : "마지막으로 확인한 화면을 유지하고 있습니다. 연결을 복구하거나 방 참여를 종료할 수 있습니다."}
           </p>
-        </>
+        </div>
       )}
       {room && (
         <>

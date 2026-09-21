@@ -81,6 +81,8 @@ def context():
         _start_intents={(R, G): intent},
         _start_phases={(R, G): phase},
         _start_record_expiries={},
+        _captured_closure_receipts={},
+        _normal_completion_pending={},
         _pending_game_invalidations={},
         _clock=SimpleNamespace(now_ms=8000),
         _snapshot=snapshot,

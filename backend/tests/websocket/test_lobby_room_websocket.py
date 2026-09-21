@@ -22,6 +22,7 @@ from seokpan.persistence.memory import (
     ManualClock,
 )
 from seokpan.room.application import (
+    ROOM_DISCONNECT_LEASE_MS,
     DisconnectExpiryResult,
     DisconnectExpiryRunner,
     DisconnectExpiryStatus,
@@ -685,10 +686,12 @@ def test_new_room_socket_replaces_old_generation_without_disconnecting_participa
                 assert current.json()["participants"][0]["connected"] is True
 
 
-def test_owner_socket_disconnect_promotes_member_and_clears_ready(
+def test_owner_socket_disconnect_preserves_owner_until_lease_expiry(
     headless: tuple[FastAPI, ApplicationServices],
 ) -> None:
-    application, _services = headless
+    application, services = headless
+    assert services.disconnect_expiry is not None
+    assert services.headless_clock is not None
     with (
         TestClient(application, base_url=ORIGIN) as owner,
         TestClient(application, base_url=ORIGIN) as member,
@@ -734,8 +737,18 @@ def test_owner_socket_disconnect_promotes_member_and_clears_ready(
 
         current = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
         assert current.status_code == 200
-        assert current.json()["owner_id"] == successor_id
-        assert all(not item["ready"] for item in current.json()["participants"])
+        assert current.json()["owner_id"] == room["owner_id"]
+        assert current.json()["participants"][0]["connected"] is False
+        assert all(item["ready"] for item in current.json()["participants"])
+
+        assert member.portal is not None
+        services.headless_clock.advance(ROOM_DISCONNECT_LEASE_MS)
+        expired = member.portal.call(services.disconnect_expiry.run_once)
+        assert len(expired) == 1
+        after_expiry = member.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert after_expiry.status_code == 200
+        assert after_expiry.json()["owner_id"] == successor_id
+        assert all(not item["ready"] for item in after_expiry.json()["participants"])
 
 
 def test_explicit_leave_closes_that_participants_room_socket(
@@ -846,7 +859,7 @@ def test_disconnect_expiry_runner_removes_participant_once(
 
         assert guest.portal is not None
         assert guest.portal.call(services.disconnect_expiry.run_once) == ()
-        services.headless_clock.advance(29_999)
+        services.headless_clock.advance(9_999)
         assert guest.portal.call(services.disconnect_expiry.run_once) == ()
         services.headless_clock.advance(1)
         first = guest.portal.call(services.disconnect_expiry.run_once)
@@ -1012,7 +1025,6 @@ def test_explicit_player_leave_removes_vote_and_updates_both_resources_once(
         ) as socket:
             first = socket.receive_json()
             room_before = first["payload"]["room"]["state_version"]
-            game_before = first["payload"]["game"]["state_version"]
             left = owner.request(
                 "DELETE",
                 f"/api/v1/rooms/{room['room_id']}/participants/me",
@@ -1037,11 +1049,12 @@ def test_explicit_player_leave_removes_vote_and_updates_both_resources_once(
         assert tuple(int(item["state_version"]) for item in events) == tuple(
             range(int(events[0]["state_version"]), int(events[0]["state_version"]) + 3)
         )
-        assert current_game.status_code == 200
+        assert current_game.status_code == 403
+        assert current_game.json()["code"] == "GAME_NOT_IN_CURRENT_ROOM"
         assert current_room.status_code == 200
-        assert current_game.json()["state_version"] == game_before + 1
-        assert current_room.json()["state_version"] == room_before + 1
-        assert current_game.json()["vote_aggregation"] == []
+        assert current_room.json()["status"] == "WAITING"
+        assert current_room.json()["last_game_id"] == game["game_id"]
+        assert current_room.json()["state_version"] > room_before
 
 
 def test_waiting_room_close_notifies_guest_to_return_to_lobby(
@@ -1130,6 +1143,51 @@ def test_event_setup_failure_does_not_change_disconnected_participant() -> None:
             if item["participant_id"] == participant["participant_id"]
         )
         assert disconnected["connected"] is False
+
+
+def test_room_setup_failure_after_generation_claim_starts_disconnect_lease(
+    headless: tuple[FastAPI, ApplicationServices],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, services = headless
+    assert services.realtime_api is not None
+
+    async def fail_snapshot(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("snapshot provider failed after connect")
+
+    with (
+        TestClient(application, base_url=ORIGIN) as owner,
+        TestClient(application, base_url=ORIGIN) as member,
+    ):
+        owner_csrf = _member(owner, "setupown")
+        room = _create_room(owner, owner_csrf)
+        member_csrf = _member(member, "setupmem")
+        joined = _join(
+            member,
+            member_csrf,
+            str(room["room_id"]),
+            int(room["state_version"]),
+        )
+        participant_id = str(joined["participants"][1]["participant_id"])
+
+        monkeypatch.setattr("seokpan.api.realtime.SnapshotReader.room", fail_snapshot)
+        with member.websocket_connect(
+            f"/ws/v1/rooms/{room['room_id']}",
+            headers=_ws_headers(member),
+        ) as socket:
+            with pytest.raises(WebSocketDisconnect) as failed:
+                socket.receive_json()
+        assert failed.value.code == 1011
+
+        current = owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot")
+        assert current.status_code == 200
+        participant = next(
+            item
+            for item in current.json()["participants"]
+            if item["participant_id"] == participant_id
+        )
+        assert participant["connected"] is False
+        assert current.json()["owner_id"] == joined["owner_id"]
 
 
 @pytest.mark.asyncio
@@ -1239,7 +1297,7 @@ async def test_participant_left_event_is_delayed_until_disconnect_lease_expires(
     assert disconnected.payload["room_state_version"] == 3
     assert await runner.run_once() == ()
 
-    clock.advance(30_000)
+    clock.advance(ROOM_DISCONNECT_LEASE_MS)
     assert len(await runner.run_once()) == 1
     left = await subscription.receive()
 
