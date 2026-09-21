@@ -27,7 +27,10 @@ OWNER = "00000000-0000-4000-8000-000000000005"
 @pytest.fixture
 def command() -> CaptureRoomGameStart:
     return CaptureRoomGameStart(
-        room_id=ROOM, request_id="start-1", actor_id=OWNER, game_id=GAME,
+        room_id=ROOM,
+        request_id="start-1",
+        actor_id=OWNER,
+        game_id=GAME,
         expected_state_version=6,
         players=(
             StartIntentPlayer(BLACK, "BLACK", member_id="18446744073709551615"),
@@ -39,8 +42,11 @@ def command() -> CaptureRoomGameStart:
 @pytest.fixture
 def waiting() -> RoomRuntimeSnapshot:
     return RoomRuntimeSnapshot(
-        room_id=ROOM, config=RoomConfig(name="room", minimum_ready=2),
-        status=RoomStatus.WAITING, owner_id=OWNER, state_version=6,
+        room_id=ROOM,
+        config=RoomConfig(name="room", minimum_ready=2),
+        status=RoomStatus.WAITING,
+        owner_id=OWNER,
+        state_version=6,
         participants=(
             RoomRuntimeParticipant(OWNER, ActorType.MEMBER, 1, True, Team.NONE, False),
             RoomRuntimeParticipant(BLACK, ActorType.MEMBER, 2, True, Team.BLACK, True),
@@ -75,7 +81,8 @@ def test_candidate_sorting_and_member_id_precision(command: CaptureRoomGameStart
 
 
 def test_capture_uses_provider_time_config_and_spectator_owner(
-    command: CaptureRoomGameStart, waiting: RoomRuntimeSnapshot,
+    command: CaptureRoomGameStart,
+    waiting: RoomRuntimeSnapshot,
 ) -> None:
     room = replace(waiting, config=RoomConfig(name="r", minimum_ready=2, vote_seconds=30))
     intent = accepted_start_intent(command, room, 123_456_789_012_345)
@@ -87,7 +94,8 @@ def test_capture_uses_provider_time_config_and_spectator_owner(
 
 @pytest.mark.asyncio
 async def test_memory_captures_once_and_replay_does_not_reset_time(
-    command: CaptureRoomGameStart, waiting: RoomRuntimeSnapshot,
+    command: CaptureRoomGameStart,
+    waiting: RoomRuntimeSnapshot,
 ) -> None:
     adapter, domain = memory(waiting)
     first = await adapter.start_game(command)
@@ -106,7 +114,9 @@ async def test_memory_captures_once_and_replay_does_not_reset_time(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["team", "identity", "missing", "extra", "version", "owner"])
 async def test_memory_rejection_writes_neither_room_nor_intent(
-    command: CaptureRoomGameStart, waiting: RoomRuntimeSnapshot, change: str,
+    command: CaptureRoomGameStart,
+    waiting: RoomRuntimeSnapshot,
+    change: str,
 ) -> None:
     participants = list(waiting.participants)
     if change == "team":
@@ -133,15 +143,22 @@ async def test_memory_rejection_writes_neither_room_nor_intent(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["identity", "request", "closed", "phase_missing"])
 async def test_accepted_intent_cannot_be_overwritten_or_replayed_without_evidence(
-    command: CaptureRoomGameStart, waiting: RoomRuntimeSnapshot, change: str,
+    command: CaptureRoomGameStart,
+    waiting: RoomRuntimeSnapshot,
+    change: str,
 ) -> None:
     adapter, _ = memory(waiting)
     await adapter.start_game(command)
     original = await adapter.get_start_intent(ROOM, GAME)
     retry = command
     if change == "identity":
-        retry = replace(command, players=(replace(command.players[0], member_id="9"),
-                                          command.players[1]))
+        retry = replace(
+            command,
+            players=(
+                replace(command.players[0], member_id="9"),
+                command.players[1],
+            ),
+        )
     elif change == "request":
         retry = replace(command, request_id="new-start")
     elif change == "closed":
@@ -171,7 +188,8 @@ async def test_redis_dispatch_uses_one_script_and_explicit_same_slot_keys(
 
 @pytest.mark.asyncio
 async def test_redis_reads_original_intent_independently_of_live_room(
-    command: CaptureRoomGameStart, waiting: RoomRuntimeSnapshot,
+    command: CaptureRoomGameStart,
+    waiting: RoomRuntimeSnapshot,
 ) -> None:
     intent = accepted_start_intent(command, waiting, 10_001)
     client = Mock()
