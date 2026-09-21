@@ -104,7 +104,9 @@ class GameApplicationService:
     ) -> GameApplicationSnapshot:
         if self._captured_startup is not None:
             outcome = await self._captured_startup.start_game(
-                session=session, room_id=room_id, request_id=request_id,
+                session=session,
+                room_id=room_id,
+                request_id=request_id,
                 expected_state_version=expected_state_version,
             )
             if outcome.initialized_now:
