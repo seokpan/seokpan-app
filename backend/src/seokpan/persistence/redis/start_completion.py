@@ -10,7 +10,10 @@ from collections.abc import AsyncIterator
 from redis.exceptions import RedisError
 
 from seokpan.persistence.redis.common import (
-    LuaScriptRunner, RedisClient, RedisKeyspace, RedisProviderError,
+    LuaScriptRunner,
+    RedisClient,
+    RedisKeyspace,
+    RedisProviderError,
 )
 from seokpan.persistence.redis.room_adapter import RedisRoomRuntimeAdapter
 from seokpan.persistence.redis.start_capture_script import start_intent_key, start_phase_key
@@ -22,7 +25,9 @@ from seokpan.persistence.redis.start_completion_script import (
 from seokpan.room.application.runtime import ROOM_REQUEST_DEDUPE_TTL_MS
 from seokpan.room.application.start_capture import validate_intent_lookup
 from seokpan.room.application.start_completion import (
-    CompleteCapturedGame, PendingCapturedCompletion, initialized_phase,
+    CompleteCapturedGame,
+    PendingCapturedCompletion,
+    initialized_phase,
 )
 from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import RoomRuleViolation
@@ -46,7 +51,8 @@ class RedisCapturedCompletionStore:
         async with self._scan_lock:
             if self._scan is None:
                 self._scan = self._client.scan_iter(
-                    match="stone:v1:room:*:normal-completion-pending:*", count=100,
+                    match="stone:v1:room:*:normal-completion-pending:*",
+                    count=100,
                 ).__aiter__()
             try:
                 # COUNT is a server hint, not a hard work bound. Keep iteration
@@ -60,7 +66,8 @@ class RedisCapturedCompletionStore:
                     text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
                     match = re.fullmatch(
                         r"stone:v1:room:\{([A-Za-z0-9_-]{1,64})\}:"
-                        r"normal-completion-pending:([A-Za-z0-9_-]{1,64})", text,
+                        r"normal-completion-pending:([A-Za-z0-9_-]{1,64})",
+                        text,
                     )
                     if match is None:
                         _LOGGER.warning("Invalid normal completion task key")
@@ -89,7 +96,9 @@ class RedisCapturedCompletionStore:
         return value
 
     async def read_start(
-        self, room_id: str, game_id: str,
+        self,
+        room_id: str,
+        game_id: str,
     ) -> tuple[RoomGameStartIntent, str] | None:
         validate_intent_lookup(room_id, game_id)
         raw = await self._scripts.execute(
@@ -118,16 +127,28 @@ class RedisCapturedCompletionStore:
         validate_intent_lookup(intent.room_id, intent.game_id)
         raw = await self._scripts.execute(
             NORMAL_START_COMPLETE,
-            keys=(RedisKeyspace.room_meta(intent.room_id), RedisKeyspace.room_ready(intent.room_id),
-                  RedisKeyspace.room_game(intent.room_id),
-                  start_intent_key(intent.room_id, intent.game_id),
-                  start_phase_key(intent.room_id, intent.game_id),
-                  RedisKeyspace.room_closed(intent.room_id),
-                  completion_pending_key(intent.room_id, intent.game_id)),
-            args=(intent.room_id, intent.game_id, intent.to_json(), command.phase_wire,
-                  intent.fingerprint, command.expected_room_version, command.final_turn_no,
-                  command.end_reason, command.ended_at_ms, ROOM_REQUEST_DEDUPE_TTL_MS,
-                  command.pending_wire or ""),
+            keys=(
+                RedisKeyspace.room_meta(intent.room_id),
+                RedisKeyspace.room_ready(intent.room_id),
+                RedisKeyspace.room_game(intent.room_id),
+                start_intent_key(intent.room_id, intent.game_id),
+                start_phase_key(intent.room_id, intent.game_id),
+                RedisKeyspace.room_closed(intent.room_id),
+                completion_pending_key(intent.room_id, intent.game_id),
+            ),
+            args=(
+                intent.room_id,
+                intent.game_id,
+                intent.to_json(),
+                command.phase_wire,
+                intent.fingerprint,
+                command.expected_room_version,
+                command.final_turn_no,
+                command.end_reason,
+                command.ended_at_ms,
+                ROOM_REQUEST_DEDUPE_TTL_MS,
+                command.pending_wire or "",
+            ),
         )
         result = RedisRoomRuntimeAdapter._result(raw)
         RedisRoomRuntimeAdapter._raise_rejection(result)
