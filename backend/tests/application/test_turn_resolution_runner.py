@@ -35,6 +35,7 @@ from seokpan.room.application import (
     CompleteRoomGame,
     CreateRoomRuntime,
     JoinRoomRuntime,
+    LeaveRoomRuntime,
     PendingGameInvalidation,
     RealtimeEventPort,
     RoomMutationResult,
@@ -212,6 +213,191 @@ async def setup_runner(
         events=events,
     )
     return runner, clock, room_store, vote_store, game_store, audit
+
+
+@pytest.mark.asyncio
+async def test_departure_finalization_ignores_room_without_confirmed_departure() -> None:
+    runner, _clock, rooms, votes, games, _ = await setup_runner()
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is False
+    assert games.results == {}
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.ACTIVE
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.PLAYING
+
+
+@pytest.mark.asyncio
+async def test_departure_finalization_waits_until_an_entire_team_has_left() -> None:
+    runner, _clock, rooms, votes, games, _ = await setup_runner()
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-one-black",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is False
+    assert games.results == {}
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.ACTIVE
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.PLAYING
+    assert room.owner_id == BLACK_TWO_ID
+
+
+@pytest.mark.asyncio
+async def test_departure_finalization_persists_forfeit_then_finishes_runtime_and_room() -> None:
+    events = InMemoryRealtimeEventAdapter()
+    runner, _clock, rooms, votes, games, _ = await setup_runner(events=events)
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-owner",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-two",
+            BLACK_TWO_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is True
+
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.FINISHED
+    assert stored.end_reason is EndReason.FORFEIT
+    assert stored.winner is Stone.WHITE
+
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.FINISHED
+    assert runtime.end_reason is EndReason.FORFEIT
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.WAITING
+    assert room.game_id is None
+    assert room.last_game_id == GAME_ID
+    assert room.owner_id == WHITE_ID
+
+
+@pytest.mark.asyncio
+async def test_departure_retry_reuses_persisted_forfeit_after_room_failure() -> None:
+    rooms = FailOnceRoomCompletionAdapter(ManualClock())
+    games = CountingGamePersistenceAdapter()
+    runner, _clock, _, votes, _, _ = await setup_runner(
+        rooms=rooms,
+        games=games,
+    )
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-owner",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-two",
+            BLACK_TWO_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="simulated Room completion failure"):
+        await runner.finalize_departures(
+            room_id=ROOM_ID,
+            game_id=GAME_ID,
+        )
+
+    assert games.finalize_calls == 1
+
+    stored_before_retry = await games.load_result(GAME_ID)
+    assert stored_before_retry is not None
+    assert stored_before_retry.end_reason is EndReason.FORFEIT
+    assert stored_before_retry.winner is Stone.WHITE
+
+    runtime_before_retry = await votes.get(ROOM_ID)
+    assert runtime_before_retry is not None
+    assert runtime_before_retry.game_status is GameStatus.FINISHED
+    assert runtime_before_retry.end_reason is EndReason.FORFEIT
+
+    room_before_retry = await rooms.get(ROOM_ID)
+    assert room_before_retry is not None
+    assert room_before_retry.status is RoomStatus.PLAYING
+    assert room_before_retry.game_id == GAME_ID
+    assert rooms.complete_calls == 1
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is True
+    assert games.finalize_calls == 1
+    assert await games.load_result(GAME_ID) == stored_before_retry
+
+    runtime_after_retry = await votes.get(ROOM_ID)
+    assert runtime_after_retry is not None
+    assert runtime_after_retry.game_status is GameStatus.FINISHED
+    assert runtime_after_retry.end_reason is EndReason.FORFEIT
+
+    room_after_retry = await rooms.get(ROOM_ID)
+    assert room_after_retry is not None
+    assert room_after_retry.status is RoomStatus.WAITING
+    assert room_after_retry.game_id is None
+    assert room_after_retry.last_game_id == GAME_ID
+    assert rooms.complete_calls == 2
 
 
 @pytest.mark.asyncio
