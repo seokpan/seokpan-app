@@ -55,8 +55,16 @@ def production_providers() -> Mock:
     # Composition must not perform DB/Redis I/O; provider calls fail the test.
     providers = Mock(spec=ProductionProviders)
     for name in (
-        "rooms", "votes", "games", "identities", "sessions", "statistics",
-        "presence", "chat", "realtime", "room_passwords",
+        "rooms",
+        "votes",
+        "games",
+        "identities",
+        "sessions",
+        "statistics",
+        "presence",
+        "chat",
+        "realtime",
+        "room_passwords",
     ):
         setattr(providers, name, Mock(name=name))
     providers.redis_client = Mock()
@@ -75,9 +83,13 @@ def services_for(kind: str, mode: str):
     if kind == "memory":
         return build_headless_services(Settings(environment="test", game_lifecycle_mode=mode)), None
     providers = production_providers()
-    return build_production_services(
-        Settings(environment="production", game_lifecycle_mode=mode), providers,
-    ), providers
+    return (
+        build_production_services(
+            Settings(environment="production", game_lifecycle_mode=mode),
+            providers,
+        ),
+        providers,
+    )
 
 
 @pytest.mark.parametrize("kind", ["memory", "redis"])
@@ -150,12 +162,18 @@ async def test_service_calls_selected_startup_not_the_legacy_room_mutation(kind:
     services, _ = services_for(kind, "captured")
     game = services.game_api.games
     expected = object()
-    game._captured_startup.start_game = AsyncMock(return_value=SimpleNamespace(
-        snapshot=expected, initialized_now=False,
-    ))
+    game._captured_startup.start_game = AsyncMock(
+        return_value=SimpleNamespace(
+            snapshot=expected,
+            initialized_now=False,
+        )
+    )
     game._rooms.start_game = AsyncMock(side_effect=AssertionError("legacy path called"))
     result = await game.start_game(
-        session=object(), room_id="room", request_id="request", expected_state_version=1,
+        session=object(),
+        room_id="room",
+        request_id="request",
+        expected_state_version=1,
     )
     assert result is expected
     game._captured_startup.start_game.assert_awaited_once()
