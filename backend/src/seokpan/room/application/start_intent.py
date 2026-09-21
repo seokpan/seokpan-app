@@ -103,15 +103,14 @@ class StartIntentPlayer:
         _uuid4(self.participant_id)
         if not isinstance(self.team, str) or self.team not in {"BLACK", "WHITE"}:
             raise StartIntentViolation()
-        if self.member_id is not None:
-            if (
-                not isinstance(self.member_id, str)
-                or _MEMBER_ID.fullmatch(self.member_id) is None
-                or int(self.member_id) > _MAX_MEMBER_ID
-                or self.guest_label is not None
-            ):
-                raise StartIntentViolation()
-        elif (
+        if self.member_id is not None and (
+            not isinstance(self.member_id, str)
+            or _MEMBER_ID.fullmatch(self.member_id) is None
+            or int(self.member_id) > _MAX_MEMBER_ID
+            or self.guest_label is not None
+        ):
+            raise StartIntentViolation()
+        if self.member_id is None and (
             not isinstance(self.guest_label, str)
             or _GUEST_LABEL.fullmatch(self.guest_label) is None
         ):
