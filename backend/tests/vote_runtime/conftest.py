@@ -45,7 +45,11 @@ class EmulatedVoteRedisClient:
 
     def __init__(self, clock: ManualClock, *, scripts_loaded: bool = True) -> None:
         self.store = InMemoryVoteRuntimeAdapter(clock)
-        self.loaded = {VOTE_DISCARD.sha, VOTE_MUTATION.sha, VOTE_READ.sha} if scripts_loaded else set()
+        self.loaded = (
+            {VOTE_DISCARD.sha, VOTE_MUTATION.sha, VOTE_READ.sha}
+            if scripts_loaded
+            else set()
+        )
         self.evalsha_calls: list[tuple[str, int, tuple[object, ...]]] = []
         self.script_load_calls: list[str] = []
 
