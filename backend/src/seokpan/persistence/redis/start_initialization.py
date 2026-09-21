@@ -3,7 +3,10 @@
 from redis.exceptions import RedisError
 
 from seokpan.persistence.redis.common import (
-    LuaScriptRunner, RedisClient, RedisKeyspace, RedisProviderError,
+    LuaScriptRunner,
+    RedisClient,
+    RedisKeyspace,
+    RedisProviderError,
 )
 from seokpan.persistence.redis.start_capture_script import start_intent_key, start_phase_key
 from seokpan.persistence.redis.start_initialization_script import VOTE_START_INITIALIZE
@@ -62,8 +65,12 @@ class RedisCapturedVoteInitializer:
         raw = await self._scripts.execute(
             VOTE_START_INITIALIZE,
             keys=keys,
-            args=(intent.to_json(), command.actor_id, command.expected_room_version,
-                  intent.fingerprint),
+            args=(
+                intent.to_json(),
+                command.actor_id,
+                command.expected_room_version,
+                intent.fingerprint,
+            ),
         )
         result = self._votes._result(raw)
         self._votes._raise_rejection(result)
