@@ -29,11 +29,13 @@ _ADMISSIONS = frozenset({"create", "join", "change_identity", "connect"})
 ADMISSION_LEASE_MS = 10_000
 
 ACQUIRE_ADMISSION = VersionedLuaScript(
-    "room-session-admission-acquire", 1,
+    "room-session-admission-acquire",
+    1,
     "return redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) and 1 or 0",
 )
 RELEASE_ADMISSION = VersionedLuaScript(
-    "room-session-admission-release", 1,
+    "room-session-admission-release",
+    1,
     """if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
@@ -97,7 +99,9 @@ if (expected_actor ~= 'MEMBER' and expected_actor ~= 'GUEST')
 end
 """
 ADMITTED_ROOM_MUTATION = VersionedLuaScript(
-    "room-session-admitted-mutation", 1, _ADMISSION_FENCE + ROOM_MUTATION.source,
+    "room-session-admitted-mutation",
+    1,
+    _ADMISSION_FENCE + ROOM_MUTATION.source,
 )
 
 
@@ -126,12 +130,21 @@ class SessionAdmissionRedisRoomAdapter(RedisRoomRuntimeAdapter):
         await self._scripts.execute(RELEASE_ADMISSION, keys=(key,), args=(token,))
 
     async def _mutate(
-        self, room_id: str, request_id: str, operation: str, payload: Mapping[str, object],
-        *, active_vote_turn: int | None = None,
+        self,
+        room_id: str,
+        request_id: str,
+        operation: str,
+        payload: Mapping[str, object],
+        *,
+        active_vote_turn: int | None = None,
     ) -> RoomMutationResult:
         if operation not in _ADMISSIONS:
             return await super()._mutate(
-                room_id, request_id, operation, payload, active_vote_turn=active_vote_turn,
+                room_id,
+                request_id,
+                operation,
+                payload,
+                active_vote_turn=active_vote_turn,
             )
         digest = payload.get("session_digest")
         participant_id = payload.get("owner_id" if operation == "create" else "participant_id")
@@ -142,25 +155,35 @@ class SessionAdmissionRedisRoomAdapter(RedisRoomRuntimeAdapter):
         try:
             existing = await self._find_binding(session_digest=digest)
             if existing is not None and (
-                existing.room_id, existing.participant_id,
+                existing.room_id,
+                existing.participant_id,
             ) != (room_id, participant_id):
                 raise RoomRuleViolation("SESSION_ALREADY_IN_ROOM")
             raw = await self._scripts.execute(
                 ADMITTED_ROOM_MUTATION,
-                keys=(*self._mutation_keys(room_id, active_vote_turn),
-                      key, RedisKeyspace.session(digest)),
+                keys=(
+                    *self._mutation_keys(room_id, active_vote_turn),
+                    key,
+                    RedisKeyspace.session(digest),
+                ),
                 args=(
-                    room_id, operation, request_id, ROOM_REQUEST_DEDUPE_TTL_MS,
-                    ROOM_DISCONNECT_LEASE_MS, ROOM_CLOSED_TOMBSTONE_TTL_MS,
+                    room_id,
+                    operation,
+                    request_id,
+                    ROOM_REQUEST_DEDUPE_TTL_MS,
+                    ROOM_DISCONNECT_LEASE_MS,
+                    ROOM_CLOSED_TOMBSTONE_TTL_MS,
                     VersionedJsonCodec.encode(
-                        {**payload, "schema_version": ROOM_RUNTIME_SCHEMA_VERSION},
+                        {**payload, "schema_version": ROOM_RUNTIME_SCHEMA_VERSION}
                     ),
                     token,
                 ),
             )
             decoded = self._result(raw)
             if decoded.get("ok") is False and decoded.get("error") in {
-                "ROOM_ADMISSION_EXPIRED", "ROOM_ADMISSION_SESSION_INVALID", "SESSION_NOT_FOUND",
+                "ROOM_ADMISSION_EXPIRED",
+                "ROOM_ADMISSION_SESSION_INVALID",
+                "SESSION_NOT_FOUND",
             }:
                 raise SessionRuleViolation(str(decoded["error"]))
             self._raise_rejection(decoded)
