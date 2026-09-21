@@ -457,7 +457,7 @@ describe("authentication and lobby screens", () => {
     expect(fetcher.mock.calls.every((call) => call[0] === "/api/v1/session/csrf")).toBe(true);
   });
 
-  it("offers manual refresh after malformed list data instead of showing fake empty success", async () => {
+  it("offers manual refresh after malformed list data", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(json(member))
