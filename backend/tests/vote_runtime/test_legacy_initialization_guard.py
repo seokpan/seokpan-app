@@ -23,9 +23,15 @@ ROOM, GAME = "room-1", "game-1"
 
 def command(previous: bool = False) -> InitializeVoteRuntime:
     return InitializeVoteRuntime(
-        ROOM, "same-request", GAME,
-        (Voter("black", Stone.BLACK), Voter("white", Stone.WHITE)),
-        1000, 1,
+        ROOM,
+        "same-request",
+        GAME,
+        (
+            Voter("black", Stone.BLACK),
+            Voter("white", Stone.WHITE),
+        ),
+        1000,
+        1,
         previous_game_id="previous-game" if previous else None,
         previous_turn_no=4 if previous else None,
     )
@@ -61,8 +67,10 @@ async def test_guard_observes_capture_during_async_room_lookup():
     async def lookup(room_id):
         phases[(room_id, GAME)] = "PENDING"
         return SimpleNamespace(
-            status=RoomStatus.PLAYING, game_id=GAME,
-            last_game_id=None, last_game_turn_no=None,
+            status=RoomStatus.PLAYING,
+            game_id=GAME,
+            last_game_id=None,
+            last_game_turn_no=None,
         )
 
     adapter._room_lookup = lookup
@@ -121,7 +129,9 @@ def test_captured_initializer_binds_its_actual_room_stores():
     votes = InMemoryVoteRuntimeAdapter(clock)
     rooms = SimpleNamespace(_start_intents={}, _start_phases={})
     InMemoryCapturedVoteInitializer(
-        rooms=cast(InMemoryRoomRuntimeAdapter, rooms), votes=votes, clock=clock,
+        rooms=cast(InMemoryRoomRuntimeAdapter, rooms),
+        votes=votes,
+        clock=clock,
     )
     assert votes._captured_start_records[0] is rooms._start_intents
     assert votes._captured_start_records[1] is rooms._start_phases
