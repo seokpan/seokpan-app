@@ -25,19 +25,35 @@ R, G, B, W = [f"00000000-0000-4000-8000-{i:012d}" for i in range(1, 5)]
 @pytest.fixture
 def context():
     intent = RoomGameStartIntent(
-        room_id=R, game_id=G, owner_id=B, original_request_id="start-1",
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(B, "BLACK", member_id="1"),
-                 StartIntentPlayer(W, "WHITE", guest_label="Guest-0001")),
+        room_id=R,
+        game_id=G,
+        owner_id=B,
+        original_request_id="start-1",
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(B, "BLACK", member_id="1"),
+            StartIntentPlayer(W, "WHITE", guest_label="Guest-0001"),
+        ),
     )
-    phase = json.dumps({
-        "schema_version": 1, "phase": "INITIALIZED", "game_id": G,
-        "intent_fingerprint": intent.fingerprint, "initialized_at_ms": 2000,
-        "first_deadline_ms": 17000,
-    })
+    phase = json.dumps(
+        {
+            "schema_version": 1,
+            "phase": "INITIALIZED",
+            "game_id": G,
+            "intent_fingerprint": intent.fingerprint,
+            "initialized_at_ms": 2000,
+            "first_deadline_ms": 17000,
+        }
+    )
     view = SimpleNamespace(
-        room_id=R, game_id=G, status=RoomStatus.PLAYING, state_version=7,
-        last_game_id=None, last_game_turn_no=None,
+        room_id=R,
+        game_id=G,
+        status=RoomStatus.PLAYING,
+        state_version=7,
+        last_game_id=None,
+        last_game_turn_no=None,
     )
     ready = {B, W}
 
@@ -60,32 +76,59 @@ def context():
             raise RoomRuleViolation("STATE_VERSION_CONFLICT")
 
     rooms = SimpleNamespace(
-        _purge_expired=lambda: None, _rooms={R: state}, _start_intents={(R, G): intent},
-        _start_phases={(R, G): phase}, _start_record_expiries={},
-        _pending_game_invalidations={}, _clock=SimpleNamespace(now_ms=8000),
-        _snapshot=snapshot, _require_expected_version=expected,
+        _purge_expired=lambda: None,
+        _rooms={R: state},
+        _start_intents={(R, G): intent},
+        _start_phases={(R, G): phase},
+        _start_record_expiries={},
+        _pending_game_invalidations={},
+        _clock=SimpleNamespace(now_ms=8000),
+        _snapshot=snapshot,
+        _require_expected_version=expected,
         get=AsyncMock(side_effect=lambda _: snapshot(R, state)),
     )
-    runtime = SimpleNamespace(game=SimpleNamespace(
-        game_id=G, turn_no=2,
-        game=SimpleNamespace(status=GameStatus.FINISHED, end_reason=EndReason.JOINT_LOSS),
-    ))
+    runtime = SimpleNamespace(
+        game=SimpleNamespace(
+            game_id=G,
+            turn_no=2,
+            game=SimpleNamespace(
+                status=GameStatus.FINISHED,
+                end_reason=EndReason.JOINT_LOSS,
+            ),
+        )
+    )
     votes = SimpleNamespace(_states={R: runtime})
     store = InMemoryCapturedCompletionStore(rooms=rooms, votes=votes)
     games = SimpleNamespace(
-        load_game=AsyncMock(return_value=SimpleNamespace(
-            start=CapturedGameStartup.persistence_command(intent), moves=(),
-        )),
-        load_result=AsyncMock(return_value=SimpleNamespace(
-            game_id=G, room_id=R, ended_at=datetime.fromtimestamp(5, UTC),
-            end_reason=EndReason.JOINT_LOSS,
-        )),
+        load_game=AsyncMock(
+            return_value=SimpleNamespace(
+                start=CapturedGameStartup.persistence_command(intent),
+                moves=(),
+            )
+        ),
+        load_result=AsyncMock(
+            return_value=SimpleNamespace(
+                game_id=G,
+                room_id=R,
+                ended_at=datetime.fromtimestamp(5, UTC),
+                end_reason=EndReason.JOINT_LOSS,
+            )
+        ),
         game_is_finalized=AsyncMock(return_value=True),
     )
     service = CapturedGameCompletion(records=store, rooms=rooms, games=games)
     return SimpleNamespace(
-        intent=intent, phase=phase, view=view, state=state, ready=ready, rooms=rooms,
-        votes=votes, runtime=runtime, store=store, games=games, service=service,
+        intent=intent,
+        phase=phase,
+        view=view,
+        state=state,
+        ready=ready,
+        rooms=rooms,
+        votes=votes,
+        runtime=runtime,
+        store=store,
+        games=games,
+        service=service,
     )
 
 
@@ -143,7 +186,8 @@ async def test_already_waiting_without_receipt_is_finalized_without_ready_reset(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "field", ["history", "result", "not_final", "identity", "time", "result_room"],
+    "field",
+    ["history", "result", "not_final", "identity", "time", "result_room"],
 )
 async def test_bad_durable_evidence_has_no_room_or_retention_write(context, field):
     c = context
@@ -155,8 +199,11 @@ async def test_bad_durable_evidence_has_no_room_or_retention_write(context, fiel
         c.games.game_is_finalized.return_value = False
     elif field == "identity":
         c.games.load_game.return_value.start = SimpleNamespace(
-            game_id=G, room_id=R, voting_time_seconds=15,
-            started_at=c.intent.started_at, participants=(),
+            game_id=G,
+            room_id=R,
+            voting_time_seconds=15,
+            started_at=c.intent.started_at,
+            participants=(),
         )
     elif field == "time":
         c.games.load_result.return_value.ended_at = datetime(2026, 1, 1)
@@ -218,7 +265,8 @@ async def test_prepared_receipt_recovers_before_room_release(context):
     c = context
     cmd = CompleteCapturedGame(c.intent, c.phase, 7, 2, "JOINT_LOSS", 5000)
     wire, expiry, _ = cmd.receipt(
-        initialized_phase(c.intent, c.phase), now_ms=8000,
+        initialized_phase(c.intent, c.phase),
+        now_ms=8000,
         retention_ms=ROOM_REQUEST_DEDUPE_TTL_MS,
     )
     c.rooms._start_phases[R, G] = wire
@@ -268,9 +316,17 @@ async def test_redis_adapter_declares_seven_same_room_keys(context):
     from seokpan.persistence.redis.start_completion import RedisCapturedCompletionStore
 
     store = RedisCapturedCompletionStore(object())
-    store._scripts = SimpleNamespace(execute=AsyncMock(return_value=json.dumps({
-        "ok": True, "error": None, "changed": True,
-    })))
+    store._scripts = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "ok": True,
+                    "error": None,
+                    "changed": True,
+                }
+            )
+        )
+    )
     c = context
     assert await store.complete(CompleteCapturedGame(c.intent, c.phase, 7, 2, "JOINT_LOSS", 5000))
     call = store._scripts.execute.await_args
@@ -288,11 +344,18 @@ async def test_redis_atomic_reader_does_not_hide_partial_proof(context, missing)
 
     store = RedisCapturedCompletionStore(object())
     c = context
-    store._scripts = SimpleNamespace(execute=AsyncMock(return_value=json.dumps({
-        "ok": True, "error": None,
-        "intent": None if missing in {"both", "intent"} else c.intent.to_json(),
-        "phase": None if missing in {"both", "phase"} else c.phase,
-    })))
+    store._scripts = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "ok": True,
+                    "error": None,
+                    "intent": None if missing in {"both", "intent"} else c.intent.to_json(),
+                    "phase": None if missing in {"both", "phase"} else c.phase,
+                }
+            )
+        )
+    )
     if missing == "both":
         assert await store.read_start(R, G) is None
     else:
@@ -314,9 +377,16 @@ def test_corrupt_existing_receipt_is_not_replaced(context, receipt):
 async def test_runner_keeps_legacy_waiting_early_return_when_no_captured_proof():
     runner = object.__new__(TurnResolutionRunner)
     runner._captured_completion = SimpleNamespace(complete=AsyncMock(return_value=None))
-    runner._rooms = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
-        status=RoomStatus.WAITING, game_id=None, last_game_id=G, last_game_turn_no=2,
-    )))
+    runner._rooms = SimpleNamespace(
+        get=AsyncMock(
+            return_value=SimpleNamespace(
+                status=RoomStatus.WAITING,
+                game_id=None,
+                last_game_id=G,
+                last_game_turn_no=2,
+            )
+        )
+    )
     runner._room_completed_events = AsyncMock()
     await runner._complete_room(DueTurn(R, G, 2))
     runner._captured_completion.complete.assert_awaited_once()
@@ -426,7 +496,9 @@ async def test_reconcile_cancellation_keeps_shared_task(context):
 
     await complete(c)
     c.store._pending[R, G] = pending_completion_wire(
-        c.intent, c.rooms._start_phases[R, G], released=True,
+        c.intent,
+        c.rooms._start_phases[R, G],
+        released=True,
     )
     c.games.load_result.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
@@ -455,20 +527,33 @@ async def test_acked_f15_owns_retention_and_obsolete_normal_task_is_removed(cont
 
     await complete(c)
     c.store._pending[R, G] = pending_completion_wire(
-        c.intent, c.rooms._start_phases[R, G], released=False,
+        c.intent,
+        c.rooms._start_phases[R, G],
+        released=False,
     )
     c.rooms._rooms.clear()
     c.votes._states.clear()
     c.rooms.get.side_effect = None
     c.rooms.get.return_value = None
-    c.rooms._captured_closure_receipts = {(R, G): json.dumps({
-        "room_id": R, "terminated_game_id": G, "closed_at_ms": 9000,
-        "invalidation_pending": False,
-    })}
-    terminal = json.dumps({
-        "schema_version": 1, "phase": "FINALIZED", "game_id": G,
-        "intent_fingerprint": c.intent.fingerprint, "closed_at_ms": 9000,
-    })
+    c.rooms._captured_closure_receipts = {
+        (R, G): json.dumps(
+            {
+                "room_id": R,
+                "terminated_game_id": G,
+                "closed_at_ms": 9000,
+                "invalidation_pending": False,
+            }
+        )
+    }
+    terminal = json.dumps(
+        {
+            "schema_version": 1,
+            "phase": "FINALIZED",
+            "game_id": G,
+            "intent_fingerprint": c.intent.fingerprint,
+            "closed_at_ms": 9000,
+        }
+    )
     c.rooms._start_phases[R, G] = terminal
     expiry = c.rooms._start_record_expiries.copy()
     assert await c.service.reconcile() == 1
@@ -540,8 +625,17 @@ async def test_redis_reader_uses_one_script_positional_argument(context):
     from seokpan.persistence.redis.start_completion import RedisCapturedCompletionStore
 
     store = RedisCapturedCompletionStore(object())
-    store._scripts = SimpleNamespace(execute=AsyncMock(return_value=json.dumps({
-        "ok": True, "error": None, "intent": context.intent.to_json(), "phase": context.phase,
-    })))
+    store._scripts = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "ok": True,
+                    "error": None,
+                    "intent": context.intent.to_json(),
+                    "phase": context.phase,
+                }
+            )
+        )
+    )
     await store.read_start(R, G)
     assert len(store._scripts.execute.call_args.args) == 1
