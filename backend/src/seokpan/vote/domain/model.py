@@ -324,7 +324,11 @@ class VoteTurnGame:
         """Apply a provider-confirmed non-board result and stop accepting votes."""
         if self.game.status is not GameStatus.ACTIVE:
             conclusion = self.game.conclusion
-            if conclusion is not None and conclusion.end_reason is end_reason and conclusion.winner is winner:
+            if (
+                conclusion is not None
+                and conclusion.end_reason is end_reason
+                and conclusion.winner is winner
+            ):
                 return
             raise VoteRuleViolation("GAME_ALREADY_FINISHED")
         try:
