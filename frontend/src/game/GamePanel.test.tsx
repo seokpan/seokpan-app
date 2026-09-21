@@ -80,6 +80,18 @@ describe("game screen flow", () => {
     const blackTeam = screen.getByRole("heading", { name: "● 흑팀" });
     const readyPanel = screen.getByRole("region", { name: "게임 시작 준비" });
     const board = screen.getByRole("grid", { name: "15×15 오목판" });
+    expect(screen.getByRole("button", { name: "흑팀 선택" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Ready 취소" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const conditions = within(screen.getByRole("list", { name: "게임 시작 조건" }));
+    expect(conditions.getByText("최소 Ready").closest("li")).toHaveAttribute("data-met", "true");
+    expect(conditions.getByText("흑팀 Ready").closest("li")).toHaveAttribute("data-met", "true");
+    expect(conditions.getByText("백팀 Ready").closest("li")).toHaveAttribute("data-met", "true");
     expect(
       blackTeam.compareDocumentPosition(readyPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

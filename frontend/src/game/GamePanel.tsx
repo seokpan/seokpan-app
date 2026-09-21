@@ -215,7 +215,9 @@ export function GamePanel({
                   )}
                   {isPlayer ? (
                     <>
-                      <p>내 투표: {game.my_vote ?? "없음"}</p>
+                      <p role="status" aria-live="polite">
+                        내 투표: {game.my_vote ?? "없음"}
+                      </p>
                       <button
                         className={screens.secondaryButton}
                         disabled={!canVote || game.my_vote === null}
@@ -235,6 +237,11 @@ export function GamePanel({
                     <p className={screens.muted}>
                       투표 집계와 확정된 착수를 확인할 수 있습니다. 관전자는 표를 제출하거나 취소할
                       수 없습니다.
+                    </p>
+                  )}
+                  {auth.busy && (
+                    <p role="status" className={screens.commandStatus}>
+                      요청을 처리하고 있습니다.
                     </p>
                   )}
                   <button

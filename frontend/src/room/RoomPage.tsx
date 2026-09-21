@@ -50,12 +50,15 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
   const canChange =
     active && !auth.busy && view.phase === "ready" && room?.status === "WAITING" && me?.connected;
   const readyPlayers = room?.participants.filter((p) => p.ready && p.connected) ?? [];
+  const enoughReady = !!room && readyPlayers.length >= room.minimum_ready;
+  const blackReady = readyPlayers.some((p) => p.team === "BLACK");
+  const whiteReady = readyPlayers.some((p) => p.team === "WHITE");
   const canStart =
     canChange &&
     room?.owner_id === me?.participant_id &&
-    readyPlayers.length >= room.minimum_ready &&
-    readyPlayers.some((p) => p.team === "BLACK") &&
-    readyPlayers.some((p) => p.team === "WHITE");
+    enoughReady &&
+    blackReady &&
+    whiteReady;
   const showResult =
     room?.status === "WAITING" &&
     room.last_game_id &&
@@ -211,6 +214,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                           {team !== "NONE" && (
                             <button
                               className={styles.secondaryButton}
+                              aria-pressed={me?.team === team}
                               disabled={!canChange || me?.team === team}
                               onClick={() =>
                                 void mutate(() =>
@@ -239,12 +243,23 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                       <p role="status">
                         Ready {readyPlayers.length}명 / 최소 {room.minimum_ready}명
                       </p>
-                      <p className={styles.muted}>
-                        흑팀 {readyPlayers.filter((p) => p.team === "BLACK").length}명 · 백팀{" "}
-                        {readyPlayers.filter((p) => p.team === "WHITE").length}명 준비
-                      </p>
+                      <ul className={styles.startChecklist} aria-label="게임 시작 조건">
+                        <li data-met={enoughReady}>
+                          <span aria-hidden="true">{enoughReady ? "✓" : "○"}</span>
+                          최소 Ready
+                        </li>
+                        <li data-met={blackReady}>
+                          <span aria-hidden="true">{blackReady ? "✓" : "○"}</span>
+                          흑팀 Ready
+                        </li>
+                        <li data-met={whiteReady}>
+                          <span aria-hidden="true">{whiteReady ? "✓" : "○"}</span>
+                          백팀 Ready
+                        </li>
+                      </ul>
                       <button
                         className={styles.primaryButton}
+                        aria-pressed={!!me?.ready}
                         disabled={!canChange || me?.team === "NONE"}
                         onClick={() =>
                           void mutate(() =>
@@ -261,6 +276,11 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                       >
                         {me?.ready ? "Ready 취소" : "Ready"}
                       </button>
+                      {auth.busy && (
+                        <p role="status" className={styles.commandStatus}>
+                          요청을 처리하고 있습니다.
+                        </p>
+                      )}
                       {me?.team === "NONE" && (
                         <p className={styles.muted}>팀을 선택한 뒤 Ready를 눌러 주세요.</p>
                       )}
