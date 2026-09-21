@@ -28,6 +28,21 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
     initialLastGame.current = { roomId: room.room_id, gameId: room.last_game_id ?? null };
   const identity = auth.view.phase === "ready" ? auth.view.identity : null;
   const me = room?.participants.find((p) => p.participant_id === identity?.participant_id);
+  const gameMe = view.snapshot?.game?.participants.find(
+    (p) => p.participant_id === me?.participant_id,
+  );
+  const leaveImpact =
+    room?.status === "PLAYING" && gameMe?.role === "PLAYER"
+      ? `게임 중 나가면 현재 판의 이탈 처리로 팀 결과에 영향을 줄 수 있습니다.${
+          room.owner_id === me?.participant_id
+            ? " 방장이라면 접속 중인 Member에게 권한이 넘어가며, 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
+            : ""
+        }`
+      : room?.owner_id === me?.participant_id
+        ? room.status === "PLAYING"
+          ? "방장이 나가면 접속 중인 Member에게 권한이 넘어갑니다. 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
+          : "방장이 나가면 접속 중인 Member에게 권한이 넘어가고 Ready가 모두 해제됩니다. 승계할 Member가 없으면 방이 종료됩니다."
+        : "";
   const [kick, setKick] = useState<{
     id: string;
     version: number;
@@ -105,11 +120,17 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
         <button
           className={styles.secondaryButton}
           disabled={!canLeave}
+          aria-describedby={leaveImpact ? "room-leave-impact" : undefined}
           onClick={() => void auth.run(leaveRoom, "방에서 나왔습니다.")}
         >
           방 나가기
         </button>
       </div>
+      {leaveImpact && (
+        <p id="room-leave-impact" className={styles.muted}>
+          {leaveImpact}
+        </p>
+      )}
       {view.phase !== "ready" && view.phase !== "syncing" && (
         <div role="status" className={styles.notice}>
           {view.message || "최신 방 상태를 확인하고 있습니다. 잠시 기다려 주세요."}
@@ -287,6 +308,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                       <label htmlFor="room-vote-seconds">투표 제한 시간</label>
                       <select
                         id="room-vote-seconds"
+                        aria-describedby="room-vote-seconds-impact"
                         value={room.vote_seconds}
                         disabled={!canChange || me?.participant_id !== room.owner_id}
                         onChange={(event) => {
@@ -305,6 +327,9 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                           </option>
                         ))}
                       </select>
+                      <small id="room-vote-seconds-impact">
+                        투표 시간을 바꾸면 모든 참가자의 Ready가 해제됩니다.
+                      </small>
                       {me?.participant_id === room.owner_id ? (
                         <button
                           className={styles.primaryButton}

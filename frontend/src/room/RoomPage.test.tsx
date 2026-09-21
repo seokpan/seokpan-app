@@ -375,6 +375,16 @@ describe("room HTTP and receive-only connection integration", () => {
     const emptyCell = screen.getByRole("button", { name: "H8 빈 자리" });
     expect(emptyCell).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Ready 0명 / 최소 2명")).toBeInTheDocument();
+    expect(screen.getByText(/방장이 나가면 접속 중인 Member에게 권한이 넘어가고/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
+    expect(screen.getByLabelText("투표 제한 시간")).toHaveAttribute(
+      "aria-describedby",
+      "room-vote-seconds-impact",
+    );
+    expect(screen.getByText("투표 시간을 바꾸면 모든 참가자의 Ready가 해제됩니다.")).toBeInTheDocument();
     const requestsBeforeClick = fetcher.mock.calls.length;
     fireEvent.click(emptyCell);
     expect(fetcher.mock.calls).toHaveLength(requestsBeforeClick);
@@ -433,6 +443,62 @@ describe("room HTTP and receive-only connection integration", () => {
 
     expect(screen.getByText("Ready 1명 / 최소 2명")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
+  });
+
+  it("warns a playing owner about room closure without a successor", async () => {
+    const playingRoom = {
+      ...room,
+      status: "PLAYING",
+      state_version: 4,
+      game_id: "g1",
+      participants: [{ ...participant, ready: true, team: "BLACK" }],
+    };
+    const playingGame = {
+      room_id: "r1",
+      game_id: "g1",
+      game_status: "ACTIVE",
+      state_version: 1,
+      turn_no: 1,
+      move_no: 0,
+      current_team: "BLACK",
+      turn_status: "VOTING",
+      deadline_ms: 10_000,
+      server_now_ms: 1_000,
+      valid_voter_count: 1,
+      can_vote: true,
+      participants: [
+        {
+          participant_id: "p1",
+          actor_type: "MEMBER",
+          connected: true,
+          role: "PLAYER",
+          team: "BLACK",
+        },
+      ],
+      vote_aggregation: [],
+      board: [],
+      last_move: null,
+      forbidden_for_black: [],
+      candidates: [],
+      my_vote: null,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      if (url === "/api/v1/rooms/r1/state")
+        return json({ room: playingRoom, game: playingGame, stream_version: 9 });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+
+    mount(fetcher);
+
+    expect(
+      await screen.findByText(/승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
   });
 
   it("joins privately without exposing the password in the URL", async () => {
