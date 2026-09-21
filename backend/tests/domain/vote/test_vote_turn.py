@@ -2,7 +2,14 @@ from collections.abc import Callable, Iterable
 
 import pytest
 
-from seokpan.game.domain import Coordinate, EndReason, Game, GameStatus, Stone
+from seokpan.game.domain import (
+    Coordinate,
+    EndReason,
+    Game,
+    GameRuleViolation,
+    GameStatus,
+    Stone,
+)
 from seokpan.vote.domain import (
     ParticipantRole,
     TurnResultKind,
@@ -635,6 +642,133 @@ def test_vote_request_rejects_when_the_wrapped_game_was_ended_externally() -> No
             next_deadline_ms=2_000,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("end_reason", "winner", "expected_status"),
+    [
+        (EndReason.JOINT_LOSS, Stone.EMPTY, GameStatus.FINISHED),
+        (EndReason.SYSTEM_INVALID, Stone.EMPTY, GameStatus.SYSTEM_INVALID),
+    ],
+)
+def test_external_result_applies_supported_non_board_results(
+    end_reason: EndReason,
+    winner: Stone,
+    expected_status: GameStatus,
+) -> None:
+    subject = voting_game()
+    cast(subject, "black-1", "H8")
+
+    subject.finalize_external_result(end_reason=end_reason, winner=winner)
+
+    assert subject.game.status is expected_status
+    assert subject.game.end_reason is end_reason
+    assert subject.game.winner is winner
+    assert subject.votes == ()
+    assert subject.turn_status is TurnStatus.PASSED
+    assert subject.deadline_ms is None
+
+
+@pytest.mark.parametrize(
+    ("end_reason", "winner"),
+    [
+        (EndReason.FORFEIT, Stone.EMPTY),
+        (EndReason.JOINT_LOSS, Stone.BLACK),
+        (EndReason.SYSTEM_INVALID, Stone.WHITE),
+        (EndReason.BLACK_WIN, Stone.BLACK),
+    ],
+)
+def test_external_result_rejects_invalid_reason_winner_combinations(
+    end_reason: EndReason,
+    winner: Stone,
+) -> None:
+    subject = voting_game()
+
+    assert_rejected_without_mutation(
+        subject,
+        "INVALID_EXTERNAL_GAME_RESULT",
+        lambda: subject.finalize_external_result(end_reason=end_reason, winner=winner),
+    )
+
+
+def test_external_result_is_idempotent_only_for_the_same_finished_result() -> None:
+    subject = voting_game()
+
+    subject.finalize_external_result(
+        end_reason=EndReason.SYSTEM_INVALID,
+        winner=Stone.EMPTY,
+    )
+    finished = snapshot(subject)
+
+    subject.finalize_external_result(
+        end_reason=EndReason.SYSTEM_INVALID,
+        winner=Stone.EMPTY,
+    )
+    assert snapshot(subject) == finished
+
+    assert_rejected_without_mutation(
+        subject,
+        "GAME_ALREADY_FINISHED",
+        lambda: subject.finalize_external_result(
+            end_reason=EndReason.JOINT_LOSS,
+            winner=Stone.EMPTY,
+        ),
+    )
+
+
+def test_external_result_translates_game_domain_failure() -> None:
+    class FailingExternalGame(Game):
+        def finish_system_invalid(self):
+            raise GameRuleViolation("GAME_RESULT_ALREADY_FINALIZED")
+
+    subject = voting_game(game=FailingExternalGame())
+
+    assert_rejected_without_mutation(
+        subject,
+        "GAME_RESULT_ALREADY_FINALIZED",
+        lambda: subject.finalize_external_result(
+            end_reason=EndReason.SYSTEM_INVALID,
+            winner=Stone.EMPTY,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("winner", "expected_loser"),
+    [
+        (Stone.BLACK, Stone.WHITE),
+        (Stone.WHITE, Stone.BLACK),
+    ],
+)
+def test_external_forfeit_finishes_with_the_confirmed_winner(
+    winner: Stone,
+    expected_loser: Stone,
+) -> None:
+    subject = voting_game()
+    cast(subject, "black-1", "H8")
+
+    subject.finalize_external_result(
+        end_reason=EndReason.FORFEIT,
+        winner=winner,
+    )
+
+    assert subject.game.status is GameStatus.FINISHED
+    assert subject.game.end_reason is EndReason.FORFEIT
+    assert subject.game.winner is winner
+    assert subject.game.conclusion is not None
+    assert subject.game.conclusion.winner is not expected_loser
+    assert subject.votes == ()
+    assert subject.turn_status is TurnStatus.PASSED
+    assert subject.deadline_ms is None
+
+
+def test_public_candidate_selector_delegates_to_domain_selection_rule() -> None:
+    candidates = (
+        Coordinate.parse("H8"),
+        Coordinate.parse("I8"),
+    )
+
+    assert VoteTurnGame.select_candidate(candidates, "I8") == Coordinate.parse("I8")
 
 
 def test_first_zero_vote_pass_advances_and_second_consecutive_pass_is_joint_loss() -> None:
