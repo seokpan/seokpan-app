@@ -17,13 +17,19 @@ from seokpan.room.domain import RoomRuleViolation
 
 class InMemoryCapturedClosureStore:
     def __init__(
-        self, *, rooms: InMemoryRoomRuntimeAdapter, votes: InMemoryVoteRuntimeAdapter,
+        self,
+        *,
+        rooms: InMemoryRoomRuntimeAdapter,
+        votes: InMemoryVoteRuntimeAdapter,
     ) -> None:
         self._rooms, self._votes = rooms, votes
         # Receipts live on the shared Room instance, not this wrapper instance.
 
     async def read_closed_start(
-        self, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
     ) -> ClosedStartIntent | None:
         self._rooms._purge_expired()
         if room_id in self._rooms._rooms:
@@ -31,18 +37,25 @@ class InMemoryCapturedClosureStore:
         marker = self._rooms._pending_game_invalidations.get(room_id)
         receipt = self._rooms._captured_closure_receipts.get((room_id, game_id))
         if marker is not None:
-            marker_wire = json.dumps({
-                "room_id": marker.room_id, "terminated_game_id": marker.game_id,
-                "closed_at_ms": marker.closed_at_ms, "invalidation_pending": True,
-            })
+            marker_wire = json.dumps(
+                {
+                    "room_id": marker.room_id,
+                    "terminated_game_id": marker.game_id,
+                    "closed_at_ms": marker.closed_at_ms,
+                    "invalidation_pending": True,
+                }
+            )
         elif receipt is not None:
             marker_wire = receipt
         else:
             raise RoomRuleViolation("GAME_CLOSURE_UNCONFIRMED")
         intent = self._rooms._start_intents.get((room_id, game_id))
         return decode_closed_start(
-            room_id=room_id, game_id=game_id, closed_at_ms=closed_at_ms,
-            marker_wire=marker_wire, intent_wire=None if intent is None else intent.to_json(),
+            room_id=room_id,
+            game_id=game_id,
+            closed_at_ms=closed_at_ms,
+            marker_wire=marker_wire,
+            intent_wire=None if intent is None else intent.to_json(),
             phase_wire=self._rooms._start_phases.get((room_id, game_id)),
         )
 
@@ -60,8 +73,10 @@ class InMemoryCapturedClosureStore:
             if stored_intent != intent or receipt is None:
                 raise RoomRuleViolation("START_CLOSURE_CHANGED")
             current = decode_closed_start(
-                room_id=intent.room_id, game_id=intent.game_id,
-                closed_at_ms=value.closed_at_ms, marker_wire=receipt,
+                room_id=intent.room_id,
+                game_id=intent.game_id,
+                closed_at_ms=value.closed_at_ms,
+                marker_wire=receipt,
                 intent_wire=stored_intent.to_json(),
                 phase_wire=self._rooms._start_phases.get(key),
             )
@@ -74,10 +89,16 @@ class InMemoryCapturedClosureStore:
         if self._rooms._start_intents.get(key) != intent or phase != value.phase_wire:
             raise RoomRuleViolation("START_CLOSURE_CHANGED")
         terminal = terminal_phase(value)
-        receipt = json.dumps({
-            "room_id": intent.room_id, "terminated_game_id": intent.game_id,
-            "closed_at_ms": value.closed_at_ms, "invalidation_pending": False,
-        }, sort_keys=True, separators=(",", ":"))
+        receipt = json.dumps(
+            {
+                "room_id": intent.room_id,
+                "terminated_game_id": intent.game_id,
+                "closed_at_ms": value.closed_at_ms,
+                "invalidation_pending": False,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         expires = self._rooms._clock.now_ms + ROOM_REQUEST_DEDUPE_TTL_MS
         self._rooms._start_phases[key] = terminal
         self._rooms._start_record_expiries[key] = expires
