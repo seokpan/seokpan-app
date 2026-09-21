@@ -42,6 +42,7 @@ from seokpan.persistence.mariadb.models import (
     RatingHistoryRow,
 )
 
+
 def _to_db_datetime(value: datetime) -> datetime:
     """Store UTC in MariaDB DATETIME(3), which carries no timezone metadata."""
     normalized = value if value.tzinfo is None else value.astimezone(UTC).replace(tzinfo=None)
