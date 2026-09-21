@@ -401,6 +401,594 @@ async def test_departure_retry_reuses_persisted_forfeit_after_room_failure() -> 
 
 
 @pytest.mark.asyncio
+async def test_departure_requires_durable_game_history() -> None:
+    runner, _clock, rooms, _votes, games, _ = await setup_runner()
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+    games.games.pop(GAME_ID)
+
+    with pytest.raises(PersistenceRuleViolation, match="^GAME_NOT_FOUND$"):
+        await runner.finalize_departures(
+            room_id=ROOM_ID,
+            game_id=GAME_ID,
+        )
+
+
+@pytest.mark.asyncio
+async def test_departure_retry_recovers_after_runtime_lookup_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    games = CountingGamePersistenceAdapter()
+    runner, _clock, rooms, votes, _, _ = await setup_runner(games=games)
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-owner",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-two",
+            BLACK_TWO_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    original_get = votes.get
+    runtime = await original_get(ROOM_ID)
+    assert runtime is not None
+
+    monkeypatch.setattr(
+        votes,
+        "get",
+        AsyncMock(side_effect=(runtime, None)),
+    )
+
+    assert (
+        await runner.finalize_departures(
+            room_id=ROOM_ID,
+            game_id=GAME_ID,
+        )
+        is False
+    )
+    assert games.finalize_calls == 1
+
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.end_reason is EndReason.FORFEIT
+    assert stored.winner is Stone.WHITE
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.PLAYING
+    assert room.game_id == GAME_ID
+
+    monkeypatch.setattr(votes, "get", original_get)
+
+    assert await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+    assert games.finalize_calls == 1
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.WAITING
+    assert room.game_id is None
+
+
+@pytest.mark.asyncio
+async def test_finished_runtime_without_durable_result_requires_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, _rooms, _votes, games, _ = await setup_runner()
+
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+
+    clock.advance(5_000)
+    due = DueTurn(ROOM_ID, GAME_ID, 2)
+    assert (await runner.process(due)).status is TurnProcessingStatus.GAME_ENDED
+
+    finalized = AsyncMock(return_value=False)
+    monkeypatch.setattr(games, "game_is_finalized", finalized)
+
+    retried = await runner.process(due)
+
+    assert retried.status is TurnProcessingStatus.RETRY_REQUIRED
+    finalized.assert_awaited_once_with(GAME_ID)
+
+
+@pytest.mark.asyncio
+async def test_resolution_rejects_missing_game_history_after_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    monkeypatch.setattr(
+        games,
+        "load_game",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(PersistenceRuleViolation, match="^GAME_NOT_FOUND$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.game_status is GameStatus.ACTIVE
+    assert current.move_no == 0
+    assert games.moves == {}
+
+
+@pytest.mark.asyncio
+async def test_persisted_move_conflict_prevents_resolution_application() -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+
+    conflict = OfficialMoveRecord(
+        game_id=GAME_ID,
+        turn_no=1,
+        move_no=1,
+        team=Stone.BLACK,
+        coordinate=Coordinate.parse("H8"),
+        final_vote_count=0,
+        valid_voter_count=2,
+        confirmed_at=datetime.fromtimestamp(5, UTC),
+    )
+    await games.append_move(conflict)
+
+    clock.advance(5_000)
+
+    with pytest.raises(PersistenceRuleViolation, match="^MOVE_SEQUENCE_CONFLICT$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.game_status is GameStatus.ACTIVE
+    assert current.move_no == 0
+    assert games.moves == {(GAME_ID, 1): conflict}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("move_no", "expected_code"),
+    (
+        (2, "MOVE_SEQUENCE_CONFLICT"),
+        (1, "GAME_RUNTIME_HISTORY_MISMATCH"),
+    ),
+)
+async def test_corrupt_durable_history_is_rejected(
+    move_no: int,
+    expected_code: str,
+) -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is (
+        TurnProcessingStatus.PASS
+    )
+
+    await games.append_move(
+        OfficialMoveRecord(
+            game_id=GAME_ID,
+            turn_no=1,
+            move_no=move_no,
+            team=Stone.BLACK,
+            coordinate=Coordinate.parse("A1"),
+            final_vote_count=0,
+            valid_voter_count=1,
+            confirmed_at=datetime.fromtimestamp(5, UTC),
+        )
+    )
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "white-vote",
+            GAME_ID,
+            2,
+            WHITE_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    with pytest.raises(PersistenceRuleViolation, match=f"^{expected_code}$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 2))
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.game_status is GameStatus.ACTIVE
+    assert current.move_no == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("boundary", "expected_code"),
+    (
+        ("missing", "ROOM_NOT_FOUND"),
+        ("waiting", "GAME_NOT_IN_CURRENT_ROOM"),
+    ),
+)
+async def test_due_turn_rejects_missing_or_stale_room(
+    boundary: str,
+    expected_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, rooms, votes, games, _ = await setup_runner()
+
+    room_value = None if boundary == "missing" else Mock(status=RoomStatus.WAITING, game_id=GAME_ID)
+    monkeypatch.setattr(
+        rooms,
+        "get",
+        AsyncMock(return_value=room_value),
+    )
+
+    clock.advance(5_000)
+
+    with pytest.raises(VoteRuleViolation, match=f"^{expected_code}$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.ACTIVE
+    assert runtime.move_no == 0
+    assert games.moves == {}
+    assert games.results == {}
+
+
+@pytest.mark.asyncio
+async def test_realtime_delivery_failure_does_not_abort_move() -> None:
+    events = Mock(spec=RealtimeEventPort)
+    events.room_changed = AsyncMock(side_effect=RuntimeError("event unavailable"))
+    events.lobby_rooms_changed = AsyncMock()
+
+    runner, clock, _rooms, votes, games, _ = await setup_runner(events=events)
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    result = await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    assert result.status is TurnProcessingStatus.MOVE
+    assert games.moves[(GAME_ID, 1)].coordinate.canonical == "H8"
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.move_no == 1
+    assert current.turn_no == 2
+
+    assert events.room_changed.await_count == 2
+    events.lobby_rooms_changed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_departure_finalization_does_not_overwrite_normal_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, _clock, rooms, votes, games, _ = await setup_runner()
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-owner",
+            BLACK_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    await rooms.leave(
+        LeaveRoomRuntime(
+            ROOM_ID,
+            "leave-black-two",
+            BLACK_TWO_ID,
+            room.state_version,
+            active_vote_turn=1,
+        )
+    )
+
+    normal_result = Mock(
+        end_reason=EndReason.BLACK_WIN,
+        winner=Stone.BLACK,
+    )
+    monkeypatch.setattr(
+        games,
+        "load_result",
+        AsyncMock(return_value=normal_result),
+    )
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is False
+
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+    assert runtime.game_status is GameStatus.ACTIVE
+
+    room = await rooms.get(ROOM_ID)
+    assert room is not None
+    assert room.status is RoomStatus.PLAYING
+    assert room.game_id == GAME_ID
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_can_remove_authorized_previous_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous_game_id = "66666666-6666-4666-8666-666666666666"
+
+    runner, _clock, rooms, votes, games, _ = await setup_runner()
+
+    previous_runtime = Mock(
+        room_id=ROOM_ID,
+        game_id=previous_game_id,
+        turn_no=7,
+        game_status=GameStatus.FINISHED,
+    )
+
+    monkeypatch.setattr(
+        votes,
+        "get",
+        AsyncMock(return_value=previous_runtime),
+    )
+    discard = AsyncMock()
+    monkeypatch.setattr(votes, "discard_game", discard)
+
+    captured = Mock()
+    captured.prepare_history = AsyncMock()
+    captured.permits_previous_runtime_cleanup = AsyncMock(return_value=True)
+    captured.acknowledge = AsyncMock(return_value=False)
+    runner._captured_invalidation = captured
+
+    finalized = await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=9_000,
+    )
+
+    assert finalized is True
+    captured.permits_previous_runtime_cleanup.assert_awaited_once()
+    discard.assert_awaited_once_with(ROOM_ID, previous_game_id)
+    captured.acknowledge.assert_awaited_once()
+
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.end_reason is EndReason.SYSTEM_INVALID
+
+    # Captured ACK=False deliberately falls back to the legacy Room ACK path.
+    assert await rooms.get(ROOM_ID) is not None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_resolver_violation_is_not_treated_as_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    monkeypatch.setattr(
+        votes,
+        "acquire_resolver",
+        AsyncMock(side_effect=VoteRuleViolation("STALE_GAME")),
+    )
+
+    with pytest.raises(VoteRuleViolation, match="^STALE_GAME$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    assert games.moves == {}
+    assert games.results == {}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_apply_violation_is_not_treated_as_lease_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    monkeypatch.setattr(
+        votes,
+        "apply_resolution",
+        AsyncMock(side_effect=VoteRuleViolation("STATE_VERSION_CONFLICT")),
+    )
+
+    with pytest.raises(VoteRuleViolation, match="^STATE_VERSION_CONFLICT$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    assert len(games.moves) == 1
+    assert games.moves[(GAME_ID, 1)].coordinate.canonical == "H8"
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.game_status is GameStatus.ACTIVE
+    assert current.move_no == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_persisted_move_after_apply_is_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+
+    snapshot = await votes.get(ROOM_ID)
+    assert snapshot is not None
+    await votes.cast_vote(
+        CastRuntimeVote(
+            ROOM_ID,
+            "vote",
+            GAME_ID,
+            1,
+            BLACK_ID,
+            "H8",
+            snapshot.state_version,
+        )
+    )
+    clock.advance(5_000)
+
+    original_append_move = games.append_move
+    original_get_move = games.get_move
+    hide_next_read = False
+
+    async def append_then_hide(command: OfficialMoveRecord) -> PersistenceOutcome:
+        nonlocal hide_next_read
+        outcome = await original_append_move(command)
+        hide_next_read = True
+        return outcome
+
+    async def missing_once_after_append(
+        game_id: str,
+        turn_no: int,
+    ) -> OfficialMoveRecord | None:
+        nonlocal hide_next_read
+        if hide_next_read:
+            hide_next_read = False
+            return None
+        return await original_get_move(game_id, turn_no)
+
+    monkeypatch.setattr(games, "append_move", append_then_hide)
+    monkeypatch.setattr(games, "get_move", missing_once_after_append)
+
+    with pytest.raises(PersistenceRuleViolation, match="^MOVE_NOT_FOUND$"):
+        await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))
+
+    assert len(games.moves) == 1
+    stored = games.moves[(GAME_ID, 1)]
+    assert stored.coordinate.canonical == "H8"
+
+    current = await votes.get(ROOM_ID)
+    assert current is not None
+    assert current.move_no == 1
+    assert current.turn_no == 2
+
+
+@pytest.mark.asyncio
+async def test_departure_finalization_ignores_room_lost_before_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, _clock, rooms, votes, games, _ = await setup_runner()
+
+    runtime = await votes.get(ROOM_ID)
+    assert runtime is not None
+
+    monkeypatch.setattr(
+        rooms,
+        "get",
+        AsyncMock(return_value=None),
+    )
+
+    finalized = await runner.finalize_departures(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+    )
+
+    assert finalized is False
+    assert games.results == {}
+
+
+@pytest.mark.asyncio
 async def test_deadline_and_serviceability_gate_leave_turn_unchanged() -> None:
     runner, clock, _, votes, games, _ = await setup_runner(
         gate=TurnFinalizationApproval.RECOVERY_REQUIRED
