@@ -216,7 +216,9 @@ class InMemoryRoomRuntimeAdapter:
         if replay is not None:
             return replay
         state = self._require_room(command.room_id)
-        self._require_expected_version(state, command.expected_state_version)
+        # Join validates the current Room directly (existence, capacity and access).
+        # The Lobby's observed state_version is advisory because Ready/team changes
+        # deliberately do not publish Lobby list events.
         state.room.join(
             participant_id=command.participant_id,
             actor_type=command.actor_type,

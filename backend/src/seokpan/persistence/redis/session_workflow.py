@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from typing import Protocol
 
 from seokpan.identity.application import (
     CreateSession,
@@ -12,6 +14,14 @@ from seokpan.identity.application import (
     SessionTransitionUnavailable,
 )
 from seokpan.persistence.redis.session_adapter import RedisSessionAdapter
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SessionAdmissionGate(Protocol):
+    async def acquire_session_admission(self, digest: str) -> str: ...
+
+    async def release_session_admission(self, digest: str, token: str) -> None: ...
 
 
 class RedisSessionWorkflow:
@@ -25,9 +35,11 @@ class RedisSessionWorkflow:
         self,
         sessions: RedisSessionAdapter,
         participants: ParticipantSessionPort,
+        admissions: SessionAdmissionGate | None = None,
     ) -> None:
         self._sessions = sessions
         self._participants = participants
+        self._admissions = admissions
 
     async def create(self, command: CreateSession) -> SessionRecord:
         return await self._sessions.create(command)
@@ -74,8 +86,30 @@ class RedisSessionWorkflow:
         return rotated
 
     async def logout(self, current: SessionRecord) -> bool:
+        token: str | None = None
         try:
+            if self._admissions is not None:
+                token = await self._admissions.acquire_session_admission(
+                    current.session_digest
+                )
             await self._participants.leave(current)
             return await self._sessions.revoke(current.session_digest)
+        except SessionRuleViolation:
+            raise
+        except asyncio.CancelledError:
+            raise
         except BaseException:
             raise SessionTransitionUnavailable from None
+        finally:
+            if token is not None and self._admissions is not None:
+                try:
+                    await self._admissions.release_session_admission(
+                        current.session_digest,
+                        token,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # The bounded lease expires. Never turn a committed logout
+                    # into a second ambiguous command only because release failed.
+                    _LOGGER.warning("Session admission lease release failed during logout")

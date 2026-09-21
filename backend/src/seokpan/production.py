@@ -24,12 +24,14 @@ from seokpan.persistence.redis import (
     RedisChatAdapter,
     RedisPresenceAdapter,
     RedisRealtimeEventAdapter,
-    RedisRoomRuntimeAdapter,
     RedisSessionAdapter,
     RedisVoteRuntimeAdapter,
 )
 from seokpan.persistence.redis.common import RedisClient
 from seokpan.persistence.redis.connection import runtime_redis
+from seokpan.persistence.redis.room_admission import (
+    SessionAdmissionRedisRoomAdapter as RedisRoomRuntimeAdapter,
+)
 from seokpan.security import (
     PRODUCTION_ARGON2_PARAMETERS,
     Argon2PasswordHasher,

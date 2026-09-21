@@ -214,7 +214,7 @@ end
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=14,
+    version=15,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -256,7 +256,9 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
 end
 
 if operation == 'join' then
-  if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
+  -- Join is evaluated against current server state. Lobby snapshots intentionally
+  -- do not advance for Ready/team-only changes, so their Room state_version is
+  -- an observation rather than an admission precondition.
   if redis.call('HEXISTS', KEYS[2], payload.participant_id) == 1 then
     return rejection('PARTICIPANT_ALREADY_JOINED')
   end

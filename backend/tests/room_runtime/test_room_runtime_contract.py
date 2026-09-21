@@ -481,18 +481,44 @@ async def test_request_id_reuse_with_different_command_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_stale_expected_state_version_is_rejected_without_mutation(
+async def test_join_uses_current_server_state_when_lobby_version_is_stale(
     room_harness: RoomRuntimeHarness,
 ) -> None:
     created = await room_harness.adapter.create(create_room())
+    assert created.snapshot is not None
+
+    joined = await room_harness.adapter.join(
+        join_member(
+            "member-2",
+            request_id="join-stale-observation",
+            session_character="b",
+            expected_state_version=created.snapshot.state_version + 10,
+        )
+    )
+
+    assert joined.snapshot is not None
+    assert tuple(item.participant_id for item in joined.snapshot.participants) == (
+        "member-1",
+        "member-2",
+    )
+    assert joined.snapshot.state_version == created.snapshot.state_version + 1
+
+
+@pytest.mark.asyncio
+async def test_stale_version_still_rejects_versioned_room_mutations(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    created = await room_harness.adapter.create(create_room())
+    assert created.snapshot is not None
 
     with pytest.raises(RoomRuleViolation, match="STATE_VERSION_CONFLICT"):
-        await room_harness.adapter.join(
-            join_member(
-                "member-2",
-                request_id="join-stale",
-                session_character="b",
-                expected_state_version=2,
+        await room_harness.adapter.change_team(
+            ChangeRoomTeam(
+                "room-1",
+                "team-stale",
+                "member-1",
+                Team.BLACK,
+                created.snapshot.state_version + 10,
             )
         )
 

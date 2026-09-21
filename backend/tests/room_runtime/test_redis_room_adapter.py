@@ -36,7 +36,7 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "HDEL', KEYS[4], payload.target_id" in kick
     assert "advance_version()" in kick
     assert "remove_vote(" not in kick and "update_game_player(" not in kick
-    assert ROOM_MUTATION.version == 14
+    assert ROOM_MUTATION.version == 15
     participant_guard = ROOM_MUTATION.source.split(
         "local current_participant_id = payload.participant_id or payload.actor_id", 1
     )[1].split("if operation ~= 'disconnect'", 1)[0]
@@ -59,6 +59,20 @@ def test_start_game_uses_connected_ready_participants_only() -> None:
     assert "and value.connected" in start
     assert "connected_ready_count" in start
     assert "MINIMUM_READY_NOT_MET" in start
+
+
+def test_join_rechecks_current_state_without_full_room_version_gate() -> None:
+    source = ROOM_MUTATION.source
+    join = source.split("if operation == 'join' then", 1)[1].split(
+        "local current_participant_id", 1
+    )[0]
+    assert "expected_version_matches()" not in join
+    for current_check in (
+        "ROOM_CAPACITY_REACHED",
+        "ROOM_PASSWORD_INVALID",
+        "PARTICIPANT_ALREADY_JOINED",
+    ):
+        assert current_check in join
 
 
 def test_complete_game_is_not_blocked_by_participant_guard() -> None:
