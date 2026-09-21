@@ -47,9 +47,9 @@ def test_round_trip_preserves_original_start_facts(intent: RoomGameStartIntent) 
 
 def test_nested_facts_are_immutable_and_export_is_detached(intent: RoomGameStartIntent) -> None:
     with pytest.raises(FrozenInstanceError):
-        setattr(intent, "started_at_ms", 9_999)
+        intent.started_at_ms = 9_999
     with pytest.raises(FrozenInstanceError):
-        setattr(intent.players[0], "member_id", "2")
+        intent.players[0].member_id = "2"
     value = intent.players[0].to_value()
     value["member_id"] = "999"
     assert intent.players[0].member_id == "1"
