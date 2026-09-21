@@ -103,23 +103,34 @@ class CapturedGameStartup:
                 if identity is None or identity.room_id != room_id:
                     raise RoomRuleViolation("PARTICIPANT_IDENTITY_NOT_FOUND")
                 if identity.actor_type is SessionActorType.MEMBER:
-                    players.append(StartIntentPlayer(
-                        participant_id=player.participant_id, team=player.team.value,
-                        member_id=identity.actor_id,
-                    ))
+                    players.append(
+                        StartIntentPlayer(
+                            participant_id=player.participant_id,
+                            team=player.team.value,
+                            member_id=identity.actor_id,
+                        )
+                    )
                 else:
                     # Preserve the existing Guest-NNNN persistence attribution.
                     digest = hashlib.sha256(identity.actor_id.encode("utf-8")).hexdigest()
-                    players.append(StartIntentPlayer(
-                        participant_id=player.participant_id, team=player.team.value,
-                        guest_label=f"Guest-{int(digest[:8], 16) % 10_000:04d}",
-                    ))
+                    players.append(
+                        StartIntentPlayer(
+                            participant_id=player.participant_id,
+                            team=player.team.value,
+                            guest_label=f"Guest-{int(digest[:8], 16) % 10_000:04d}",
+                        )
+                    )
             game_id = _stable_uuid4(f"{room_id}\nstart\n{request_id}")
-            await self._runtime.start_game(CaptureRoomGameStart(
-                room_id=room_id, request_id=request_id, actor_id=participation.participant_id,
-                game_id=game_id, expected_state_version=expected_state_version,
-                players=tuple(players),
-            ))
+            await self._runtime.start_game(
+                CaptureRoomGameStart(
+                    room_id=room_id,
+                    request_id=request_id,
+                    actor_id=participation.participant_id,
+                    game_id=game_id,
+                    expected_state_version=expected_state_version,
+                    players=tuple(players),
+                )
+            )
         elif room.status is RoomStatus.PLAYING and room.game_id is not None:
             game_id = room.game_id
         else:
@@ -130,7 +141,8 @@ class CapturedGameStartup:
             raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
         latest = await self._runtime.get(room_id)
         if (
-            latest is None or latest.status is not RoomStatus.PLAYING
+            latest is None
+            or latest.status is not RoomStatus.PLAYING
             or latest.game_id != game_id
         ):
             raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
@@ -164,17 +176,26 @@ class CapturedGameStartup:
         if history is None:
             raise PersistenceRuleViolation("GAME_NOT_FOUND")
         actual = history.start
+
         def roster(
             values: tuple[GameParticipantRecord, ...],
         ) -> list[tuple[str, str, int | None, str | None]]:
             return sorted(
-                [(item.participant_id, item.team.value, item.member_id, item.guest_label)
-                 for item in values],
+                [
+                    (
+                        item.participant_id,
+                        item.team.value,
+                        item.member_id,
+                        item.guest_label,
+                    )
+                    for item in values
+                ],
                 key=lambda item: item[0],
             )
 
         if (
-            actual.game_id != command.game_id or actual.room_id != command.room_id
+            actual.game_id != command.game_id
+            or actual.room_id != command.room_id
             or actual.voting_time_seconds != command.voting_time_seconds
             or actual.started_at != command.started_at
             or roster(actual.participants) != roster(command.participants)
@@ -184,14 +205,21 @@ class CapturedGameStartup:
             raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
         if history.moves and (active is None or active.game_id != game_id):
             raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
-        result = await self._initializer.initialize(InitializeCapturedGame(
-            intent=intent, request_id=request_id, actor_id=participation.participant_id,
-            expected_room_version=latest.state_version,
-        ))
+        result = await self._initializer.initialize(
+            InitializeCapturedGame(
+                intent=intent,
+                request_id=request_id,
+                actor_id=participation.participant_id,
+                expected_room_version=latest.state_version,
+            )
+        )
         return CapturedStartOutcome(
             snapshot=GameApplicationSnapshot(
-                latest, result.snapshot, participation.participant_id,
-                self._clock.now_ms, replayed=recovering or result.replayed,
+                latest,
+                result.snapshot,
+                participation.participant_id,
+                self._clock.now_ms,
+                replayed=recovering or result.replayed,
             ),
             initialized_now=not result.replayed,
         )
@@ -199,11 +227,17 @@ class CapturedGameStartup:
     @staticmethod
     def persistence_command(intent: RoomGameStartIntent) -> StartGameCommand:
         return StartGameCommand(
-            game_id=intent.game_id, room_id=intent.room_id,
-            voting_time_seconds=intent.vote_seconds, started_at=intent.started_at,
-            participants=tuple(GameParticipantRecord(
-                participant_id=item.participant_id, team=Stone(item.team),
-                member_id=None if item.member_id is None else int(item.member_id),
-                guest_label=item.guest_label,
-            ) for item in intent.players),
+            game_id=intent.game_id,
+            room_id=intent.room_id,
+            voting_time_seconds=intent.vote_seconds,
+            started_at=intent.started_at,
+            participants=tuple(
+                GameParticipantRecord(
+                    participant_id=item.participant_id,
+                    team=Stone(item.team),
+                    member_id=None if item.member_id is None else int(item.member_id),
+                    guest_label=item.guest_label,
+                )
+                for item in intent.players
+            ),
         )
