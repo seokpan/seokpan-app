@@ -156,7 +156,7 @@ describe("game screen flow", () => {
     expect(screen.queryByText("저장된 결과를 불러오고 있습니다.")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
-  it("shows a static production-style analysis preview without fabricating results or requests", async () => {
+  it("shows a static analysis preview without fabricating results or requests", async () => {
     const { fetcher } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
@@ -173,7 +173,7 @@ describe("game screen flow", () => {
     expect(panel.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some(([url]) => /analysis|prediction/.test(String(url)))).toBe(false);
   });
-  it("explains reconnect grace separately from immediate owner handoff without changing state", async () => {
+  it("separates reconnect grace from immediate owner handoff", async () => {
     const { fetcher, socket } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
@@ -295,7 +295,7 @@ describe("game screen flow", () => {
     expect(screen.getByRole("grid")).toBe(board);
     expect(document.activeElement).toBe(document.body);
   });
-  it("starts, votes, recovers Pass/Move, reads a result, and starts the next game without closing the socket", async () => {
+  it("runs two games through vote recovery without closing the socket", async () => {
     let room = structuredClone(waiting),
       game: ReturnType<typeof gameFixture> | null = null,
       version = 8,
