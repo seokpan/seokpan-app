@@ -1,4 +1,5 @@
 """Memory adapter lifecycle regressions; real Redis coverage is a separate gate."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -21,21 +22,36 @@ def harness():
     rooms = InMemoryRoomRuntimeAdapter(clock)
     votes = SimpleNamespace(_states={})
     intent = RoomGameStartIntent(
-        room_id=R, game_id=G, original_request_id="accepted", owner_id=B,
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(B, "BLACK", member_id="1"),
-                 StartIntentPlayer(W, "WHITE", guest_label="Guest-0001")),
+        room_id=R,
+        game_id=G,
+        original_request_id="accepted",
+        owner_id=B,
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(B, "BLACK", member_id="1"),
+            StartIntentPlayer(W, "WHITE", guest_label="Guest-0001"),
+        ),
     )
     rooms._start_intents[(R, G)] = intent
     rooms._start_phases[(R, G)] = "PENDING"
     rooms._close(
         SimpleNamespace(room_id=R, request_id="leave"),
-        departure=SimpleNamespace(game_termination=GameTermination.SYSTEM_INVALID,
-                                  terminated_game_id=G),
+        departure=SimpleNamespace(
+            game_termination=GameTermination.SYSTEM_INVALID,
+            terminated_game_id=G,
+        ),
         vote_removed=False,
     )
     store = InMemoryCapturedClosureStore(rooms=rooms, votes=votes)
-    return SimpleNamespace(clock=clock, rooms=rooms, votes=votes, intent=intent, store=store)
+    return SimpleNamespace(
+        clock=clock,
+        rooms=rooms,
+        votes=votes,
+        intent=intent,
+        store=store,
+    )
 
 
 @pytest.mark.asyncio
@@ -69,8 +85,10 @@ async def test_ack_retains_receipt_then_expires_once_without_sliding(harness):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("conflict", ["live_room", "runtime", "foreign_runtime",
-                                      "marker", "intent", "phase"])
+@pytest.mark.parametrize(
+    "conflict",
+    ["live_room", "runtime", "foreign_runtime", "marker", "intent", "phase"],
+)
 async def test_ack_conflict_keeps_pending_evidence(harness, conflict):
     h = harness
     value = await h.store.read_closed_start(R, G, 5000)
