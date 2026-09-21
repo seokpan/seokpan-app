@@ -11,6 +11,7 @@ from seokpan.room.application import (
     SetRoomReady,
     StartRoomGame,
 )
+from seokpan.room.application.runtime import ROOM_DISCONNECT_LEASE_MS
 from seokpan.room.domain import RoomRuleViolation, RoomStatus, Team
 
 from .conftest import RoomRuntimeHarness, create_room, digest, join_guest, join_member
@@ -140,21 +141,35 @@ async def test_old_kick_replay_does_not_remove_new_participation(
 
 
 @pytest.mark.asyncio
-async def test_handoff_invalidates_old_owner_kick(room_harness: RoomRuntimeHarness) -> None:
+async def test_disconnect_grace_delays_owner_handoff_until_expiry(
+    room_harness: RoomRuntimeHarness,
+) -> None:
     adapter = room_harness.adapter
     await adapter.create(create_room())
     await adapter.join(join_member("target", request_id="join", session_character="b"))
+
     await adapter.disconnect(DisconnectRoomParticipant("room-1", "disconnect", "member-1", 1, 2))
-    before = await adapter.get("room-1")
+
+    during_grace = await adapter.get("room-1")
+    assert during_grace is not None
+    assert during_grace.owner_id == "member-1"
+    owner = next(item for item in during_grace.participants if item.participant_id == "member-1")
+    assert owner.connected is False
+
     with pytest.raises(RoomRuleViolation, match="STATE_VERSION_CONFLICT"):
         await adapter.kick(KickRoomParticipant("room-1", "kick", "member-1", "target", 2))
-    with pytest.raises(RoomRuleViolation, match="OWNER_REQUIRED"):
-        await adapter.kick(KickRoomParticipant("room-1", "kick", "member-1", "target", 3))
-    assert await adapter.get("room-1") == before
-    result = await adapter.kick(
-        KickRoomParticipant("room-1", "successor-kick", "target", "member-1", 3)
+
+    room_harness.clock.advance(ROOM_DISCONNECT_LEASE_MS)
+    expired = await adapter.expire_disconnect(
+        ExpireRoomDisconnect("room-1", "expire-owner", "member-1", 1, 3)
     )
-    assert result.snapshot is not None and result.snapshot.owner_id == "target"
+
+    assert expired.snapshot is not None
+    assert expired.snapshot.owner_id == "target"
+    assert [item.participant_id for item in expired.snapshot.participants] == ["target"]
+
+    with pytest.raises(RoomRuleViolation, match="OWNER_REQUIRED"):
+        await adapter.kick(KickRoomParticipant("room-1", "old-owner-kick", "member-1", "target", 4))
 
 
 @pytest.mark.parametrize(

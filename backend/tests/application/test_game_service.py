@@ -17,6 +17,8 @@ from seokpan.room.domain import RoomConfig, RoomRuleViolation, Team
 from seokpan.vote.application import InitializeVoteRuntime, VoteMutationResult
 from seokpan.vote.domain import VoteRuleViolation
 
+MEMBER_RATINGS = {1: 1000, 2: 1000}
+
 
 class UnusedPasswordPort:
     async def encode(self, raw_password: str) -> str:
@@ -28,7 +30,7 @@ class UnusedPasswordPort:
 
 class FailFirstPersistenceAdapter(InMemoryGamePersistenceAdapter):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(MEMBER_RATINGS.copy())
         self.start_calls = 0
 
     async def start_game(self, command: StartGameCommand):
@@ -39,6 +41,9 @@ class FailFirstPersistenceAdapter(InMemoryGamePersistenceAdapter):
 
 
 class CommitThenConflictPersistenceAdapter(InMemoryGamePersistenceAdapter):
+    def __init__(self) -> None:
+        super().__init__(MEMBER_RATINGS.copy())
+
     async def start_game(self, command: StartGameCommand):
         await super().start_game(command)
         raise PersistenceRuleViolation("GAME_START_CONFLICT")
@@ -175,7 +180,7 @@ async def test_start_retry_continues_after_vote_initialization_failure() -> None
     )
     assert white_ready.snapshot is not None
 
-    persistence = InMemoryGamePersistenceAdapter()
+    persistence = InMemoryGamePersistenceAdapter(MEMBER_RATINGS.copy())
     votes = FailFirstInitializeAdapter(clock)
     events = InMemoryRealtimeEventAdapter()
     room_events = await events.subscribe_room(room_id)
@@ -381,7 +386,7 @@ async def test_new_request_recovers_after_vote_initialization_failure() -> None:
     )
     assert white_ready.snapshot is not None
 
-    persistence = InMemoryGamePersistenceAdapter()
+    persistence = InMemoryGamePersistenceAdapter(MEMBER_RATINGS.copy())
     votes = FailFirstInitializeAdapter(clock)
     service = GameApplicationService(
         rooms=rooms,
@@ -470,7 +475,7 @@ async def test_new_start_request_does_not_mask_an_already_complete_game_start() 
     )
     assert white_ready.snapshot is not None
 
-    persistence = InMemoryGamePersistenceAdapter()
+    persistence = InMemoryGamePersistenceAdapter(MEMBER_RATINGS.copy())
     votes = InMemoryVoteRuntimeAdapter(clock)
     service = GameApplicationService(
         rooms=rooms,
@@ -539,7 +544,7 @@ async def test_partial_start_recovery_accepts_concurrent_persistence_winner() ->
 async def test_partial_start_recovery_accepts_concurrent_vote_winner() -> None:
     clock = ManualClock(now_ms=1_000)
     rooms, owner, room_id = await _ready_room(clock, "-vote-race")
-    persistence = InMemoryGamePersistenceAdapter()
+    persistence = InMemoryGamePersistenceAdapter(MEMBER_RATINGS.copy())
     failed_votes = FailFirstInitializeAdapter(clock)
     service = GameApplicationService(
         rooms=rooms,

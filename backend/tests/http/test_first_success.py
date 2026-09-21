@@ -90,8 +90,12 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                 _until(white_ws, "vote.tally_changed")
             _until(white_ws, "vote.tally_changed")
             disconnected = white.get(f"/api/v1/rooms/{room_id}/snapshot").json()
-            assert disconnected["owner_id"] != black_id
-            assert not any(p["ready"] for p in disconnected["participants"])
+            assert disconnected["owner_id"] == black_id
+            disconnected_owner = next(
+                p for p in disconnected["participants"] if p["participant_id"] == black_id
+            )
+            assert disconnected_owner["connected"] is False
+
             clock.advance(1000)
             with black.websocket_connect(socket_path, headers=_headers(black)) as reconnected:
                 restored = reconnected.receive_json()
@@ -105,7 +109,7 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                 assert participant["connected"] is True
                 assert restored["payload"]["game"]["can_vote"] is True
                 assert restored["payload"]["game"]["my_vote"] is None
-                assert restored["payload"]["room"]["owner_id"] != black_id
+                assert restored["payload"]["room"]["owner_id"] == black_id
                 game = black.get(f"/api/v1/games/{game_id}").json()
                 assert game["my_vote"] is None and game["vote_aggregation"] == []
                 assert black.portal is not None
@@ -214,19 +218,19 @@ def test_first_success_normal_win_result_reconnect_and_second_game() -> None:
                         "request_id": str(uuid4()),
                         "expected_state_version": room["state_version"],
                     }
-                    second = white.post(
+                    second = black.post(
                         f"/api/v1/rooms/{room_id}/games",
                         headers={
                             "Origin": ORIGIN,
-                            "X-CSRF-Token": white_csrf,
+                            "X-CSRF-Token": black_csrf,
                         },
                         json=second_body,
                     )
                     assert second.status_code == 201, second.text
                     fresh = second.json()
-                    repeated_start = white.post(
+                    repeated_start = black.post(
                         f"/api/v1/rooms/{room_id}/games",
-                        headers={"Origin": ORIGIN, "X-CSRF-Token": white_csrf},
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": black_csrf},
                         json=second_body,
                     )
                     assert repeated_start.status_code == 201, repeated_start.text

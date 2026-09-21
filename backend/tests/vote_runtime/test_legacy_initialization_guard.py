@@ -18,7 +18,7 @@ from seokpan.room.domain import RoomStatus
 from seokpan.vote.application import InitializeVoteRuntime
 from seokpan.vote.domain import Voter, VoteRuleViolation
 
-ROOM, GAME = "room-1", "game-1"
+ROOM, GAME = "00000000-0000-4000-8000-000000000101", "00000000-0000-4000-8000-000000000102"
 
 
 def command(previous: bool = False) -> InitializeVoteRuntime:
@@ -32,7 +32,7 @@ def command(previous: bool = False) -> InitializeVoteRuntime:
         ),
         1000,
         1,
-        previous_game_id="previous-game" if previous else None,
+        previous_game_id="00000000-0000-4000-8000-000000000105" if previous else None,
         previous_turn_no=4 if previous else None,
     )
 
@@ -84,7 +84,7 @@ async def test_guard_observes_capture_during_async_room_lookup():
 @pytest.mark.asyncio
 async def test_unmarked_legacy_start_and_retry_still_work():
     adapter, intents, phases, _ = memory_adapter()
-    intents[(ROOM, "other-game")] = "unrelated"
+    intents[(ROOM, "00000000-0000-4000-8000-000000000106")] = "unrelated"
     phases[("other-room", GAME)] = "unrelated"
     first = await adapter.initialize(command())
     retry = await adapter.initialize(command())
@@ -151,15 +151,15 @@ async def test_redis_initialization_declares_guard_keys_after_predecessor(previo
     assert call.args[0] is VOTE_MUTATION
     assert len(keys) == (18 if previous else 15)
     assert keys[-2:] == (
-        "stone:v1:room:{room-1}:start-intent:game-1",
-        "stone:v1:room:{room-1}:start-phase:game-1",
+        "stone:v1:room:{00000000-0000-4000-8000-000000000101}:start-intent:00000000-0000-4000-8000-000000000102",
+        "stone:v1:room:{00000000-0000-4000-8000-000000000101}:start-phase:00000000-0000-4000-8000-000000000102",
     )
-    assert all("{room-1}" in key for key in keys)
+    assert all("{00000000-0000-4000-8000-000000000101}" in key for key in keys)
     if previous:
         assert keys[13:16] == (
-            "stone:v1:room:{room-1}:votes:4",
-            "stone:v1:room:{room-1}:vote-tally:4",
-            "stone:v1:room:{room-1}:resolver:4",
+            "stone:v1:room:{00000000-0000-4000-8000-000000000101}:votes:4",
+            "stone:v1:room:{00000000-0000-4000-8000-000000000101}:vote-tally:4",
+            "stone:v1:room:{00000000-0000-4000-8000-000000000101}:resolver:4",
         )
 
 

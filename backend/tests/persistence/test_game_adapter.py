@@ -442,9 +442,13 @@ async def test_existing_move_treats_naive_mariadb_datetime_as_utc_for_idempotenc
 async def test_load_game_restores_mariadb_datetime_as_utc_application_time() -> None:
     persisted = game_row()
     persisted.started_at = DB_NOW
+    black = MemberRow(
+        member_id=1, login_id="black", nickname="Black", password_hash="x", rating=1000
+    )
+    participant_rows = MariaDBGamePersistenceAdapter._participant_rows(GAME_ID, participants())
     session = FakeSession(
         rows={(GameRow, GAME_ID): persisted},
-        execute_results=[[], [], [], []],
+        execute_results=[participant_rows, [], [], [black]],
     )
 
     snapshot = await MariaDBGamePersistenceAdapter(SessionFactory(session)).load_game(GAME_ID)
