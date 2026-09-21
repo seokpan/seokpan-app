@@ -77,7 +77,7 @@ class InMemoryCapturedCompletionStore:
                 raise RoomRuleViolation("START_COMPLETION_CHANGED")
         task = None if stored_task is None else PendingCapturedCompletion.from_json(stored_task)
         marker = self._rooms._pending_game_invalidations.get(intent.room_id)
-        receipt = getattr(self._rooms, "_captured_closure_receipts", {}).get(key)
+        receipt = self._rooms._captured_closure_receipts.get(key)
         if task is not None and intent.room_id not in self._rooms._rooms and receipt is not None:
             closed = json.loads(receipt)
             final = json.loads(self._rooms._start_phases.get(key, "null"))
