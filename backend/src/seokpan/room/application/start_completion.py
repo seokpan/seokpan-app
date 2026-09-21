@@ -18,6 +18,7 @@ def integer(value: object, minimum: int = 0) -> TypeGuard[int]:
 
 def initialized_phase(intent: RoomGameStartIntent, raw: str) -> dict[str, object]:
     """Keep INITIALIZED history intact, including for concurrent F15 readers."""
+
     def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
         for key, value in pairs:
@@ -34,11 +35,15 @@ def initialized_phase(intent: RoomGameStartIntent, raw: str) -> dict[str, object
             raise ValueError("phase")
         stamp, deadline = phase.get("initialized_at_ms"), phase.get("first_deadline_ms")
         if (
-            type(phase.get("schema_version")) is not int or phase["schema_version"] != 1
-            or phase.get("phase") != "INITIALIZED" or phase.get("game_id") != intent.game_id
+            type(phase.get("schema_version")) is not int
+            or phase["schema_version"] != 1
+            or phase.get("phase") != "INITIALIZED"
+            or phase.get("game_id") != intent.game_id
             or phase.get("intent_fingerprint") != intent.fingerprint
-            or not integer(stamp) or not integer(deadline)
-            or stamp < intent.started_at_ms or deadline != stamp + intent.vote_seconds * 1000
+            or not integer(stamp)
+            or not integer(deadline)
+            or stamp < intent.started_at_ms
+            or deadline != stamp + intent.vote_seconds * 1000
         ):
             raise ValueError("phase")
         return cast(dict[str, object], phase)
@@ -59,14 +64,20 @@ class CompleteCapturedGame:
     def __post_init__(self) -> None:
         initialized_phase(self.intent, self.phase_wire)
         if (
-            not integer(self.expected_room_version, 1) or not integer(self.final_turn_no, 1)
-            or not integer(self.ended_at_ms) or self.ended_at_ms < self.intent.started_at_ms
+            not integer(self.expected_room_version, 1)
+            or not integer(self.final_turn_no, 1)
+            or not integer(self.ended_at_ms)
+            or self.ended_at_ms < self.intent.started_at_ms
             or self.end_reason not in NORMAL_END_REASONS
         ):
             raise RoomRuleViolation("START_COMPLETION_INVALID")
 
     def receipt(
-        self, phase: dict[str, object], *, now_ms: int, retention_ms: int,
+        self,
+        phase: dict[str, object],
+        *,
+        now_ms: int,
+        retention_ms: int,
     ) -> tuple[str, int, bool]:
         """Return immutable completion evidence, fixed expiry, and existing-receipt flag."""
         replay = "normal_completion" in phase
@@ -74,9 +85,17 @@ class CompleteCapturedGame:
         if "normal_completion" in phase:
             if (
                 not isinstance(prior, dict)
-                or set(prior) != {"schema_version", "final_turn_no", "end_reason", "ended_at_ms",
-                                  "recorded_at_ms", "retain_until_ms"}
-                or type(prior.get("schema_version")) is not int or prior["schema_version"] != 1
+                or set(prior)
+                != {
+                    "schema_version",
+                    "final_turn_no",
+                    "end_reason",
+                    "ended_at_ms",
+                    "recorded_at_ms",
+                    "retain_until_ms",
+                }
+                or type(prior.get("schema_version")) is not int
+                or prior["schema_version"] != 1
                 or not integer(prior.get("final_turn_no"), 1)
                 or not integer(prior.get("ended_at_ms"))
                 or prior["final_turn_no"] != self.final_turn_no
@@ -91,16 +110,23 @@ class CompleteCapturedGame:
             expiry = cast(int, prior["retain_until_ms"])
         else:
             if (
-                not integer(now_ms) or now_ms < self.ended_at_ms
+                not integer(now_ms)
+                or now_ms < self.ended_at_ms
                 or not integer(now_ms + retention_ms)
             ):
                 raise RoomRuleViolation("START_COMPLETION_INVALID")
             expiry = now_ms + retention_ms
-            phase = {**phase, "normal_completion": {
-                "schema_version": 1, "final_turn_no": self.final_turn_no,
-                "end_reason": self.end_reason, "ended_at_ms": self.ended_at_ms,
-                "recorded_at_ms": now_ms, "retain_until_ms": expiry,
-            }}
+            phase = {
+                **phase,
+                "normal_completion": {
+                    "schema_version": 1,
+                    "final_turn_no": self.final_turn_no,
+                    "end_reason": self.end_reason,
+                    "ended_at_ms": self.ended_at_ms,
+                    "recorded_at_ms": now_ms,
+                    "retain_until_ms": expiry,
+                },
+            }
         return json.dumps(phase, sort_keys=True, separators=(",", ":")), expiry, replay
 
 
@@ -137,8 +163,13 @@ class PendingCapturedCompletion:
             if not isinstance(receipt, dict):
                 raise ValueError("receipt")
             command = CompleteCapturedGame(
-                intent, obj["phase"], 1, receipt["final_turn_no"],
-                receipt["end_reason"], receipt["ended_at_ms"], pending_wire=raw,
+                intent,
+                obj["phase"],
+                1,
+                receipt["final_turn_no"],
+                receipt["end_reason"],
+                receipt["ended_at_ms"],
+                pending_wire=raw,
             )
             command.receipt(phase, now_ms=0, retention_ms=86400000)
             return cls(command, obj["released"], raw)
@@ -147,20 +178,31 @@ class PendingCapturedCompletion:
 
 
 def pending_completion_wire(intent: RoomGameStartIntent, phase: str, *, released: bool) -> str:
-    return json.dumps({
-        "schema_version": 1, "intent": intent.to_json(), "phase": phase, "released": released,
-    }, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "intent": intent.to_json(),
+            "phase": phase,
+            "released": released,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class CapturedCompletionPort(Protocol):
     async def pending(self, *, limit: int) -> tuple[tuple[str, str], ...]: ...
 
     async def read_pending(
-        self, room_id: str, game_id: str,
+        self,
+        room_id: str,
+        game_id: str,
     ) -> PendingCapturedCompletion | None: ...
 
     async def read_start(
-        self, room_id: str, game_id: str,
+        self,
+        room_id: str,
+        game_id: str,
     ) -> tuple[RoomGameStartIntent, str] | None: ...
 
     async def complete(self, command: CompleteCapturedGame) -> bool:
