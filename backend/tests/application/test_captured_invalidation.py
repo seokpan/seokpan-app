@@ -12,7 +12,6 @@ import pytest
 from seokpan.game.application.captured_invalidation import CapturedGameInvalidation
 from seokpan.game.application.persistence import PersistenceRuleViolation
 from seokpan.room.application.start_closure import (
-    ClosedStartIntent,
     decode_closed_start,
     terminal_phase,
 )
