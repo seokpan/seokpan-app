@@ -800,7 +800,8 @@ async def test_turn_resolution_runner_propagates_item_provider_failure() -> None
 
 
 @pytest.mark.asyncio
-async def test_system_invalid_closure_finalizes_persistence_and_vote_runtime_without_stats() -> None:
+async def test_system_invalid_closure_finalizes_persistence_and_vote_runtime_without_stats(
+) -> None:
     runner, clock, _rooms, votes, games, _ = await setup_runner()
     clock.advance(1_234)
 
