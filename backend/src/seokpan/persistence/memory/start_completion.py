@@ -28,9 +28,7 @@ class InMemoryCapturedCompletionStore:
     ) -> None:
         self._rooms, self._votes = rooms, votes
         # Shared on the Room adapter, not on this wrapper. Memory is not durable Redis.
-        if not hasattr(rooms, "_normal_completion_pending"):
-            setattr(rooms, "_normal_completion_pending", {})
-        self._pending: dict[tuple[str, str], str] = getattr(rooms, "_normal_completion_pending")
+        self._pending = rooms._normal_completion_pending
         self._offset = 0
 
     async def pending(self, *, limit: int) -> tuple[tuple[str, str], ...]:
