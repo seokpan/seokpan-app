@@ -26,7 +26,9 @@ class SessionAdmissionMemoryRoomAdapter(InMemoryRoomRuntimeAdapter):
 
     async def create(self, command: CreateRoomRuntime) -> RoomMutationResult:
         self._require_single_binding(
-            command.owner_session_digest, command.room_id, command.owner_id,
+            command.owner_session_digest,
+            command.room_id,
+            command.owner_id,
         )
         # The inherited create/join/change_identity paths do not suspend before
         # recording the binding. Re-check this invariant if those paths change.
@@ -34,19 +36,25 @@ class SessionAdmissionMemoryRoomAdapter(InMemoryRoomRuntimeAdapter):
 
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult:
         self._require_single_binding(
-            command.session_digest, command.room_id, command.participant_id,
+            command.session_digest,
+            command.room_id,
+            command.participant_id,
         )
         return await super().join(command)
 
     async def change_identity(self, command: ChangeRoomIdentity) -> RoomMutationResult:
         self._require_single_binding(
-            command.session_digest, command.room_id, command.participant_id,
+            command.session_digest,
+            command.room_id,
+            command.participant_id,
         )
         return await super().change_identity(command)
 
     async def connect(self, command: ConnectRoomParticipant) -> RoomMutationResult:
         self._require_single_binding(
-            command.session_digest, command.room_id, command.participant_id,
+            command.session_digest,
+            command.room_id,
+            command.participant_id,
         )
         # The base writes Room/connection before awaiting the optional Vote mirror.
         return await super().connect(command)
