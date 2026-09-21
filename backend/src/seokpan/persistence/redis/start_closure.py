@@ -23,21 +23,31 @@ class RedisCapturedClosureStore:
     def _keys(room_id: str, game_id: str) -> tuple[str, ...]:
         validate_intent_lookup(room_id, game_id)
         return (
-            RedisKeyspace.room_meta(room_id), RedisKeyspace.room_closed(room_id),
-            start_intent_key(room_id, game_id), start_phase_key(room_id, game_id),
+            RedisKeyspace.room_meta(room_id),
+            RedisKeyspace.room_closed(room_id),
+            start_intent_key(room_id, game_id),
+            start_phase_key(room_id, game_id),
         )
 
     async def read_closed_start(
-        self, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
     ) -> ClosedStartIntent | None:
         raw = await self._scripts.execute(
-            CLOSED_START_READ, keys=self._keys(room_id, game_id), args=(),
+            CLOSED_START_READ,
+            keys=self._keys(room_id, game_id),
+            args=(),
         )
         result = RedisRoomRuntimeAdapter._result(raw)
         RedisRoomRuntimeAdapter._raise_rejection(result)
         return decode_closed_start(
-            room_id=room_id, game_id=game_id, closed_at_ms=closed_at_ms,
-            marker_wire=result.get("marker"), intent_wire=result.get("intent"),
+            room_id=room_id,
+            game_id=game_id,
+            closed_at_ms=closed_at_ms,
+            marker_wire=result.get("marker"),
+            intent_wire=result.get("intent"),
             phase_wire=result.get("phase"),
         )
 
@@ -45,10 +55,19 @@ class RedisCapturedClosureStore:
         intent = value.intent
         raw = await self._scripts.execute(
             CLOSED_START_ACK,
-            keys=(*self._keys(intent.room_id, intent.game_id),
-                  RedisKeyspace.room_game(intent.room_id)),
-            args=(intent.room_id, intent.game_id, value.closed_at_ms, intent.to_json(),
-                  value.phase_wire, terminal_phase(value), ROOM_REQUEST_DEDUPE_TTL_MS),
+            keys=(
+                *self._keys(intent.room_id, intent.game_id),
+                RedisKeyspace.room_game(intent.room_id),
+            ),
+            args=(
+                intent.room_id,
+                intent.game_id,
+                value.closed_at_ms,
+                intent.to_json(),
+                value.phase_wire,
+                terminal_phase(value),
+                ROOM_REQUEST_DEDUPE_TTL_MS,
+            ),
         )
         result = RedisRoomRuntimeAdapter._result(raw)
         RedisRoomRuntimeAdapter._raise_rejection(result)
