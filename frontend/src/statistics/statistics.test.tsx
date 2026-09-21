@@ -56,7 +56,7 @@ function page(query: URLSearchParams, row = me) {
 afterEach(cleanup);
 
 describe("rankings and user record screens", () => {
-  it("refreshes a changed record without unmounting rows and labels stale data on failure", async () => {
+  it("refreshes changed records and labels stale data on failure", async () => {
     let status = "ready";
     let complete!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>(async (url) => {
@@ -160,7 +160,7 @@ describe("rankings and user record screens", () => {
       ),
     ).toBe(true);
   });
-  it("shows server stats, own row and page-independent summary; opens and closes the user menu", async () => {
+  it("shows stats, own row, summary and the user menu", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) =>
       url === "/api/v1/session/csrf"
         ? json(identity)
@@ -250,7 +250,7 @@ describe("rankings and user record screens", () => {
     expect(screen.queryByText("1,016")).toBeNull();
     expect(screen.queryByText("돌하나")).toBeNull();
   });
-  it("lets Guest read rankings without querying a personal record when opening the menu", async () => {
+  it("lets Guest read rankings without querying a personal record", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) =>
       url === "/api/v1/session/csrf"
         ? json({
