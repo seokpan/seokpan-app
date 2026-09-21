@@ -229,7 +229,8 @@ async def test_background_cancellation_stops_later_stages(stage: str) -> None:
     services = SimpleNamespace(
         disconnect_expiry=SimpleNamespace(run_once=disconnect),
         turn_resolution=SimpleNamespace(
-            reconcile_game_invalidations=invalidations, run_once=turn,
+            reconcile_game_invalidations=invalidations,
+            run_once=turn,
         ),
         realtime_api=SimpleNamespace(registry=registry),
     )
