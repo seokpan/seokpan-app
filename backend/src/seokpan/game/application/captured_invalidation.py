@@ -22,7 +22,11 @@ class CapturedGameInvalidation:
         self._games = games
 
     async def prepare_history(
-        self, *, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
     ) -> None:
         closure = await self._closures.read_closed_start(room_id, game_id, closed_at_ms)
         if closure is None:
@@ -45,7 +49,11 @@ class CapturedGameInvalidation:
         self._validate_history(closure, history)
 
     async def acknowledge(
-        self, *, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
     ) -> bool:
         """Return False for legacy markers; the runner uses its existing ACK path."""
         closure = await self._closures.read_closed_start(room_id, game_id, closed_at_ms)
@@ -62,7 +70,11 @@ class CapturedGameInvalidation:
         return True
 
     async def permits_previous_runtime_cleanup(
-        self, *, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
         runtime: VoteRuntimeSnapshot,
     ) -> bool:
         """Only the captured, durably finished predecessor may remain from next-game startup."""
@@ -71,7 +83,8 @@ class CapturedGameInvalidation:
             return False
         intent = closure.intent
         if (
-            intent.previous_game_id is None or runtime.room_id != room_id
+            intent.previous_game_id is None
+            or runtime.room_id != room_id
             or runtime.game_id != intent.previous_game_id
             or runtime.turn_no != intent.previous_turn_no
             or runtime.game_status is not GameStatus.FINISHED
@@ -79,7 +92,8 @@ class CapturedGameInvalidation:
             return False
         result = await self._games.load_result(runtime.game_id)
         return (
-            result is not None and result.game_id == runtime.game_id
+            result is not None
+            and result.game_id == runtime.game_id
             and result.room_id == room_id
         )
 
@@ -87,24 +101,34 @@ class CapturedGameInvalidation:
     def _command(value: ClosedStartIntent) -> StartGameCommand:
         intent = value.intent
         return StartGameCommand(
-            game_id=intent.game_id, room_id=intent.room_id,
-            voting_time_seconds=intent.vote_seconds, started_at=intent.started_at,
-            participants=tuple(GameParticipantRecord(
-                participant_id=item.participant_id, team=Stone(item.team),
-                member_id=None if item.member_id is None else int(item.member_id),
-                guest_label=item.guest_label,
-            ) for item in intent.players),
+            game_id=intent.game_id,
+            room_id=intent.room_id,
+            voting_time_seconds=intent.vote_seconds,
+            started_at=intent.started_at,
+            participants=tuple(
+                GameParticipantRecord(
+                    participant_id=item.participant_id,
+                    team=Stone(item.team),
+                    member_id=None if item.member_id is None else int(item.member_id),
+                    guest_label=item.guest_label,
+                )
+                for item in intent.players
+            ),
         )
 
     @classmethod
     def _validate_history(cls, value: ClosedStartIntent, history: GamePersistenceSnapshot) -> None:
         expected, actual = cls._command(value), history.start
+
         def roster(items: tuple[GameParticipantRecord, ...]) -> list[tuple[object, ...]]:
-            return sorted([
-                (p.participant_id, p.team.value, p.member_id, p.guest_label) for p in items
-            ], key=lambda item: str(item[0]))
+            return sorted(
+                [(p.participant_id, p.team.value, p.member_id, p.guest_label) for p in items],
+                key=lambda item: str(item[0]),
+            )
+
         if (
-            actual.game_id != expected.game_id or actual.room_id != expected.room_id
+            actual.game_id != expected.game_id
+            or actual.room_id != expected.room_id
             or actual.voting_time_seconds != expected.voting_time_seconds
             or actual.started_at != expected.started_at
             or roster(actual.participants) != roster(expected.participants)
