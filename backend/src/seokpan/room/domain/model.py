@@ -366,7 +366,9 @@ class Room:
             if self.status is RoomStatus.PLAYING
             else GameTermination.NONE
         )
-        terminated_game_id = self.game_id if game_termination is GameTermination.SYSTEM_INVALID else None
+        terminated_game_id = (
+            self.game_id if game_termination is GameTermination.SYSTEM_INVALID else None
+        )
         self.owner_id = None
         self.status = RoomStatus.CLOSED
         return DepartureResult(
