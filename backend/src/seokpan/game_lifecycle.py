@@ -24,9 +24,14 @@ class GameLifecycleBindings:
     completion: CapturedGameCompletion | None = None
 
     def __post_init__(self) -> None:
-        present = tuple(item is not None for item in (
-            self.startup, self.invalidation, self.completion,
-        ))
+        present = tuple(
+            item is not None
+            for item in (
+                self.startup,
+                self.invalidation,
+                self.completion,
+            )
+        )
         if any(present) and not all(present):
             raise ValueError("INCOMPLETE_GAME_LIFECYCLE")
 
@@ -38,9 +43,13 @@ def _captured(mode: Literal["legacy", "captured"]) -> bool:
 
 
 def build_memory_game_lifecycle(
-    *, mode: Literal["legacy", "captured"], rooms: InMemoryRoomRuntimeAdapter,
-    votes: InMemoryVoteRuntimeAdapter, games: GamePersistencePort,
-    room_service: RoomApplicationService, clock: MillisecondClock,
+    *,
+    mode: Literal["legacy", "captured"],
+    rooms: InMemoryRoomRuntimeAdapter,
+    votes: InMemoryVoteRuntimeAdapter,
+    games: GamePersistencePort,
+    room_service: RoomApplicationService,
+    clock: MillisecondClock,
 ) -> GameLifecycleBindings:
     if not _captured(mode):
         return GameLifecycleBindings()
@@ -55,21 +64,29 @@ def build_memory_game_lifecycle(
     initializer = InMemoryCapturedVoteInitializer(rooms=rooms, votes=votes, clock=clock)
     return GameLifecycleBindings(
         startup=CapturedGameStartup(
-            rooms=room_service, runtime=rooms, games=games, votes=votes,
-            initializer=initializer, clock=clock,
+            rooms=room_service,
+            runtime=rooms,
+            games=games,
+            votes=votes,
+            initializer=initializer,
+            clock=clock,
         ),
         invalidation=CapturedGameInvalidation(
-            closures=InMemoryCapturedClosureStore(rooms=rooms, votes=votes), games=games,
+            closures=InMemoryCapturedClosureStore(rooms=rooms, votes=votes),
+            games=games,
         ),
         completion=CapturedGameCompletion(
             records=InMemoryCapturedCompletionStore(rooms=rooms, votes=votes),
-            games=games, rooms=rooms,
+            games=games,
+            rooms=rooms,
         ),
     )
 
 
 def build_redis_game_lifecycle(
-    *, mode: Literal["legacy", "captured"], providers: ProductionProviders,
+    *,
+    mode: Literal["legacy", "captured"],
+    providers: ProductionProviders,
     room_service: RoomApplicationService,
 ) -> GameLifecycleBindings:
     if not _captured(mode):
@@ -86,15 +103,20 @@ def build_redis_game_lifecycle(
     client = providers.redis_client
     return GameLifecycleBindings(
         startup=CapturedGameStartup(
-            rooms=room_service, runtime=providers.rooms, games=providers.games,
-            votes=providers.votes, clock=providers.clock,
+            rooms=room_service,
+            runtime=providers.rooms,
+            games=providers.games,
+            votes=providers.votes,
             initializer=RedisCapturedVoteInitializer(client, providers.votes),
+            clock=providers.clock,
         ),
         invalidation=CapturedGameInvalidation(
-            closures=RedisCapturedClosureStore(client), games=providers.games,
+            closures=RedisCapturedClosureStore(client),
+            games=providers.games,
         ),
         completion=CapturedGameCompletion(
             records=RedisCapturedCompletionStore(client),
-            games=providers.games, rooms=providers.rooms,
+            games=providers.games,
+            rooms=providers.rooms,
         ),
     )
