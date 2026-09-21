@@ -622,7 +622,8 @@ class InMemoryRoomRuntimeAdapter:
             else ROOM_CLOSED_TOMBSTONE_TTL_MS
         )
         self._tombstones[command.room_id] = (
-            None if departure.game_termination is GameTermination.SYSTEM_INVALID
+            None
+            if departure.game_termination is GameTermination.SYSTEM_INVALID
             else self._clock.now_ms + closure_ttl_ms
         )
         if (

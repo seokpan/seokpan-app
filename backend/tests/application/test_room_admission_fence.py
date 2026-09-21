@@ -65,7 +65,9 @@ async def test_success_declares_session_and_lease_without_changing_request_finge
     result = await value._mutate("r1", "request", operation, supplied)
     assert result["ok"]
     assert [call[0] for call in calls] == [
-        ACQUIRE_ADMISSION, ADMITTED_ROOM_MUTATION, RELEASE_ADMISSION,
+        ACQUIRE_ADMISSION,
+        ADMITTED_ROOM_MUTATION,
+        RELEASE_ADMISSION,
     ]
     lease = admission_key(DIGEST)
     token = calls[0][2][0]
@@ -108,9 +110,14 @@ async def test_same_target_can_reach_underlying_idempotency_check(operation):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", [
-    "ROOM_ADMISSION_EXPIRED", "ROOM_ADMISSION_SESSION_INVALID", "SESSION_NOT_FOUND",
-])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "ROOM_ADMISSION_EXPIRED",
+        "ROOM_ADMISSION_SESSION_INVALID",
+        "SESSION_NOT_FOUND",
+    ],
+)
 async def test_atomic_fence_and_session_rejections_are_not_retried_as_legacy(code):
     value, calls = adapter(mutation_error=code)
     with pytest.raises(SessionRuleViolation, match=code):
@@ -120,9 +127,14 @@ async def test_atomic_fence_and_session_rejections_are_not_retried_as_legacy(cod
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", [
-    "ROOM_CAPACITY_REACHED", "ROOM_PASSWORD_INVALID", "STATE_VERSION_CONFLICT",
-])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "ROOM_CAPACITY_REACHED",
+        "ROOM_PASSWORD_INVALID",
+        "STATE_VERSION_CONFLICT",
+    ],
+)
 async def test_room_domain_rejections_remain_domain_rejections(code):
     value, calls = adapter(mutation_error=code)
     with pytest.raises(RoomRuleViolation, match=code):
@@ -166,7 +178,8 @@ async def test_release_failure_does_not_mask_a_committed_result():
 @pytest.mark.asyncio
 async def test_release_failure_does_not_mask_original_rejection():
     value, _ = adapter(
-        mutation_error="ROOM_CAPACITY_REACHED", release_error=RuntimeError("release"),
+        mutation_error="ROOM_CAPACITY_REACHED",
+        release_error=RuntimeError("release"),
     )
     with pytest.raises(RoomRuleViolation, match="ROOM_CAPACITY_REACHED"):
         await value._mutate("r1", "request", "join", payload("join"))
@@ -190,9 +203,13 @@ def test_invalid_session_digest_is_not_used_as_a_key(bad):
 def test_memory_counts_disconnected_bindings_until_actual_removal(connected):
     value = object.__new__(SessionAdmissionMemoryRoomAdapter)
     value._purge_expired = lambda: None
-    value._rooms = {"r1": SimpleNamespace(connections={
-        "p1": SimpleNamespace(session_digest=DIGEST, connected=connected),
-    })}
+    value._rooms = {
+        "r1": SimpleNamespace(
+            connections={
+                "p1": SimpleNamespace(session_digest=DIGEST, connected=connected),
+            }
+        )
+    }
     with pytest.raises(RoomRuleViolation, match="SESSION_ALREADY_IN_ROOM"):
         value._require_single_binding(DIGEST, "r2", "p2")
     # Leave/kick/expiry removes the real connection; there is no second index.
@@ -203,9 +220,13 @@ def test_memory_counts_disconnected_bindings_until_actual_removal(connected):
 def test_memory_closure_needs_no_separate_reservation_release():
     value = object.__new__(SessionAdmissionMemoryRoomAdapter)
     value._purge_expired = lambda: None
-    value._rooms = {"r1": SimpleNamespace(connections={
-        "p1": SimpleNamespace(session_digest=DIGEST),
-    })}
+    value._rooms = {
+        "r1": SimpleNamespace(
+            connections={
+                "p1": SimpleNamespace(session_digest=DIGEST),
+            }
+        )
+    }
     value._rooms.clear()
     value._require_single_binding(DIGEST, "r2", "p2")
 
@@ -213,15 +234,27 @@ def test_memory_closure_needs_no_separate_reservation_release():
 def test_service_factories_select_guarded_adapters_without_new_resource_ownership():
     root = Path(__file__).resolve().parents[2] / "src" / "seokpan"
     for path, module, name, alias in (
-        (root / "app.py", "seokpan.persistence.memory.room_admission",
-         "SessionAdmissionMemoryRoomAdapter", "InMemoryRoomRuntimeAdapter"),
-        (root / "production.py", "seokpan.persistence.redis.room_admission",
-         "SessionAdmissionRedisRoomAdapter", "RedisRoomRuntimeAdapter"),
+        (
+            root / "app.py",
+            "seokpan.persistence.memory.room_admission",
+            "SessionAdmissionMemoryRoomAdapter",
+            "InMemoryRoomRuntimeAdapter",
+        ),
+        (
+            root / "production.py",
+            "seokpan.persistence.redis.room_admission",
+            "SessionAdmissionRedisRoomAdapter",
+            "RedisRoomRuntimeAdapter",
+        ),
     ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         imports = [node for node in tree.body if isinstance(node, ast.ImportFrom)]
-        assert any(node.module == module and any(
-            item.name == name and item.asname == alias for item in node.names
-        ) for node in imports)
-        assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                   and node.func.id == alias for node in ast.walk(tree))
+        assert any(
+            node.module == module
+            and any(item.name == name and item.asname == alias for item in node.names)
+            for node in imports
+        )
+        assert any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == alias
+            for node in ast.walk(tree)
+        )

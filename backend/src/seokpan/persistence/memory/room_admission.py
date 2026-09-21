@@ -18,10 +18,10 @@ class SessionAdmissionMemoryRoomAdapter(InMemoryRoomRuntimeAdapter):
         self._purge_expired()
         for existing_room, state in self._rooms.items():
             for existing_participant, connection in state.connections.items():
-                if (
-                    connection.session_digest == digest
-                    and (existing_room, existing_participant) != (room_id, participant_id)
-                ):
+                if connection.session_digest == digest and (
+                    existing_room,
+                    existing_participant,
+                ) != (room_id, participant_id):
                     raise RoomRuleViolation("SESSION_ALREADY_IN_ROOM")
 
     async def create(self, command: CreateRoomRuntime) -> RoomMutationResult:

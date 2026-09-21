@@ -286,9 +286,7 @@ def test_system_invalid_tombstone_stays_pending_without_ttl_until_ack() -> None:
     assert "terminated_game_id" in source
     assert "closed_at_ms = current_ms" in source
 
-    pending = source.split(
-        "if termination == 'SYSTEM_INVALID' then", 1
-    )[1].split("else", 1)[0]
+    pending = source.split("if termination == 'SYSTEM_INVALID' then", 1)[1].split("else", 1)[0]
     assert "redis.call('SET', KEYS[7], marker)" in pending
     assert "'PX'" not in pending
 

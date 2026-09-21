@@ -63,8 +63,11 @@ class SharedParticipationRead:
             return None
         room_id, participant_id = matches[0]
         return RoomParticipation(
-            session_digest=digest, room_id=room_id, participant_id=participant_id,
-            actor_type=SessionActorType.MEMBER, actor_id="3",
+            session_digest=digest,
+            room_id=room_id,
+            participant_id=participant_id,
+            actor_type=SessionActorType.MEMBER,
+            actor_id="3",
         )
 
 
@@ -79,15 +82,22 @@ class UnusedPasswords:
 def session(number: int) -> SessionRecord:
     token = f"synthetic-csrf-{number}"
     return SessionRecord(
-        session_digest=f"{number:064x}", actor_type=SessionActorType.MEMBER,
-        actor_id=str(number), csrf_digest=digest_opaque_token(token), csrf_token=token,
-        created_at_ms=0, last_activity_at_ms=0, absolute_expires_at_ms=86_400_000,
+        session_digest=f"{number:064x}",
+        actor_type=SessionActorType.MEMBER,
+        actor_id=str(number),
+        csrf_digest=digest_opaque_token(token),
+        csrf_token=token,
+        created_at_ms=0,
+        last_activity_at_ms=0,
+        absolute_expires_at_ms=86_400_000,
     )
 
 
 def service(runtime: PauseFirstAdmission) -> RoomApplicationService:
     return RoomApplicationService(
-        runtime, UnusedPasswords(), participation_resolver=SharedParticipationRead(runtime),
+        runtime,
+        UnusedPasswords(),
+        participation_resolver=SharedParticipationRead(runtime),
     )
 
 
@@ -97,8 +107,10 @@ async def prepared():
     rooms = []
     for number in (1, 2):
         created = await seed.create_room(
-            session=session(number), request_id=f"seed-{number}",
-            config=RoomConfig(name=f"room-{number}", minimum_ready=2), password=None,
+            session=session(number),
+            request_id=f"seed-{number}",
+            config=RoomConfig(name=f"room-{number}", minimum_ready=2),
+            password=None,
         )
         if created.snapshot is None:
             pytest.fail("seed Room creation unexpectedly failed")
@@ -134,12 +146,17 @@ async def test_guarded_memory_join_uses_current_state_when_observation_is_stale(
 async def admit(app, actor, action, room_id, request_id):
     if action == "create":
         return await app.create_room(
-            session=actor, request_id=request_id,
-            config=RoomConfig(name=request_id, minimum_ready=2), password=None,
+            session=actor,
+            request_id=request_id,
+            config=RoomConfig(name=request_id, minimum_ready=2),
+            password=None,
         )
     return await app.join_room(
-        session=actor, room_id=room_id, request_id=request_id,
-        expected_state_version=1, password=None,
+        session=actor,
+        room_id=room_id,
+        request_id=request_id,
+        expected_state_version=1,
+        password=None,
     )
 
 
@@ -169,7 +186,8 @@ async def overlap(runtime, first, second):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("service_count", [1, 2])
 @pytest.mark.parametrize(
-    "actions", [("join", "join"), ("create", "join"), ("create", "create")],
+    "actions",
+    [("join", "join"), ("create", "join"), ("create", "create")],
 )
 async def test_one_session_cannot_be_admitted_to_two_rooms(service_count, actions):
     runtime, rooms = await prepared()

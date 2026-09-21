@@ -89,9 +89,7 @@ class RedisSessionWorkflow:
         token: str | None = None
         try:
             if self._admissions is not None:
-                token = await self._admissions.acquire_session_admission(
-                    current.session_digest
-                )
+                token = await self._admissions.acquire_session_admission(current.session_digest)
             await self._participants.leave(current)
             return await self._sessions.revoke(current.session_digest)
         except SessionRuleViolation:

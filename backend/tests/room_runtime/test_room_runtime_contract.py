@@ -301,9 +301,7 @@ async def test_disconnected_ready_participant_does_not_count_for_game_start(
     await room_harness.adapter.change_team(
         ChangeRoomTeam("room-1", "team-owner", "member-1", Team.BLACK, 2)
     )
-    await room_harness.adapter.set_ready(
-        SetRoomReady("room-1", "ready-owner", "member-1", True, 3)
-    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-owner", "member-1", True, 3))
     await room_harness.adapter.change_team(
         ChangeRoomTeam("room-1", "team-member", "member-2", Team.WHITE, 4)
     )
@@ -406,18 +404,12 @@ async def test_playing_room_closure_records_retryable_game_invalidation(
     await room_harness.adapter.change_team(
         ChangeRoomTeam("room-1", "black", "member-1", Team.BLACK, 2)
     )
-    await room_harness.adapter.set_ready(
-        SetRoomReady("room-1", "ready-black", "member-1", True, 3)
-    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-black", "member-1", True, 3))
     await room_harness.adapter.change_team(
         ChangeRoomTeam("room-1", "white", "guest-1", Team.WHITE, 4)
     )
-    await room_harness.adapter.set_ready(
-        SetRoomReady("room-1", "ready-white", "guest-1", True, 5)
-    )
-    await room_harness.adapter.start_game(
-        StartRoomGame("room-1", "start", "member-1", "game-1", 6)
-    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-white", "guest-1", True, 5))
+    await room_harness.adapter.start_game(StartRoomGame("room-1", "start", "member-1", "game-1", 6))
 
     closed = await room_harness.adapter.leave(
         LeaveRoomRuntime("room-1", "leave-owner", "member-1", 7)
