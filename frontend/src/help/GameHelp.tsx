@@ -180,9 +180,9 @@ function HelpDialog({ trigger, close }: { trigger: HTMLButtonElement; close: () 
             흐릅니다.
           </p>
           <p>
-            방장이 직접 방 나가기를 선택하면 이탈이 즉시 확정됩니다. 이 경우 접속 중인 Member 중 먼저
-            입장한 사람이 방장을 이어받고 모든 Ready가 해제됩니다. 이어받을 Member가 없으면 방이
-            종료됩니다.
+            방장이 직접 방 나가기를 선택하면 이탈이 즉시 확정됩니다. 이 경우 접속 중인 Member 중
+            먼저 입장한 사람이 방장을 이어받고 모든 Ready가 해제됩니다. 이어받을 Member가 없으면
+            방이 종료됩니다.
           </p>
           <p>
             방장의 연결만 끊긴 경우에는 10초 동안 기존 방장과 Ready 상태를 유지합니다. 그 안에 같은

@@ -189,10 +189,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
       this.#epoch++;
       if (this.#view.phase === "ended") return;
       if (event.code === 4001) {
-        this.#block(
-          "다른 탭에서 이 방을 사용 중입니다.",
-          "connection-replaced",
-        );
+        this.#block("다른 탭에서 이 방을 사용 중입니다.", "connection-replaced");
         return;
       }
       if ([4401, 4403, 4404, 1008].includes(event.code)) {
@@ -224,10 +221,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
       );
     };
   }
-  #block(
-    message: string,
-    blockReason: StreamView<T>["blockReason"] = null,
-  ) {
+  #block(message: string, blockReason: StreamView<T>["blockReason"] = null) {
     this.#authBlocked = false;
     clearTimeout(this.#timer);
     this.#timer = undefined;
@@ -245,10 +239,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
   #message(event: Envelope) {
     if ((event.room_id ?? null) !== (this.options.roomId ?? null)) throw new Error("WRONG_STREAM");
     if (event.event_type === "connection.reconnect_required") {
-      this.#block(
-        "다른 탭에서 이 방을 사용 중입니다.",
-        "connection-replaced",
-      );
+      this.#block("다른 탭에서 이 방을 사용 중입니다.", "connection-replaced");
       return;
     }
     if (event.event_type === "room.closed") {

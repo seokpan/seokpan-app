@@ -145,7 +145,9 @@ describe("authentication and lobby screens", () => {
     mount(fetcher, "/lobby");
 
     const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
-    expect(within(navigation).queryByRole("link", { name: "Member 로그인" })).not.toBeInTheDocument();
+    expect(
+      within(navigation).queryByRole("link", { name: "Member 로그인" }),
+    ).not.toBeInTheDocument();
     expect(
       within(screen.getByRole("group", { name: "계정" })).getByRole("link", {
         name: "Member 로그인",

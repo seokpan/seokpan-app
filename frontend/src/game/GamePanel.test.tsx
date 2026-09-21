@@ -196,18 +196,10 @@ describe("game screen flow", () => {
     fireEvent.click(screen.getByText("자세한 규칙·재접속 안내"));
     expect(screen.getByText(/10초 안에 같은 사용자로/)).toBeInTheDocument();
     expect(screen.getByText(/이전 표는 자동 복원되지 않습니다/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/직접 방 나가기를 선택하면 이탈이 즉시 확정/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/10초 동안 기존 방장과 Ready 상태를 유지/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/10초가 지나 이탈이 확정되면/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/방장 권한이 자동으로 돌아가지는 않습니다/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/직접 방 나가기를 선택하면 이탈이 즉시 확정/)).toBeInTheDocument();
+    expect(screen.getByText(/10초 동안 기존 방장과 Ready 상태를 유지/)).toBeInTheDocument();
+    expect(screen.getByText(/10초가 지나 이탈이 확정되면/)).toBeInTheDocument();
+    expect(screen.getByText(/방장 권한이 자동으로 돌아가지는 않습니다/)).toBeInTheDocument();
     expect(
       screen.getByText(/서버 장애는 개인의 무투표나 이탈로 처리하지 않습니다/),
     ).toBeInTheDocument();

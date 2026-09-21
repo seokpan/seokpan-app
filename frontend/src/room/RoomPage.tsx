@@ -38,7 +38,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
             ? " 방장이라면 접속 중인 Member에게 권한이 넘어가며, 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
             : ""
         }`
-      : room?.owner_id === me?.participant_id
+      : !!room && room.owner_id === me?.participant_id
         ? room.status === "PLAYING"
           ? "방장이 나가면 접속 중인 Member에게 권한이 넘어갑니다. 승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다."
           : "방장이 나가면 접속 중인 Member에게 권한이 넘어가고 Ready가 모두 해제됩니다. 승계할 Member가 없으면 방이 종료됩니다."
@@ -69,11 +69,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
   const blackReady = readyPlayers.some((p) => p.team === "BLACK");
   const whiteReady = readyPlayers.some((p) => p.team === "WHITE");
   const canStart =
-    canChange &&
-    room?.owner_id === me?.participant_id &&
-    enoughReady &&
-    blackReady &&
-    whiteReady;
+    canChange && room?.owner_id === me?.participant_id && enoughReady && blackReady && whiteReady;
   const showResult =
     room?.status === "WAITING" &&
     room.last_game_id &&
@@ -192,11 +188,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
                           </h2>
                           <ul
                             aria-label={`${
-                              team === "BLACK"
-                                ? "흑팀"
-                                : team === "WHITE"
-                                  ? "백팀"
-                                  : "팀 미선택"
+                              team === "BLACK" ? "흑팀" : team === "WHITE" ? "백팀" : "팀 미선택"
                             } 참가자`}
                             tabIndex={0}
                           >

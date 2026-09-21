@@ -85,8 +85,8 @@ export function UserMenu({ identity }: { identity: SessionIdentity }) {
           {identity.room_id && (
             <p id={`${id}-logout-impact`}>
               로그아웃하면 참여 중인 방에서도 나갑니다. 방장이라면 접속 중인 Member에게 권한이
-              넘어가며, 승계할 Member가 없으면 방이 종료될 수 있습니다. 게임 중이라면 이탈
-              처리로 결과에 영향을 줄 수 있습니다.
+              넘어가며, 승계할 Member가 없으면 방이 종료될 수 있습니다. 게임 중이라면 이탈 처리로
+              결과에 영향을 줄 수 있습니다.
             </p>
           )}
           <button
