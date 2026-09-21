@@ -12,7 +12,9 @@ import pytest
 from seokpan.game.application.captured_invalidation import CapturedGameInvalidation
 from seokpan.game.application.persistence import PersistenceRuleViolation
 from seokpan.room.application.start_closure import (
-    ClosedStartIntent, decode_closed_start, terminal_phase,
+    ClosedStartIntent,
+    decode_closed_start,
+    terminal_phase,
 )
 from seokpan.room.application.start_intent import RoomGameStartIntent, StartIntentPlayer
 from seokpan.room.domain import RoomRuleViolation
@@ -27,28 +29,54 @@ CLOSED = 9000
 @pytest.fixture
 def intent() -> RoomGameStartIntent:
     return RoomGameStartIntent(
-        room_id=R, game_id=G, original_request_id="start", owner_id=B,
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(B, "BLACK", member_id="18446744073709551615"),
-                 StartIntentPlayer(W, "WHITE", guest_label="Guest-0001")),
+        room_id=R,
+        game_id=G,
+        original_request_id="start",
+        owner_id=B,
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(B, "BLACK", member_id="18446744073709551615"),
+            StartIntentPlayer(W, "WHITE", guest_label="Guest-0001"),
+        ),
     )
 
 
 def marker(**changes: object) -> str:
-    return json.dumps(dict(room_id=R, terminated_game_id=G,
-                           closed_at_ms=CLOSED, invalidation_pending=True) | changes)
+    return json.dumps(
+        {
+            "room_id": R,
+            "terminated_game_id": G,
+            "closed_at_ms": CLOSED,
+            "invalidation_pending": True,
+        }
+        | changes
+    )
 
 
 def decode(intent: RoomGameStartIntent, phase: object = "PENDING", **changes: object):
-    return decode_closed_start(room_id=R, game_id=G, closed_at_ms=CLOSED,
-                               marker_wire=marker(**changes), intent_wire=intent.to_json(),
-                               phase_wire=phase)
+    return decode_closed_start(
+        room_id=R,
+        game_id=G,
+        closed_at_ms=CLOSED,
+        marker_wire=marker(**changes),
+        intent_wire=intent.to_json(),
+        phase_wire=phase,
+    )
 
 
 def initialized(intent: RoomGameStartIntent) -> str:
-    return json.dumps(dict(schema_version=1, phase="INITIALIZED", game_id=G,
-                           initialized_at_ms=2000, first_deadline_ms=17000,
-                           intent_fingerprint=intent.fingerprint))
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "phase": "INITIALIZED",
+            "game_id": G,
+            "initialized_at_ms": 2000,
+            "first_deadline_ms": 17000,
+            "intent_fingerprint": intent.fingerprint,
+        }
+    )
 
 
 def test_pending_is_proof_of_uninitialized_closure(intent):
@@ -67,27 +95,43 @@ def test_terminal_cut_before_ack_and_duplicate_after_ack_are_decodable(intent):
     assert decode(intent, terminal, invalidation_pending=False).acknowledged
 
 
-@pytest.mark.parametrize("change", [
-    {"room_id": "other"}, {"terminated_game_id": "other"}, {"closed_at_ms": True},
-    {"closed_at_ms": 9001}, {"invalidation_pending": 1}, {"invalidation_pending": None},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"room_id": "other"},
+        {"terminated_game_id": "other"},
+        {"closed_at_ms": True},
+        {"closed_at_ms": 9001},
+        {"invalidation_pending": 1},
+        {"invalidation_pending": None},
+    ],
+)
 def test_closure_identity_and_type_must_match(intent, change):
     with pytest.raises(RoomRuleViolation):
         decode(intent, **change)
 
 
-@pytest.mark.parametrize("phase", [None, "", "CLOSED", "{}", "null", "[]",
-                                   '{"phase":"PENDING","phase":"INITIALIZED"}'])
+@pytest.mark.parametrize(
+    "phase",
+    [None, "", "CLOSED", "{}", "null", "[]", '{"phase":"PENDING","phase":"INITIALIZED"}'],
+)
 def test_unknown_missing_or_duplicate_phase_is_not_pending(intent, phase):
     with pytest.raises(RoomRuleViolation):
         decode(intent, phase)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("schema_version", True), ("game_id", "other"), ("intent_fingerprint", "other"),
-    ("initialized_at_ms", 999), ("initialized_at_ms", 10000),
-    ("initialized_at_ms", True), ("first_deadline_ms", 17001),
-])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("game_id", "other"),
+        ("intent_fingerprint", "other"),
+        ("initialized_at_ms", 999),
+        ("initialized_at_ms", 10000),
+        ("initialized_at_ms", True),
+        ("first_deadline_ms", 17001),
+    ],
+)
 def test_invalid_initialization_witness_rejected(intent, field, value):
     data = json.loads(initialized(intent))
     data[field] = value
@@ -101,17 +145,38 @@ def test_acknowledged_marker_cannot_claim_pending(intent):
 
 
 def test_legacy_absence_is_allowed_only_with_real_matching_closure():
-    assert decode_closed_start(room_id=R, game_id=G, closed_at_ms=CLOSED,
-                               marker_wire=marker(), intent_wire=None, phase_wire=None) is None
+    assert (
+        decode_closed_start(
+            room_id=R,
+            game_id=G,
+            closed_at_ms=CLOSED,
+            marker_wire=marker(),
+            intent_wire=None,
+            phase_wire=None,
+        )
+        is None
+    )
     with pytest.raises(RoomRuleViolation):
-        decode_closed_start(room_id=R, game_id=G, closed_at_ms=CLOSED,
-                            marker_wire=None, intent_wire=None, phase_wire=None)
+        decode_closed_start(
+            room_id=R,
+            game_id=G,
+            closed_at_ms=CLOSED,
+            marker_wire=None,
+            intent_wire=None,
+            phase_wire=None,
+        )
 
 
 def test_half_missing_record_and_closure_before_start_are_rejected(intent):
     with pytest.raises(RoomRuleViolation):
-        decode_closed_start(room_id=R, game_id=G, closed_at_ms=CLOSED,
-                            marker_wire=marker(), intent_wire=None, phase_wire="PENDING")
+        decode_closed_start(
+            room_id=R,
+            game_id=G,
+            closed_at_ms=CLOSED,
+            marker_wire=marker(),
+            intent_wire=None,
+            phase_wire="PENDING",
+        )
     with pytest.raises(RoomRuleViolation):
         decode(replace(intent, started_at_ms=CLOSED + 1))
 
@@ -130,8 +195,14 @@ def harness(intent):
         state.history = SimpleNamespace(start=command, moves=(), participants=())
     games.start_game = AsyncMock(side_effect=start)
     service = CapturedGameInvalidation(closures=closures, games=games)
-    return SimpleNamespace(value=value, state=state, games=games, closures=closures,
-                           service=service, trace=trace)
+    return SimpleNamespace(
+        value=value,
+        state=state,
+        games=games,
+        closures=closures,
+        service=service,
+        trace=trace,
+    )
 
 
 async def prepare(h):
@@ -163,8 +234,11 @@ async def test_missing_history_not_recreated_after_initialization_or_finalizatio
     if state == "initialized":
         value = decode(h.value.intent, initialized(h.value.intent))
     else:
-        value = decode(h.value.intent, terminal_phase(h.value),
-                       invalidation_pending=state != "acknowledged")
+        value = decode(
+            h.value.intent,
+            terminal_phase(h.value),
+            invalidation_pending=state != "acknowledged",
+        )
     h.closures.read_closed_start.return_value = value
     with pytest.raises(PersistenceRuleViolation):
         await prepare(h)
@@ -202,15 +276,24 @@ async def test_concurrent_exact_start_winner_is_accepted(harness):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field,value", [("room_id", "other"), ("game_id", "other"),
-                                        ("voting_time_seconds", 30), ("started_at", None),
-                                        ("participants", ())])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("room_id", "other"),
+        ("game_id", "other"),
+        ("voting_time_seconds", 30),
+        ("started_at", None),
+        ("participants", ()),
+    ],
+)
 async def test_existing_history_must_match_immutable_intent(harness, field, value):
     h = harness
     await prepare(h)
     command = h.state.history.start
-    fields = {name: getattr(command, name) for name in
-              ("room_id", "game_id", "voting_time_seconds", "started_at", "participants")}
+    fields = {
+        name: getattr(command, name)
+        for name in ("room_id", "game_id", "voting_time_seconds", "started_at", "participants")
+    }
     fields[field] = value
     h.state.history.start = SimpleNamespace(**fields)
     with pytest.raises(PersistenceRuleViolation):
@@ -259,18 +342,29 @@ def runner_harness(harness, monkeypatch):
         cut("history")
     h.games.start_game.side_effect = start
     result = GameResult(
-        game_id=G, status=GameStatus.SYSTEM_INVALID, end_reason=EndReason.SYSTEM_INVALID,
-        winner=Stone.EMPTY, winning_line=(), stats_eligible=False, rating_adjustments=(),
+        game_id=G,
+        status=GameStatus.SYSTEM_INVALID,
+        end_reason=EndReason.SYSTEM_INVALID,
+        winner=Stone.EMPTY,
+        winning_line=(),
+        stats_eligible=False,
+        rating_adjustments=(),
     )
     domain = Mock()
     domain.return_value.finalize_system_invalid.return_value = result
     monkeypatch.setattr(resolution, "GameResultService", domain)
-    monkeypatch.setattr(resolution, "replay_game_history",
-                        Mock(return_value=SimpleNamespace(status=GameStatus.ACTIVE)))
+    monkeypatch.setattr(
+        resolution,
+        "replay_game_history",
+        Mock(return_value=SimpleNamespace(status=GameStatus.ACTIVE)),
+    )
     async def persist(command):
         events.append("result")
-        h.state.result = SimpleNamespace(game_id=G, room_id=R,
-                                        end_reason=command.result.end_reason)
+        h.state.result = SimpleNamespace(
+            game_id=G,
+            room_id=R,
+            end_reason=command.result.end_reason,
+        )
         cut("result")
     async def discard(*_):
         events.append("discard")
@@ -283,10 +377,20 @@ def runner_harness(harness, monkeypatch):
     h.closures.acknowledge.side_effect = acknowledge
     rooms = Mock(complete_game_invalidation=AsyncMock())
     runner = resolution.TurnResolutionRunner(
-        due_turns=Mock(), finalization_gate=Mock(), tie_selector=Mock(), tie_audit=Mock(),
-        votes=Mock(get=AsyncMock(return_value=None), discard_game=AsyncMock(side_effect=discard)),
-        games=h.games, rooms=rooms, clock=SimpleNamespace(now_ms=99000), runner_id="closure-qa",
-        events=Mock(), captured_invalidation=h.service,
+        due_turns=Mock(),
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=Mock(
+            get=AsyncMock(return_value=None),
+            discard_game=AsyncMock(side_effect=discard),
+        ),
+        games=h.games,
+        rooms=rooms,
+        clock=SimpleNamespace(now_ms=99000),
+        runner_id="closure-qa",
+        events=Mock(),
+        captured_invalidation=h.service,
     )
     return SimpleNamespace(h=h, runner=runner, events=events, faults=faults, rooms=rooms)
 
@@ -324,8 +428,12 @@ async def test_only_durably_finished_captured_predecessor_is_authorized(harness,
     previous = "00000000-0000-4000-8000-000000000009"
     old = replace(h.value.intent, previous_game_id=previous, previous_turn_no=8)
     h.closures.read_closed_start.return_value = decode(old)
-    runtime = SimpleNamespace(room_id=R, game_id=previous, turn_no=8,
-                              game_status=GameStatus.FINISHED)
+    runtime = SimpleNamespace(
+        room_id=R,
+        game_id=previous,
+        turn_no=8,
+        game_status=GameStatus.FINISHED,
+    )
     h.state.result = SimpleNamespace(game_id=previous, room_id=R)
     if fault == "active":
         runtime.game_status = GameStatus.ACTIVE
@@ -336,6 +444,9 @@ async def test_only_durably_finished_captured_predecessor_is_authorized(harness,
     elif fault == "no_result":
         h.state.result = None
     allowed = await h.service.permits_previous_runtime_cleanup(
-        room_id=R, game_id=G, closed_at_ms=CLOSED, runtime=runtime,
+        room_id=R,
+        game_id=G,
+        closed_at_ms=CLOSED,
+        runtime=runtime,
     )
     assert allowed is (fault is None)
