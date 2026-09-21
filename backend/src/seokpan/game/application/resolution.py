@@ -23,7 +23,6 @@ from seokpan.game.domain import (
     GameResultService,
     GameRuleViolation,
     GameStatus,
-    Stone,
 )
 from seokpan.room.application import (
     CompleteRoomGame,
