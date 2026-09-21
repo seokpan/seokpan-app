@@ -3,7 +3,9 @@
 from seokpan.persistence.redis.common import VersionedLuaScript
 
 CLOSED_START_READ = VersionedLuaScript(
-    name="closed-start-read", version=1, source=r"""
+    name="closed-start-read",
+    version=1,
+    source=r"""
 local function reject(code) return cjson.encode({ok=false,error=code}) end
 local types = {'hash','string','string','string'}
 for i, expected in ipairs(types) do
@@ -21,7 +23,9 @@ return cjson.encode({ok=true,marker=marker,
 )
 
 CLOSED_START_ACK = VersionedLuaScript(
-    name="closed-start-ack", version=1, source=r"""
+    name="closed-start-ack",
+    version=1,
+    source=r"""
 local function reject(code) return cjson.encode({ok=false,error=code}) end
 local types = {'hash','string','string','string','string'}
 for i, expected in ipairs(types) do
