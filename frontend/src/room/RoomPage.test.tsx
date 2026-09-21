@@ -9,7 +9,7 @@ import { FakeSocket, event } from "../realtime/testing";
 afterEach(cleanup);
 
 describe("waiting owner kick", () => {
-  it("confirms the named target, sends one versioned request and keeps the owner's board/socket", async () => {
+  it("kicks the named target with one versioned request", async () => {
     const target = {
       ...participant,
       participant_id: "p2",
@@ -264,7 +264,7 @@ describe("room HTTP and receive-only connection integration", () => {
     expect(socket.close).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls.some((c) => c[0] === "/api/v1/sessions/guest")).toBe(false);
   });
-  it("creates one public room with CSRF and enters the server-confirmed participation", async () => {
+  it("creates a public room and enters confirmed participation", async () => {
     let joined = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
       if (url === "/api/v1/session/csrf")
@@ -302,7 +302,7 @@ describe("room HTTP and receive-only connection integration", () => {
     expect(new Headers(creates[0][1]?.headers).get("X-CSRF-Token")).toBe(identity.csrf_token);
     expect(sockets.get("/ws/v1/lobby")!.close).toHaveBeenCalledTimes(1);
   });
-  it("uses room resource version for a team command and keeps the socket during recheck", async () => {
+  it("uses the room version for team change without reconnecting", async () => {
     let changed = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
       if (url === "/api/v1/session/csrf")
@@ -346,7 +346,7 @@ describe("room HTTP and receive-only connection integration", () => {
     });
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
   });
-  it("joins with the latest lobby version and never exposes a private password in the URL", async () => {
+  it("joins privately without exposing the password in the URL", async () => {
     const listed = {
       ...room,
       visibility: "PRIVATE",
