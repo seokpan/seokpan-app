@@ -20,18 +20,33 @@ WHITE = "00000000-0000-4000-8000-000000000004"
 @pytest.fixture
 def pending_start() -> SimpleNamespace:
     intent = RoomGameStartIntent(
-        room_id=ROOM, game_id=GAME, owner_id=OWNER, original_request_id="original",
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(OWNER, "BLACK", member_id="1"),
-                 StartIntentPlayer(WHITE, "WHITE", member_id="2")),
+        room_id=ROOM,
+        game_id=GAME,
+        owner_id=OWNER,
+        original_request_id="original",
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(OWNER, "BLACK", member_id="1"),
+            StartIntentPlayer(WHITE, "WHITE", member_id="2"),
+        ),
     )
     playing = SimpleNamespace(
-        room_id=ROOM, game_id=GAME, owner_id=OWNER,
-        status=RoomStatus.PLAYING, state_version=7,
+        room_id=ROOM,
+        game_id=GAME,
+        owner_id=OWNER,
+        status=RoomStatus.PLAYING,
+        state_version=7,
     )
-    rooms = SimpleNamespace(resolve_participation=AsyncMock(return_value=SimpleNamespace(
-        room_id=ROOM, participant_id=OWNER,
-    )))
+    rooms = SimpleNamespace(
+        resolve_participation=AsyncMock(
+            return_value=SimpleNamespace(
+                room_id=ROOM,
+                participant_id=OWNER,
+            )
+        )
+    )
     runtime = SimpleNamespace(
         get=AsyncMock(return_value=playing),
         get_start_intent=AsyncMock(return_value=intent),
@@ -45,19 +60,35 @@ def pending_start() -> SimpleNamespace:
     votes = SimpleNamespace(get=AsyncMock(return_value=None))
     initializer = SimpleNamespace(
         get_phase=AsyncMock(return_value="PENDING"),
-        initialize=AsyncMock(return_value=SimpleNamespace(snapshot=object(), replayed=False)),
+        initialize=AsyncMock(
+            return_value=SimpleNamespace(
+                snapshot=object(),
+                replayed=False,
+            )
+        ),
     )
     startup = CapturedGameStartup(
-        rooms=rooms, runtime=runtime, games=games, votes=votes,
-        initializer=initializer, clock=SimpleNamespace(now_ms=5000),
+        rooms=rooms,
+        runtime=runtime,
+        games=games,
+        votes=votes,
+        initializer=initializer,
+        clock=SimpleNamespace(now_ms=5000),
     )
-    return SimpleNamespace(startup=startup, games=games, initializer=initializer, intent=intent)
+    return SimpleNamespace(
+        startup=startup,
+        games=games,
+        initializer=initializer,
+        intent=intent,
+    )
 
 
 async def recover(value: SimpleNamespace, request: str = "retry", version: int = 7):
     return await value.startup.start_game(
-        session=SimpleNamespace(session_digest="a" * 64), room_id=ROOM,
-        request_id=request, expected_state_version=version,
+        session=SimpleNamespace(session_digest="a" * 64),
+        room_id=ROOM,
+        request_id=request,
+        expected_state_version=version,
     )
 
 
