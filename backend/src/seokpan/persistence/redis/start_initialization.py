@@ -41,7 +41,7 @@ class RedisCapturedVoteInitializer:
     async def initialize(self, command: InitializeCapturedGame) -> VoteMutationResult:
         intent = command.intent
         room_id = intent.room_id
-        keys = (
+        keys: tuple[str, ...] = (
             RedisKeyspace.room_meta(room_id),
             RedisKeyspace.room_participants(room_id),
             RedisKeyspace.room_closed(room_id),

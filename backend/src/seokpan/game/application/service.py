@@ -307,11 +307,12 @@ class GameApplicationService:
             raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
         # This reread detects observed changes; Redis initialize remains the
         # atomic Room/Game guard. It is not a cross-provider transaction.
+        game_id = latest_room.game_id
         room = latest_room
         initialize = InitializeVoteRuntime(
             room_id=room.room_id,
             request_id=request_id,
-            game_id=room.game_id,
+            game_id=game_id,
             participants=tuple(
                 Voter(
                     participant_id=item.participant_id,
