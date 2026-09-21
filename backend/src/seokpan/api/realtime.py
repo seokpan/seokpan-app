@@ -384,9 +384,7 @@ async def _stream_events(
                 websocket,
                 access_state,
                 room_id=room_id,
-                state_version=(
-                    snapshot_version if state_version is None else state_version()
-                ),
+                state_version=(snapshot_version if state_version is None else state_version()),
             )
             if access_end is not None:
                 return access_end

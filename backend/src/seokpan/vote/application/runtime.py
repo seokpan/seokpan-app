@@ -187,8 +187,7 @@ class FinalizeRuntimeGame:
         _positive(self.turn_no, code="INVALID_TURN_NUMBER")
         _positive(self.expected_state_version, code="INVALID_STATE_VERSION")
         valid = (
-            self.end_reason is EndReason.FORFEIT
-            and self.winner in {Stone.BLACK, Stone.WHITE}
+            self.end_reason is EndReason.FORFEIT and self.winner in {Stone.BLACK, Stone.WHITE}
         ) or (
             self.end_reason in {EndReason.JOINT_LOSS, EndReason.SYSTEM_INVALID}
             and self.winner is Stone.EMPTY

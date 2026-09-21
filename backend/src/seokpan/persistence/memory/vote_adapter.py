@@ -71,9 +71,9 @@ class InMemoryVoteRuntimeAdapter:
         self._room_lookup = room_lookup
         self._states: dict[str, _VoteState] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
-        self._captured_start_records: tuple[
-            Mapping[tuple[str, str], object], Mapping[tuple[str, str], object]
-        ] | None = None
+        self._captured_start_records: (
+            tuple[Mapping[tuple[str, str], object], Mapping[tuple[str, str], object]] | None
+        ) = None
 
     def bind_captured_start_records(
         self,

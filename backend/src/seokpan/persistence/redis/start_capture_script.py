@@ -18,7 +18,8 @@ def start_phase_key(room_id: str, game_id: str) -> str:
 ROOM_START_CAPTURE = VersionedLuaScript(
     name="room-start-capture",
     version=1,
-    source=_SNAPSHOT + r"""
+    source=_SNAPSHOT
+    + r"""
 local function reject(code)
   return cjson.encode({ok=false, error=code})
 end

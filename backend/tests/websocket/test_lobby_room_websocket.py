@@ -1171,12 +1171,14 @@ def test_room_setup_failure_after_generation_claim_starts_disconnect_lease(
         participant_id = str(joined["participants"][1]["participant_id"])
 
         monkeypatch.setattr("seokpan.api.realtime.SnapshotReader.room", fail_snapshot)
-        with member.websocket_connect(
-            f"/ws/v1/rooms/{room['room_id']}",
-            headers=_ws_headers(member),
-        ) as socket:
-            with pytest.raises(WebSocketDisconnect) as failed:
-                socket.receive_json()
+        with (
+            member.websocket_connect(
+                f"/ws/v1/rooms/{room['room_id']}",
+                headers=_ws_headers(member),
+            ) as socket,
+            pytest.raises(WebSocketDisconnect) as failed,
+        ):
+            socket.receive_json()
         assert failed.value.code == 1011
 
         current = owner.get(f"/api/v1/rooms/{room['room_id']}/snapshot")

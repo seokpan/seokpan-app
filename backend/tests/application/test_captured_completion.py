@@ -228,8 +228,19 @@ async def test_provider_failure_or_cancel_does_not_complete(context, failure):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["active", "turn", "other_runtime", "closure", "no_room",
-                                    "pending", "missing_phase", "missing_intent"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "active",
+        "turn",
+        "other_runtime",
+        "closure",
+        "no_room",
+        "pending",
+        "missing_phase",
+        "missing_intent",
+    ],
+)
 async def test_ambiguous_runtime_or_proof_fails_closed(context, change):
     c = context
     if change == "active":
@@ -515,7 +526,9 @@ async def test_retention_not_applied_during_matching_f15_invalidation(context):
 
     await complete(c)
     c.store._pending[R, G] = pending_completion_wire(
-        c.intent, c.rooms._start_phases[R, G], released=True,
+        c.intent,
+        c.rooms._start_phases[R, G],
+        released=True,
     )
     c.rooms._pending_game_invalidations[R] = SimpleNamespace(game_id=G)
     assert await c.service.reconcile() == 0
@@ -605,6 +618,7 @@ async def test_redis_pending_scan_resumes_between_batches_and_new_instance_redis
             async def scan():
                 for key in keys:
                     yield key
+
             return scan()
 
     client = Client()

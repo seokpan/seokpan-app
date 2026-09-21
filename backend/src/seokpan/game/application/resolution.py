@@ -165,12 +165,7 @@ class TurnResolutionRunner:
         """Finalize an active Game after Room state confirms player departures."""
         room = await self._rooms.get(room_id)
         runtime = await self._votes.get(room_id)
-        if (
-            room is None
-            or runtime is None
-            or room.game_id != game_id
-            or runtime.game_id != game_id
-        ):
+        if room is None or runtime is None or room.game_id != game_id or runtime.game_id != game_id:
             return False
 
         history = await self._games.load_game(game_id)

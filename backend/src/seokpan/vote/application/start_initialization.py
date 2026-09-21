@@ -24,18 +24,19 @@ class InitializeCapturedGame:
         if not isinstance(self.intent, RoomGameStartIntent):
             raise VoteRuleViolation("START_INTENT_INVALID")
         self.intent.to_json()
-        if not isinstance(self.request_id, str) or re.fullmatch(
-            r"[A-Za-z0-9_-]{1,64}", self.request_id
-        ) is None:
+        if (
+            not isinstance(self.request_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.request_id) is None
+        ):
             raise VoteRuleViolation("INVALID_REQUEST_ID")
-        if not isinstance(self.actor_id, str) or re.fullmatch(
-            r"[A-Za-z0-9_-]{1,64}", self.actor_id
-        ) is None:
+        if (
+            not isinstance(self.actor_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.actor_id) is None
+        ):
             raise VoteRuleViolation("INVALID_PARTICIPANT_ID")
         if (
             type(self.expected_room_version) is not int
-            or not self.intent.accepted_state_version
-            <= self.expected_room_version < 2**53
+            or not self.intent.accepted_state_version <= self.expected_room_version < 2**53
         ):
             raise VoteRuleViolation("STATE_VERSION_CONFLICT")
 

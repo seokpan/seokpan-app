@@ -90,6 +90,7 @@ class CapturedGameCompletion:
                 [(p.participant_id, p.team.value, p.member_id, p.guest_label) for p in values],
                 key=lambda item: item[0],
             )
+
         if (
             actual.game_id != game_id
             or actual.room_id != room_id

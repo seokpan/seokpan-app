@@ -219,7 +219,6 @@ def test_explicit_player_leave_finishes_active_game_as_forfeit(application: Fast
         assert guest.get("/api/v1/session").json()["room_id"] is None
 
 
-
 def test_start_get_and_vote_headless_flow(application: FastAPI) -> None:
     with (
         TestClient(application, base_url=ORIGIN) as owner,

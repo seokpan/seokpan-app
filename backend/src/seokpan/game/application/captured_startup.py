@@ -77,9 +77,10 @@ class CapturedGameStartup:
         request_id: str,
         expected_state_version: int,
     ) -> CapturedStartOutcome:
-        if not isinstance(request_id, str) or re.fullmatch(
-            r"[A-Za-z0-9_-]{1,64}", request_id
-        ) is None:
+        if (
+            not isinstance(request_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id) is None
+        ):
             raise RoomRuleViolation("INVALID_REQUEST_ID")
         if type(expected_state_version) is not int or not 1 <= expected_state_version < 2**53:
             raise RoomRuleViolation("INVALID_STATE_VERSION")
@@ -140,11 +141,7 @@ class CapturedGameStartup:
             # Never reconstruct the accepted roster from current Ready/identity.
             raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
         latest = await self._runtime.get(room_id)
-        if (
-            latest is None
-            or latest.status is not RoomStatus.PLAYING
-            or latest.game_id != game_id
-        ):
+        if latest is None or latest.status is not RoomStatus.PLAYING or latest.game_id != game_id:
             raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
         if latest.owner_id != participation.participant_id:
             raise RoomRuleViolation("OWNER_REQUIRED")

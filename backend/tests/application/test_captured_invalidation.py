@@ -1,4 +1,5 @@
 """Captured F09-to-F15 orchestration and immutable evidence boundary tests."""
+
 from __future__ import annotations
 
 import asyncio
@@ -189,9 +190,11 @@ def harness(intent):
     games = Mock()
     games.load_game = AsyncMock(side_effect=lambda _: state.history)
     games.load_result = AsyncMock(side_effect=lambda _: state.result)
+
     async def start(command):
         trace.append(command)
         state.history = SimpleNamespace(start=command, moves=(), participants=())
+
     games.start_game = AsyncMock(side_effect=start)
     service = CapturedGameInvalidation(closures=closures, games=games)
     return SimpleNamespace(
@@ -266,9 +269,11 @@ async def test_provider_error_or_cancellation_never_becomes_success(harness, cut
 @pytest.mark.asyncio
 async def test_concurrent_exact_start_winner_is_accepted(harness):
     h = harness
+
     async def winner(command):
         h.state.history = SimpleNamespace(start=command, moves=())
         raise PersistenceRuleViolation("GAME_START_CONFLICT")
+
     h.games.start_game.side_effect = winner
     await prepare(h)
     assert h.state.history.start.game_id == G
@@ -330,15 +335,19 @@ def runner_harness(harness, monkeypatch):
     h = harness
     events = []
     faults = {}
+
     def cut(stage):
         error = faults.pop(stage, None)
         if error is not None:
             raise error
+
     original_start = h.games.start_game.side_effect
+
     async def start(command):
         events.append("history")
         await original_start(command)
         cut("history")
+
     h.games.start_game.side_effect = start
     result = GameResult(
         game_id=G,
@@ -357,6 +366,7 @@ def runner_harness(harness, monkeypatch):
         "replay_game_history",
         Mock(return_value=SimpleNamespace(status=GameStatus.ACTIVE)),
     )
+
     async def persist(command):
         events.append("result")
         h.state.result = SimpleNamespace(
@@ -365,12 +375,15 @@ def runner_harness(harness, monkeypatch):
             end_reason=command.result.end_reason,
         )
         cut("result")
+
     async def discard(*_):
         events.append("discard")
         cut("discard")
+
     async def acknowledge(_):
         events.append("ack")
         cut("ack")
+
     h.games.result_matches = AsyncMock(return_value=False)
     h.games.finalize_game = AsyncMock(side_effect=persist)
     h.closures.acknowledge.side_effect = acknowledge

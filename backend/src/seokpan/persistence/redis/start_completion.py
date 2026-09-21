@@ -32,7 +32,6 @@ from seokpan.room.application.start_completion import (
 from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import RoomRuleViolation
 
-
 _LOGGER = logging.getLogger(__name__)
 
 

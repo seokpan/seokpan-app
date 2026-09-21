@@ -95,7 +95,9 @@ async def recover(value: SimpleNamespace, request: str = "retry", version: int =
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_id,version", [("original", 6), ("retry", 7)])
 async def test_result_without_history_is_rejected_before_any_start_write(
-    pending_start, request_id, version,
+    pending_start,
+    request_id,
+    version,
 ):
     pending_start.games.load_result.return_value = object()
     with pytest.raises(PersistenceRuleViolation, match="GAME_RESULT_HISTORY_MISMATCH"):

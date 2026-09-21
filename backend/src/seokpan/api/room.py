@@ -30,7 +30,6 @@ from seokpan.room.domain import (
     Team,
 )
 
-
 UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
 
 

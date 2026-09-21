@@ -92,9 +92,7 @@ class CapturedGameInvalidation:
             return False
         result = await self._games.load_result(runtime.game_id)
         return (
-            result is not None
-            and result.game_id == runtime.game_id
-            and result.room_id == room_id
+            result is not None and result.game_id == runtime.game_id and result.room_id == room_id
         )
 
     @staticmethod

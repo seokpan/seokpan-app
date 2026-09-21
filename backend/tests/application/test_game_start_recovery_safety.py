@@ -23,12 +23,8 @@ WHITE_ID = "00000000-0000-4000-8000-000000000004"
 
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    black = SimpleNamespace(
-        participant_id=BLACK_ID, team=Team.BLACK, ready=True, connected=True
-    )
-    white = SimpleNamespace(
-        participant_id=WHITE_ID, team=Team.WHITE, ready=True, connected=True
-    )
+    black = SimpleNamespace(participant_id=BLACK_ID, team=Team.BLACK, ready=True, connected=True)
+    white = SimpleNamespace(participant_id=WHITE_ID, team=Team.WHITE, ready=True, connected=True)
     room = SimpleNamespace(
         room_id=ROOM_ID,
         game_id=GAME_ID,
@@ -272,9 +268,11 @@ async def test_persistence_race_validates_identity_and_progress_not_only_team(
     monkeypatch.setattr(
         harness.service,
         "_persistence_participant",
-        AsyncMock(side_effect=lambda participant_id, _team: next(
-            item for item in intended if item.participant_id == participant_id
-        )),
+        AsyncMock(
+            side_effect=lambda participant_id, _team: next(
+                item for item in intended if item.participant_id == participant_id
+            )
+        ),
     )
     if change == "member":
         harness.history.start.participants[0].member_id = 999

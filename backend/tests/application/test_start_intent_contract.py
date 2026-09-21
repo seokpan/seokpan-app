@@ -156,9 +156,7 @@ def test_unknown_schema_is_not_silently_upgraded(intent: RoomGameStartIntent, ve
 
 
 @pytest.mark.parametrize("fault", ["one_player", "same_team", "participant", "member", "guest"])
-def test_invalid_or_duplicate_rosters_are_rejected(
-    intent: RoomGameStartIntent, fault: str
-) -> None:
+def test_invalid_or_duplicate_rosters_are_rejected(intent: RoomGameStartIntent, fault: str) -> None:
     first, second = intent.players
     if fault == "one_player":
         players = (first,)

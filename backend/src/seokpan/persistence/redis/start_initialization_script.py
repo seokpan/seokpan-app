@@ -5,7 +5,7 @@ from seokpan.persistence.redis.common import VersionedLuaScript
 VOTE_START_INITIALIZE = VersionedLuaScript(
     name="vote-start-initialize",
     version=1,
-    source=r'''
+    source=r"""
 local function reject(code) return cjson.encode({ok=false, error=code}) end
 local function exact_json(value)
   if value == cjson.null then return 'null' end
@@ -138,5 +138,5 @@ redis.call('SET', KEYS[5], witness)
 for i=7,#KEYS do redis.call('DEL', KEYS[i]) end
 redis.call('SET', KEYS[6], encoded_game)
 return result
-''',
+""",
 )

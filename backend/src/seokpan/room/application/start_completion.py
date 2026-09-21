@@ -153,7 +153,8 @@ class PendingCapturedCompletion:
             if (
                 not isinstance(obj, dict)
                 or set(obj) != {"schema_version", "intent", "phase", "released"}
-                or type(obj["schema_version"]) is not int or obj["schema_version"] != 1
+                or type(obj["schema_version"]) is not int
+                or obj["schema_version"] != 1
                 or type(obj["released"]) is not bool
             ):
                 raise ValueError("pending")

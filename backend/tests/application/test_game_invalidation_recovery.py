@@ -35,9 +35,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         if error is not None:
             raise error
 
-    history = SimpleNamespace(
-        start=SimpleNamespace(room_id=ROOM_ID), participants=(), moves=()
-    )
+    history = SimpleNamespace(start=SimpleNamespace(room_id=ROOM_ID), participants=(), moves=())
     replay = Mock(return_value=SimpleNamespace(status=GameStatus.ACTIVE))
     monkeypatch.setattr(resolution, "replay_game_history", replay)
     result = GameResult(
