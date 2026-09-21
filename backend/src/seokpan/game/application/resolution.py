@@ -245,7 +245,9 @@ class TurnResolutionRunner:
         """Converge a closed Room to one durable Game result, then remove ephemeral runtime."""
         if self._captured_invalidation is not None:
             await self._captured_invalidation.prepare_history(
-                room_id=room_id, game_id=game_id, closed_at_ms=closed_at_ms,
+                room_id=room_id,
+                game_id=game_id,
+                closed_at_ms=closed_at_ms,
             )
         history = await self._games.load_game(game_id)
         if history is None:
@@ -259,7 +261,9 @@ class TurnResolutionRunner:
         if runtime is not None and runtime.game_id != game_id:
             if self._captured_invalidation is None or not (
                 await self._captured_invalidation.permits_previous_runtime_cleanup(
-                    room_id=room_id, game_id=game_id, closed_at_ms=closed_at_ms,
+                    room_id=room_id,
+                    game_id=game_id,
+                    closed_at_ms=closed_at_ms,
                     runtime=runtime,
                 )
             ):
@@ -310,11 +314,16 @@ class TurnResolutionRunner:
         return True
 
     async def _acknowledge_invalidation(
-        self, room_id: str, game_id: str, closed_at_ms: int,
+        self,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
     ) -> None:
         if self._captured_invalidation is not None:
             handled = await self._captured_invalidation.acknowledge(
-                room_id=room_id, game_id=game_id, closed_at_ms=closed_at_ms,
+                room_id=room_id,
+                game_id=game_id,
+                closed_at_ms=closed_at_ms,
             )
             if handled:
                 return
