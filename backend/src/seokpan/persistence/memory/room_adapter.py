@@ -94,6 +94,7 @@ class InMemoryRoomRuntimeAdapter:
         self._start_phases: dict[tuple[str, str], str] = {}
         self._start_record_expiries: dict[tuple[str, str], int] = {}
         self._captured_closure_receipts: dict[tuple[str, str], str] = {}
+        self._normal_completion_pending: dict[tuple[str, str], str] = {}
         self._tombstones: dict[str, int | None] = {}
         self._pending_game_invalidations: dict[str, PendingGameInvalidation] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
