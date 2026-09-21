@@ -158,7 +158,11 @@ async def test_any_stored_result_blocks_startup_reinitialization(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("game_id", "another-game"), ("room_id", "another-room"), ("voting_time_seconds", 30)],
+    [
+        ("game_id", "another-game"),
+        ("room_id", "another-room"),
+        ("voting_time_seconds", 30),
+    ],
 )
 async def test_persistent_start_identity_and_config_must_match(
     harness: SimpleNamespace, field: str, value: object
