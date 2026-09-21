@@ -27,35 +27,56 @@ WHITE = "00000000-0000-4000-8000-000000000004"
 @pytest.fixture
 def memory() -> SimpleNamespace:
     intent = RoomGameStartIntent(
-        room_id=ROOM, game_id=GAME, original_request_id="accepted", owner_id=BLACK,
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(BLACK, "BLACK", member_id="1"),
-                 StartIntentPlayer(WHITE, "WHITE", guest_label="Guest-0001")),
+        room_id=ROOM,
+        game_id=GAME,
+        original_request_id="accepted",
+        owner_id=BLACK,
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(BLACK, "BLACK", member_id="1"),
+            StartIntentPlayer(WHITE, "WHITE", guest_label="Guest-0001"),
+        ),
     )
     room = SimpleNamespace(
-        status=RoomStatus.PLAYING, game_id=GAME, owner_id=BLACK, state_version=7,
-        last_game_id=None, last_game_turn_no=None,
-        participants=(SimpleNamespace(participant_id=BLACK, connected=True),
-                      SimpleNamespace(participant_id=WHITE, connected=False)),
+        status=RoomStatus.PLAYING,
+        game_id=GAME,
+        owner_id=BLACK,
+        state_version=7,
+        last_game_id=None,
+        last_game_turn_no=None,
+        participants=(
+            SimpleNamespace(participant_id=BLACK, connected=True),
+            SimpleNamespace(participant_id=WHITE, connected=False),
+        ),
     )
     rooms = SimpleNamespace(
-        _rooms={ROOM: object()}, _start_intents={(ROOM, GAME): intent},
-        _start_phases={(ROOM, GAME): "PENDING"}, _snapshot=lambda *args: room,
+        _rooms={ROOM: object()},
+        _start_intents={(ROOM, GAME): intent},
+        _start_phases={(ROOM, GAME): "PENDING"},
+        _snapshot=lambda *args: room,
     )
     votes = SimpleNamespace(
         bind_captured_start_records=Mock(),
-        _states={}, _snapshot=lambda room_id, state: SimpleNamespace(
-            room_id=room_id, game_id=state.game.game_id, turn_no=state.game.turn_no,
-            deadline_ms=state.game.deadline_ms, participants=state.game.participants,
+        _states={},
+        _snapshot=lambda room_id, state: SimpleNamespace(
+            room_id=room_id,
+            game_id=state.game.game_id,
+            turn_no=state.game.turn_no,
+            deadline_ms=state.game.deadline_ms,
+            participants=state.game.participants,
         ),
     )
     clock = SimpleNamespace(now_ms=5000)
     init = InMemoryCapturedVoteInitializer(
         rooms=cast(InMemoryRoomRuntimeAdapter, rooms),
-        votes=cast(InMemoryVoteRuntimeAdapter, votes), clock=cast(MillisecondClock, clock),
+        votes=cast(InMemoryVoteRuntimeAdapter, votes),
+        clock=cast(MillisecondClock, clock),
     )
     votes.bind_captured_start_records.assert_called_once_with(
-        rooms._start_intents, rooms._start_phases,
+        rooms._start_intents,
+        rooms._start_phases,
     )
     command = InitializeCapturedGame(intent, "init-1", BLACK, 7)
     return SimpleNamespace(**locals())
@@ -78,9 +99,14 @@ async def test_first_initialization_writes_witness_and_uses_provider_clock(memor
 async def test_retries_do_not_extend_deadline_or_rewind_a_pass_only_game(memory, request_id):
     await memory.init.initialize(memory.command)
     witness = memory.rooms._start_phases[(ROOM, GAME)]
-    memory.votes._states[ROOM] = SimpleNamespace(game=SimpleNamespace(
-        game_id=GAME, turn_no=2, deadline_ms=35000, participants=(),
-    ))
+    memory.votes._states[ROOM] = SimpleNamespace(
+        game=SimpleNamespace(
+            game_id=GAME,
+            turn_no=2,
+            deadline_ms=35000,
+            participants=(),
+        )
+    )
     memory.clock.now_ms = 12000
     result = await memory.init.initialize(replace(memory.command, request_id=request_id))
     assert result.replayed and result.snapshot.turn_no == 2
