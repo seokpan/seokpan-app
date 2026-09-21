@@ -93,7 +93,17 @@ export function Board({
                         focusScope ? JSON.stringify([focusScope, coord]) : undefined
                       }
                       className={`${styles.cell} ${won ? styles.winning : ""}`}
-                      aria-label={`${coord} ${stone === "BLACK" ? "흑돌" : stone === "WHITE" ? "백돌" : forbidden.includes(coord) ? "흑 금수" : "빈 자리"}${last ? ", 마지막 착수" : ""}${chosen === coord ? ", 내 투표" : ""}${vote ? `, ${vote.count}표 ${vote.label}` : ""}`}
+                      aria-label={`${coord} ${
+                        stone === "BLACK"
+                          ? "흑돌"
+                          : stone === "WHITE"
+                            ? "백돌"
+                            : forbidden.includes(coord)
+                              ? "흑 금수"
+                              : "빈 자리"
+                      }${last ? ", 마지막 착수" : ""}${
+                        chosen === coord ? ", 내 투표" : ""
+                      }${vote ? `, ${vote.count}표 ${vote.label}` : ""}`}
                       aria-disabled={blocked}
                       onFocus={() => setFocus(index)}
                       onMouseDown={(event) => {
@@ -118,7 +128,11 @@ export function Board({
                       {stone ? (
                         <span
                           aria-hidden="true"
-                          className={`${stone === "BLACK" ? styles.black : styles.white} ${last ? styles.lastStone : ""} ${won ? styles.winnerStone : ""} ${dimmed ? styles.dimmedStone : ""}`}
+                          className={`${
+                            stone === "BLACK" ? styles.black : styles.white
+                          } ${last ? styles.lastStone : ""} ${
+                            won ? styles.winnerStone : ""
+                          } ${dimmed ? styles.dimmedStone : ""}`}
                         >
                           {last && <span className={styles.lastMark} />}
                         </span>
