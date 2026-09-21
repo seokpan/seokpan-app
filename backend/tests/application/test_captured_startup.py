@@ -23,29 +23,52 @@ GAME = _stable_uuid4(f"{ROOM}\nstart\nstart-1")
 @pytest.fixture
 def flow() -> SimpleNamespace:
     intent = RoomGameStartIntent(
-        room_id=ROOM, game_id=GAME, owner_id=BLACK, original_request_id="start-1",
-        accepted_state_version=7, started_at_ms=1000, vote_seconds=15,
-        players=(StartIntentPlayer(BLACK, "BLACK", member_id="1"),
-                 StartIntentPlayer(WHITE, "WHITE", member_id="2")),
+        room_id=ROOM,
+        game_id=GAME,
+        owner_id=BLACK,
+        original_request_id="start-1",
+        accepted_state_version=7,
+        started_at_ms=1000,
+        vote_seconds=15,
+        players=(
+            StartIntentPlayer(BLACK, "BLACK", member_id="1"),
+            StartIntentPlayer(WHITE, "WHITE", member_id="2"),
+        ),
     )
     waiting = SimpleNamespace(
-        room_id=ROOM, status=RoomStatus.WAITING, game_id=None, owner_id=BLACK, state_version=6,
-        participants=(SimpleNamespace(participant_id=BLACK, ready=True, team=Team.BLACK),
-                      SimpleNamespace(participant_id=WHITE, ready=True, team=Team.WHITE)),
+        room_id=ROOM,
+        status=RoomStatus.WAITING,
+        game_id=None,
+        owner_id=BLACK,
+        state_version=6,
+        participants=(
+            SimpleNamespace(participant_id=BLACK, ready=True, team=Team.BLACK),
+            SimpleNamespace(participant_id=WHITE, ready=True, team=Team.WHITE),
+        ),
     )
-    playing = SimpleNamespace(**{**vars(waiting), "status": RoomStatus.PLAYING,
-                                 "game_id": GAME, "state_version": 7})
+    playing = SimpleNamespace(
+        **{
+            **vars(waiting),
+            "status": RoomStatus.PLAYING,
+            "game_id": GAME,
+            "state_version": 7,
+        }
+    )
     runtime = Mock()
     runtime.get = AsyncMock(side_effect=[waiting, playing])
     runtime.start_game = AsyncMock()
     runtime.get_start_intent = AsyncMock(return_value=intent)
     rooms = Mock()
-    rooms.resolve_participation = AsyncMock(return_value=SimpleNamespace(
-        room_id=ROOM, participant_id=BLACK,
-    ))
+    rooms.resolve_participation = AsyncMock(
+        return_value=SimpleNamespace(
+            room_id=ROOM,
+            participant_id=BLACK,
+        )
+    )
     rooms.resolve_participant_identity = AsyncMock(
         side_effect=lambda pid: SimpleNamespace(
-            room_id=ROOM, actor_type=SessionActorType.MEMBER,
+            room_id=ROOM,
+            actor_type=SessionActorType.MEMBER,
             actor_id="1" if pid == BLACK else "2",
         )
     )
@@ -57,22 +80,33 @@ def flow() -> SimpleNamespace:
     games.load_result = AsyncMock(return_value=None)
     votes = Mock(get=AsyncMock(return_value=None))
     snapshot = SimpleNamespace(game_id=GAME, turn_no=1, deadline_ms=20000)
-    initializer = Mock(initialize=AsyncMock(return_value=SimpleNamespace(
-        snapshot=snapshot, replayed=False,
-    )))
+    initializer = Mock(
+        initialize=AsyncMock(
+            return_value=SimpleNamespace(
+                snapshot=snapshot,
+                replayed=False,
+            )
+        )
+    )
     initializer.get_phase = AsyncMock(return_value="PENDING")
     clock = SimpleNamespace(now_ms=5000)
     startup = CapturedGameStartup(
-        rooms=rooms, runtime=runtime, games=games, votes=votes,
-        initializer=initializer, clock=clock,
+        rooms=rooms,
+        runtime=runtime,
+        games=games,
+        votes=votes,
+        initializer=initializer,
+        clock=clock,
     )
     return SimpleNamespace(**locals())
 
 
 async def start(flow: SimpleNamespace, request: str = "start-1", version: int = 6):
     return await flow.startup.start_game(
-        session=SimpleNamespace(session_digest="a" * 64), room_id=ROOM,
-        request_id=request, expected_state_version=version,
+        session=SimpleNamespace(session_digest="a" * 64),
+        room_id=ROOM,
+        request_id=request,
+        expected_state_version=version,
     )
 
 
@@ -154,8 +188,10 @@ async def test_source_closure_during_capture_never_initializes(flow):
 async def test_changed_persistent_config_is_not_accepted_as_race_winner(flow):
     flow.games.start_game.side_effect = PersistenceRuleViolation("GAME_START_CONFLICT")
     flow.history.start = SimpleNamespace(
-        game_id=flow.command.game_id, room_id=flow.command.room_id,
-        started_at=flow.command.started_at, participants=flow.command.participants,
+        game_id=flow.command.game_id,
+        room_id=flow.command.room_id,
+        started_at=flow.command.started_at,
+        participants=flow.command.participants,
         voting_time_seconds=30,
     )
     with pytest.raises(PersistenceRuleViolation, match="GAME_START_CONFLICT"):
@@ -180,13 +216,18 @@ async def test_result_and_move_history_are_not_reset(flow, progress):
 @pytest.mark.asyncio
 async def test_event_only_on_new_runtime_and_default_injection_stays_opt_in(flow):
     service = GameApplicationService(
-        rooms=flow.rooms, games=flow.games, votes=flow.votes, clock=flow.clock,
+        rooms=flow.rooms,
+        games=flow.games,
+        votes=flow.votes,
+        clock=flow.clock,
         captured_startup=flow.startup,
     )
     service._game_started = AsyncMock()
     first = await service.start_game(
-        session=SimpleNamespace(session_digest="a" * 64), room_id=ROOM,
-        request_id="start-1", expected_state_version=6,
+        session=SimpleNamespace(session_digest="a" * 64),
+        room_id=ROOM,
+        request_id="start-1",
+        expected_state_version=6,
     )
     assert first.game is flow.snapshot
     service._game_started.assert_awaited_once()
@@ -196,11 +237,16 @@ async def test_event_only_on_new_runtime_and_default_injection_stays_opt_in(flow
     flow.initializer.initialize.return_value.replayed = True
     service._game_started.reset_mock()
     await service.start_game(
-        session=SimpleNamespace(session_digest="a" * 64), room_id=ROOM,
-        request_id="start-1", expected_state_version=6,
+        session=SimpleNamespace(session_digest="a" * 64),
+        room_id=ROOM,
+        request_id="start-1",
+        expected_state_version=6,
     )
     service._game_started.assert_not_awaited()
     default = GameApplicationService(
-        rooms=flow.rooms, games=flow.games, votes=flow.votes, clock=flow.clock,
+        rooms=flow.rooms,
+        games=flow.games,
+        votes=flow.votes,
+        clock=flow.clock,
     )
     assert default._captured_startup is None
