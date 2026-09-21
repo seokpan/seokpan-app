@@ -10,7 +10,10 @@ from seokpan.persistence.memory.vote_adapter import InMemoryVoteRuntimeAdapter
 from seokpan.room.application.runtime import ROOM_REQUEST_DEDUPE_TTL_MS
 from seokpan.room.application.start_capture import validate_intent_lookup
 from seokpan.room.application.start_completion import (
-    CompleteCapturedGame, PendingCapturedCompletion, initialized_phase, pending_completion_wire,
+    CompleteCapturedGame,
+    PendingCapturedCompletion,
+    initialized_phase,
+    pending_completion_wire,
 )
 from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import RoomRuleViolation, RoomStatus
@@ -18,7 +21,10 @@ from seokpan.room.domain import RoomRuleViolation, RoomStatus
 
 class InMemoryCapturedCompletionStore:
     def __init__(
-        self, *, rooms: InMemoryRoomRuntimeAdapter, votes: InMemoryVoteRuntimeAdapter,
+        self,
+        *,
+        rooms: InMemoryRoomRuntimeAdapter,
+        votes: InMemoryVoteRuntimeAdapter,
     ) -> None:
         self._rooms, self._votes = rooms, votes
         # Shared on the Room adapter, not on this wrapper. Memory is not durable Redis.
@@ -45,7 +51,9 @@ class InMemoryCapturedCompletionStore:
         return None if raw is None else PendingCapturedCompletion.from_json(raw)
 
     async def read_start(
-        self, room_id: str, game_id: str,
+        self,
+        room_id: str,
+        game_id: str,
     ) -> tuple[RoomGameStartIntent, str] | None:
         validate_intent_lookup(room_id, game_id)
         self._rooms._purge_expired()
@@ -76,13 +84,16 @@ class InMemoryCapturedCompletionStore:
             closed = json.loads(receipt)
             final = json.loads(self._rooms._start_phases.get(key, "null"))
             if (
-                marker is None and intent.room_id not in self._votes._states
+                marker is None
+                and intent.room_id not in self._votes._states
                 and self._rooms._start_intents.get(key) == intent
                 and closed.get("room_id") == intent.room_id
                 and closed.get("terminated_game_id") == intent.game_id
                 and closed.get("invalidation_pending") is False
-                and isinstance(final, dict) and final.get("phase") == "FINALIZED"
-                and type(final.get("schema_version")) is int and final["schema_version"] == 1
+                and isinstance(final, dict)
+                and final.get("phase") == "FINALIZED"
+                and type(final.get("schema_version")) is int
+                and final["schema_version"] == 1
                 and final.get("game_id") == intent.game_id
                 and type(closed.get("closed_at_ms")) is int
                 and final.get("intent_fingerprint") == intent.fingerprint
@@ -99,23 +110,28 @@ class InMemoryCapturedCompletionStore:
             ):
                 raise RoomRuleViolation("START_COMPLETION_CHANGED")
             state = self._rooms._rooms.get(intent.room_id)
-            if (state is not None
-                and self._rooms._snapshot(intent.room_id, state).game_id == intent.game_id):
+            if (
+                state is not None
+                and self._rooms._snapshot(intent.room_id, state).game_id == intent.game_id
+            ):
                 raise RoomRuleViolation("GAME_COMPLETION_UNCONFIRMED")
             marker = self._rooms._pending_game_invalidations.get(intent.room_id)
             if marker is not None and marker.game_id == intent.game_id:
                 raise RoomRuleViolation("GAME_COMPLETION_UNCONFIRMED")
             _, expiry, _ = command.receipt(
                 initialized_phase(intent, task.command.phase_wire),
-                now_ms=self._rooms._clock.now_ms, retention_ms=ROOM_REQUEST_DEDUPE_TTL_MS,
+                now_ms=self._rooms._clock.now_ms,
+                retention_ms=ROOM_REQUEST_DEDUPE_TTL_MS,
             )
             saved_intent = self._rooms._start_intents.get(key)
             saved_phase = self._rooms._start_phases.get(key)
             if (
                 (saved_intent is not None and saved_intent != intent)
                 or (saved_phase is not None and saved_phase != task.command.phase_wire)
-                or (self._rooms._clock.now_ms < expiry
-                    and (saved_intent is None or saved_phase is None))
+                or (
+                    self._rooms._clock.now_ms < expiry
+                    and (saved_intent is None or saved_phase is None)
+                )
             ):
                 raise RoomRuleViolation("START_COMPLETION_CHANGED")
             self._rooms._start_record_expiries[key] = expiry
@@ -136,7 +152,9 @@ class InMemoryCapturedCompletionStore:
                 raise RoomRuleViolation("START_COMPLETION_CHANGED")
             phase = initialized_phase(intent, task.command.phase_wire)
         wire, expiry, replay = command.receipt(
-            phase, now_ms=self._rooms._clock.now_ms, retention_ms=ROOM_REQUEST_DEDUPE_TTL_MS,
+            phase,
+            now_ms=self._rooms._clock.now_ms,
+            retention_ms=ROOM_REQUEST_DEDUPE_TTL_MS,
         )
         if not replay and raw_phase != command.phase_wire:
             raise RoomRuleViolation("START_COMPLETION_CHANGED")
@@ -145,7 +163,8 @@ class InMemoryCapturedCompletionStore:
             raise RoomRuleViolation("GAME_COMPLETION_UNCONFIRMED")
         releasing = room.status is RoomStatus.PLAYING and room.game_id == intent.game_id
         waiting = (
-            room.status is RoomStatus.WAITING and room.game_id is None
+            room.status is RoomStatus.WAITING
+            and room.game_id is None
             and room.last_game_id == intent.game_id
             and room.last_game_turn_no == command.final_turn_no
         )
@@ -154,7 +173,8 @@ class InMemoryCapturedCompletionStore:
         if releasing or not replay:
             runtime = self._votes._states.get(intent.room_id)
             if (
-                runtime is None or runtime.game.game_id != intent.game_id
+                runtime is None
+                or runtime.game.game_id != intent.game_id
                 or runtime.game.game.status is not GameStatus.FINISHED
                 or runtime.game.turn_no != command.final_turn_no
                 or runtime.game.game.end_reason is None
