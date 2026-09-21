@@ -356,7 +356,7 @@ describe("room HTTP and receive-only connection integration", () => {
     });
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
   });
-  it("warns a playing owner that no successor can close the room and invalidate the game", async () => {
+  it("warns a playing owner about room closure without a successor", async () => {
     const playingRoom = {
       ...room,
       status: "PLAYING",
