@@ -158,7 +158,9 @@ local function update_game_player(participant_id, connected, vote_removed)
   return true
 end
 
-local function departure(previous_owner_id, new_owner_id, room_closed, termination, terminated_game_id)
+local function departure(
+  previous_owner_id, new_owner_id, room_closed, termination, terminated_game_id
+)
   return {
     previous_owner_id = previous_owner_id == nil and cjson.null or previous_owner_id,
     new_owner_id = new_owner_id == nil and cjson.null or new_owner_id,
