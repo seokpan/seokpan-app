@@ -106,6 +106,10 @@ function Shell() {
   const location = useLocation();
   const { view, busy, blocking, notice, clearNotice } = useSession();
   const { notice: roomNotice, clearNotice: clearRoomNotice } = useRoomConnection();
+  const readyIdentity = view.phase === "ready" ? view.identity : null;
+  const inRoom = !!readyIdentity?.room_id;
+  const roomOrLobbyCurrent =
+    location.pathname === "/" || location.pathname === "/lobby" ? "page" : undefined;
   const previousPath = useRef(location.pathname);
   useEffect(() => {
     if (previousPath.current === location.pathname) return;
@@ -124,26 +128,43 @@ function Shell() {
         본문으로 바로가기
       </a>
       <header className={styles.header}>
-        <Link to="/" className={styles.brand}>
-          <span aria-hidden="true">● ○</span> 石나가는 판단
-        </Link>
-        {view.phase === "ready" && !blocking && (
-          <nav aria-label="사용자 메뉴">
-            {!(location.pathname === "/login" && view.identity.actor_type === "GUEST") && (
-              <OnlineCount key={`presence:${view.identity.actor_type}:${view.identity.actor_id}`} />
-            )}
-            <Link to="/lobby">로비</Link>
-            <GameHelp
-              key={`${location.pathname}:${view.identity.actor_type}:${view.identity.actor_id}`}
-            />
-            <NavLink to="/rankings">랭킹</NavLink>
-            {view.identity.actor_type === "GUEST" && <Link to="/login">Member 로그인</Link>}
-            <UserMenu
-              key={`${view.identity.actor_type}:${view.identity.actor_id}`}
-              identity={view.identity}
-            />
-          </nav>
-        )}
+        <div className={styles.headerInner}>
+          <Link to="/" className={styles.brand} aria-label="石나가는 판단 홈">
+            <span aria-hidden="true">● ○</span>
+            <span>石나가는 판단</span>
+          </Link>
+          {view.phase === "ready" && !blocking && (
+            <div className={styles.headerControls}>
+              <nav className={styles.primaryNav} aria-label="주요 메뉴">
+                <Link to="/lobby" aria-current={roomOrLobbyCurrent}>
+                  {inRoom ? "게임방" : "로비"}
+                </Link>
+                <NavLink to="/rankings">랭킹</NavLink>
+              </nav>
+              <div className={styles.utilityGroup} role="group" aria-label="서비스 상태와 도움말">
+                {!(location.pathname === "/login" && view.identity.actor_type === "GUEST") && (
+                  <OnlineCount
+                    key={`presence:${view.identity.actor_type}:${view.identity.actor_id}`}
+                  />
+                )}
+                <GameHelp
+                  key={`${location.pathname}:${view.identity.actor_type}:${view.identity.actor_id}`}
+                />
+              </div>
+              <div className={styles.accountGroup} role="group" aria-label="계정">
+                {view.identity.actor_type === "GUEST" && location.pathname !== "/login" && (
+                  <Link to="/login" className={styles.memberUpgrade}>
+                    Member 로그인
+                  </Link>
+                )}
+                <UserMenu
+                  key={`${view.identity.actor_type}:${view.identity.actor_id}`}
+                  identity={view.identity}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </header>
       <main
         id="main-content"

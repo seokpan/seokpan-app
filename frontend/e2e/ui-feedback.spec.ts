@@ -508,7 +508,7 @@ for (const width of [1280, 390])
     const table = page.getByRole("table");
     expect(await table.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await page.screenshot({ path: info.outputPath(`rankings-${width}.png`), fullPage: true });
-    const menuTrigger = page.getByRole("button", { name: "내 전적 메뉴" });
+    const menuTrigger = page.getByRole("button", { name: "사용자 메뉴" });
     await menuTrigger.click();
     const menu = page.getByRole("region", { name: "사용자 정보" });
     await expect(menu).toContainText("1,428");

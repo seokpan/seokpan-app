@@ -63,7 +63,7 @@ export function UserMenu({ identity }: { identity: SessionIdentity }) {
     >
       <button
         ref={trigger}
-        aria-label="내 전적 메뉴"
+        aria-label="사용자 메뉴"
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((value) => !value)}
