@@ -114,6 +114,7 @@ class DepartureResult:
     new_owner_id: str | None
     room_closed: bool
     game_termination: GameTermination
+    terminated_game_id: str | None = None
 
 
 class Room:
@@ -365,6 +366,9 @@ class Room:
             if self.status is RoomStatus.PLAYING
             else GameTermination.NONE
         )
+        terminated_game_id = (
+            self.game_id if game_termination is GameTermination.SYSTEM_INVALID else None
+        )
         self.owner_id = None
         self.status = RoomStatus.CLOSED
         return DepartureResult(
@@ -372,6 +376,7 @@ class Room:
             new_owner_id=None,
             room_closed=True,
             game_termination=game_termination,
+            terminated_game_id=terminated_game_id,
         )
 
     def _unchanged_departure_result(self) -> DepartureResult:

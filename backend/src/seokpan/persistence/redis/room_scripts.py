@@ -158,12 +158,15 @@ local function update_game_player(participant_id, connected, vote_removed)
   return true
 end
 
-local function departure(previous_owner_id, new_owner_id, room_closed, termination)
+local function departure(
+  previous_owner_id, new_owner_id, room_closed, termination, terminated_game_id
+)
   return {
     previous_owner_id = previous_owner_id == nil and cjson.null or previous_owner_id,
     new_owner_id = new_owner_id == nil and cjson.null or new_owner_id,
     room_closed = room_closed,
-    game_termination = termination
+    game_termination = termination,
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id
   }
 end
 
@@ -190,15 +193,28 @@ local function owner_departure(departed_id, previous_owner_id)
   end
   local status = redis.call('HGET', KEYS[1], 'status')
   local termination = status == 'PLAYING' and 'SYSTEM_INVALID' or 'NONE'
+  local game_id = redis.call('HGET', KEYS[1], 'game_id')
+  local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
+  local marker = cjson.encode({
+    room_id = ARGV[1],
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id,
+    closed_at_ms = current_ms,
+    invalidation_pending = termination == 'SYSTEM_INVALID'
+  })
+  if termination == 'SYSTEM_INVALID' then
+    -- Unfinished durable work is not completed by a TTL expiry.
+    redis.call('SET', KEYS[7], marker)
+  else
+    redis.call('SET', KEYS[7], marker, 'PX', tombstone_ttl_ms)
+  end
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
-  redis.call('SET', KEYS[7], '1', 'PX', tombstone_ttl_ms)
-  return departure(previous_owner_id, nil, true, termination)
+  return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=9,
+    version=13,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -522,5 +538,31 @@ ROOM_PRIVATE_HASH_READ = VersionedLuaScript(
 local value = redis.call('HGET', KEYS[1], 'password_hash')
 if not value or value == '' then value = cjson.null end
 return cjson.encode({ok = true, encoded_password = value, error = cjson.null})
+""",
+)
+
+
+ROOM_INVALIDATION_ACK = VersionedLuaScript(
+    name="room-invalidation-ack",
+    version=2,
+    source=r"""
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({ok = true, missing = true})
+end
+local value = cjson.decode(raw)
+if value.terminated_game_id ~= ARGV[1] then
+  return cjson.encode({ok = false, error = 'STALE_GAME'})
+end
+if value.invalidation_pending == false then
+  return cjson.encode({ok = true, missing = false})
+end
+local ttl = tonumber(ARGV[2])
+if not ttl or ttl <= 0 or ttl ~= math.floor(ttl) then
+  return cjson.encode({ok = false, error = 'INVALID_INVALIDATION_RETENTION'})
+end
+value.invalidation_pending = false
+redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
+return cjson.encode({ok = true, missing = false})
 """,
 )

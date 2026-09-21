@@ -23,6 +23,7 @@ from seokpan.room.application.runtime import (
     JoinRoomRuntime,
     KickRoomParticipant,
     LeaveRoomRuntime,
+    PendingGameInvalidation,
     RoomConnection,
     RoomMutationResult,
     RoomRuntimeParticipant,
@@ -31,10 +32,17 @@ from seokpan.room.application.runtime import (
     StartRoomGame,
     validate_room_id,
 )
+from seokpan.room.application.start_capture import (
+    CaptureRoomGameStart,
+    accepted_start_intent,
+    validate_intent_lookup,
+)
+from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import (
     ActorType,
     DepartureResult,
     DisconnectReason,
+    GameTermination,
     Participant,
     Room,
     RoomRuleViolation,
@@ -82,7 +90,13 @@ class InMemoryRoomRuntimeAdapter:
         self._clock = clock
         self._vote_connections = vote_connections
         self._rooms: dict[str, _RoomState] = {}
-        self._tombstones: dict[str, int] = {}
+        self._start_intents: dict[tuple[str, str], RoomGameStartIntent] = {}
+        self._start_phases: dict[tuple[str, str], str] = {}
+        self._start_record_expiries: dict[tuple[str, str], int] = {}
+        self._captured_closure_receipts: dict[tuple[str, str], str] = {}
+        self._normal_completion_pending: dict[tuple[str, str], str] = {}
+        self._tombstones: dict[str, int | None] = {}
+        self._pending_game_invalidations: dict[str, PendingGameInvalidation] = {}
         self._requests: dict[tuple[str, str], _CachedResult] = {}
         self._votes: dict[tuple[str, int], set[str]] = {}
 
@@ -172,6 +186,31 @@ class InMemoryRoomRuntimeAdapter:
             )[:limit]
         )
 
+    async def pending_game_invalidations(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PendingGameInvalidation, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_GAME_INVALIDATION_LIMIT")
+        self._purge_expired()
+        return tuple(
+            sorted(
+                self._pending_game_invalidations.values(),
+                key=lambda item: (item.closed_at_ms, item.room_id, item.game_id),
+            )[:limit]
+        )
+
+    async def complete_game_invalidation(self, room_id: str, game_id: str) -> None:
+        validate_room_id(room_id)
+        pending = self._pending_game_invalidations.get(room_id)
+        if pending is None:
+            return
+        if pending.game_id != game_id:
+            raise RoomRuleViolation("STALE_GAME")
+        self._pending_game_invalidations.pop(room_id, None)
+        self._tombstones[room_id] = self._clock.now_ms + ROOM_REQUEST_DEDUPE_TTL_MS
+
     async def join(self, command: JoinRoomRuntime) -> RoomMutationResult:
         replay = self._replay(command)
         if replay is not None:
@@ -245,8 +284,43 @@ class InMemoryRoomRuntimeAdapter:
         )
         return self._remember_result(command, state)
 
+    async def get_start_intent(self, room_id: str, game_id: str) -> RoomGameStartIntent | None:
+        validate_intent_lookup(room_id, game_id)
+        self._purge_expired()
+        return self._start_intents.get((room_id, game_id))
+
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
         replay = self._replay(command)
+        if isinstance(command, CaptureRoomGameStart):
+            state = self._require_room(command.room_id)
+            existing = self._start_intents.get((command.room_id, command.game_id))
+            if replay is not None:
+                if (
+                    existing is None
+                    or state.room.game_id != command.game_id
+                    or self._start_phases.get((command.room_id, command.game_id)) != "PENDING"
+                ):
+                    raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+                return replay
+            if existing is not None or (command.room_id, command.game_id) in self._start_phases:
+                raise RoomRuleViolation("START_INTENT_ALREADY_EXISTS")
+            intent = accepted_start_intent(
+                command, self._snapshot(command.room_id, state), self._clock.now_ms
+            )
+            # Both mutations below execute without an await. Admission/serialization
+            # failure has already been checked; the Domain retains its own guards.
+            intent.to_json()
+            roster = state.room.start_game(actor_id=command.actor_id, game_id=command.game_id)
+            self._start_intents[(command.room_id, command.game_id)] = intent
+            self._start_phases[(command.room_id, command.game_id)] = "PENDING"
+            return self._remember(
+                command,
+                RoomMutationResult(
+                    snapshot=self._snapshot(command.room_id, state),
+                    start_roster=roster,
+                    operation_at_ms=intent.started_at_ms,
+                ),
+            )
         if replay is not None:
             return replay
         state = self._require_room(command.room_id)
@@ -540,7 +614,24 @@ class InMemoryRoomRuntimeAdapter:
         for vote_key in tuple(self._votes):
             if vote_key[0] == command.room_id:
                 self._votes.pop(vote_key, None)
-        self._tombstones[command.room_id] = self._clock.now_ms + ROOM_CLOSED_TOMBSTONE_TTL_MS
+        closure_ttl_ms = (
+            ROOM_REQUEST_DEDUPE_TTL_MS
+            if departure.game_termination is GameTermination.SYSTEM_INVALID
+            else ROOM_CLOSED_TOMBSTONE_TTL_MS
+        )
+        self._tombstones[command.room_id] = (
+            None if departure.game_termination is GameTermination.SYSTEM_INVALID
+            else self._clock.now_ms + closure_ttl_ms
+        )
+        if (
+            departure.game_termination is GameTermination.SYSTEM_INVALID
+            and departure.terminated_game_id is not None
+        ):
+            self._pending_game_invalidations[command.room_id] = PendingGameInvalidation(
+                room_id=command.room_id,
+                game_id=departure.terminated_game_id,
+                closed_at_ms=self._clock.now_ms,
+            )
         return self._remember(
             command,
             RoomMutationResult(
@@ -572,9 +663,16 @@ class InMemoryRoomRuntimeAdapter:
 
     def _purge_expired(self) -> None:
         now_ms = self._clock.now_ms
+        for key, expiry in tuple(self._start_record_expiries.items()):
+            if expiry <= now_ms:
+                self._start_record_expiries.pop(key, None)
+                self._start_intents.pop(key, None)
+                self._start_phases.pop(key, None)
+                self._captured_closure_receipts.pop(key, None)
         for room_id, expires_at_ms in tuple(self._tombstones.items()):
-            if expires_at_ms <= now_ms:
+            if expires_at_ms is not None and expires_at_ms <= now_ms:
                 self._tombstones.pop(room_id, None)
+                self._pending_game_invalidations.pop(room_id, None)
         for key, cached in tuple(self._requests.items()):
             if cached.expires_at_ms <= now_ms:
                 self._requests.pop(key, None)

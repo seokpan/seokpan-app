@@ -15,9 +15,15 @@ from seokpan.persistence.redis.common import (
     VersionedJsonCodec,
 )
 from seokpan.persistence.redis.room_scripts import (
+    ROOM_INVALIDATION_ACK,
     ROOM_MUTATION,
     ROOM_PRIVATE_HASH_READ,
     ROOM_READ,
+)
+from seokpan.persistence.redis.start_capture_script import (
+    ROOM_START_CAPTURE,
+    start_intent_key,
+    start_phase_key,
 )
 from seokpan.room.application.runtime import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
@@ -36,6 +42,7 @@ from seokpan.room.application.runtime import (
     JoinRoomRuntime,
     KickRoomParticipant,
     LeaveRoomRuntime,
+    PendingGameInvalidation,
     RoomMutationResult,
     RoomRuntimeParticipant,
     RoomRuntimeSnapshot,
@@ -44,6 +51,11 @@ from seokpan.room.application.runtime import (
     StartRoomGame,
     validate_room_id,
 )
+from seokpan.room.application.start_capture import (
+    CaptureRoomGameStart,
+    validate_intent_lookup,
+)
+from seokpan.room.application.start_intent import RoomGameStartIntent
 from seokpan.room.domain import (
     ActorType,
     DepartureResult,
@@ -233,6 +245,61 @@ class RedisRoomRuntimeAdapter:
         self._raise_rejection(decoded)
         return self._optional_snapshot(decoded.get("snapshot"))
 
+    async def pending_game_invalidations(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PendingGameInvalidation, ...]:
+        if limit < 1:
+            raise ValueError("INVALID_GAME_INVALIDATION_LIMIT")
+        pattern = RedisKeyspace.room_closed("*")
+        prefix = "stone:v1:room:{"
+        suffix = "}:closed"
+        pending: list[PendingGameInvalidation] = []
+        try:
+            async for raw_key in self._client.scan_iter(match=pattern, count=100):
+                key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else raw_key
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(prefix)
+                    or not key.endswith(suffix)
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                raw = await self._client.get(key)
+                if raw is None:
+                    continue
+                value = VersionedJsonCodec.decode(raw)
+                if value.get("invalidation_pending") is not True:
+                    continue
+                room_id = value.get("room_id")
+                game_id = value.get("terminated_game_id")
+                closed_at_ms = value.get("closed_at_ms")
+                if (
+                    not isinstance(room_id, str)
+                    or not isinstance(game_id, str)
+                    or type(closed_at_ms) is not int
+                ):
+                    raise RedisProviderError("REDIS_RESPONSE_INVALID")
+                validate_room_id(room_id)
+                pending.append(PendingGameInvalidation(room_id, game_id, closed_at_ms))
+                if len(pending) >= limit:
+                    break
+        except RedisProviderError:
+            raise
+        except (RedisError, UnicodeDecodeError) as error:
+            raise RedisProviderError() from error
+        return tuple(sorted(pending, key=lambda item: (item.closed_at_ms, item.room_id)))
+
+    async def complete_game_invalidation(self, room_id: str, game_id: str) -> None:
+        validate_room_id(room_id)
+        result = await self._scripts.execute(
+            ROOM_INVALIDATION_ACK,
+            keys=(RedisKeyspace.room_closed(room_id),),
+            args=(game_id, ROOM_REQUEST_DEDUPE_TTL_MS),
+        )
+        decoded = self._result(result)
+        self._raise_rejection(decoded)
+
     async def get_private_access_hash(self, room_id: str) -> str | None:
         validate_room_id(room_id)
         result = await self._scripts.execute(
@@ -312,7 +379,49 @@ class RedisRoomRuntimeAdapter:
             },
         )
 
+    async def get_start_intent(self, room_id: str, game_id: str) -> RoomGameStartIntent | None:
+        validate_intent_lookup(room_id, game_id)
+        try:
+            raw = await self._client.get(start_intent_key(room_id, game_id))
+        except RedisError as error:
+            raise RedisProviderError() from error
+        if raw is None:
+            return None
+        try:
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            intent = RoomGameStartIntent.from_json(text)
+        except ValueError as error:
+            raise RedisProviderError("START_INTENT_INVALID") from error
+        if intent.room_id != room_id or intent.game_id != game_id:
+            raise RedisProviderError("START_INTENT_INVALID")
+        return intent
+
     async def start_game(self, command: StartRoomGame) -> RoomMutationResult:
+        if isinstance(command, CaptureRoomGameStart):
+            result = await self._scripts.execute(
+                ROOM_START_CAPTURE,
+                keys=(
+                    *self._read_keys(command.room_id),
+                    RedisKeyspace.room_requests(command.room_id),
+                    RedisKeyspace.room_request_expiries(command.room_id),
+                    RedisKeyspace.room_closed(command.room_id),
+                    start_intent_key(command.room_id, command.game_id),
+                    start_phase_key(command.room_id, command.game_id),
+                ),
+                args=(
+                    command.room_id,
+                    command.request_id,
+                    command.game_id,
+                    command.actor_id,
+                    command.expected_state_version,
+                    command.players_json(),
+                    ROOM_REQUEST_DEDUPE_TTL_MS,
+                    ROOM_RUNTIME_SCHEMA_VERSION,
+                ),
+            )
+            decoded = self._result(result)
+            self._raise_rejection(decoded)
+            return self._mutation_result(decoded)
         return await self._mutate(
             command.room_id,
             command.request_id,
@@ -555,6 +664,7 @@ class RedisRoomRuntimeAdapter:
             new_owner_id=_optional_string(item, "new_owner_id"),
             room_closed=_boolean(item, "room_closed"),
             game_termination=GameTermination(_string(item, "game_termination")),
+            terminated_game_id=_optional_string(item, "terminated_game_id"),
         )
 
 

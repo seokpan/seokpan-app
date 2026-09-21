@@ -9,8 +9,12 @@ from typing import Protocol
 
 from seokpan.identity.application import SessionRecord
 from seokpan.room.application.lobby import RoomApplicationService
-from seokpan.room.application.runtime import DueRoomDisconnect, DueRoomDisconnectSource
-from seokpan.room.domain import RoomRuleViolation
+from seokpan.room.application.runtime import (
+    DueRoomDisconnect,
+    DueRoomDisconnectSource,
+    RoomMutationResult,
+)
+from seokpan.room.domain import GameTermination, RoomRuleViolation
 from seokpan.vote.application import VoteRuntimePort
 from seokpan.vote.domain import TurnStatus
 
@@ -67,12 +71,13 @@ class RoomConnectionCoordinator:
         participant_id: str,
         connection_generation: int,
     ) -> None:
-        await self._rooms.disconnect_participant(
+        result = await self._rooms.disconnect_participant(
             room_id=room_id,
             participant_id=participant_id,
             connection_generation=connection_generation,
             active_vote_turn=await self._active_vote_turn(room_id),
         )
+        await self._finalize_game_transition(room_id, result)
 
     async def expire(self, due: DueRoomDisconnect) -> DisconnectExpiryResult:
         try:
@@ -88,16 +93,8 @@ class RoomConnectionCoordinator:
             if error.code in {"DISCONNECT_LEASE_ACTIVE", "STATE_VERSION_CONFLICT"}:
                 return DisconnectExpiryResult(due, DisconnectExpiryStatus.RETRY_REQUIRED)
             raise
-        if (
-            not result.stale_connection
-            and result.snapshot is not None
-            and result.snapshot.game_id is not None
-            and self._departures is not None
-        ):
-            await self._departures.finalize_departures(
-                room_id=due.room_id,
-                game_id=result.snapshot.game_id,
-            )
+        if not result.stale_connection:
+            await self._finalize_game_transition(due.room_id, result)
         return DisconnectExpiryResult(
             due,
             (
@@ -106,6 +103,21 @@ class RoomConnectionCoordinator:
                 else DisconnectExpiryStatus.EXPIRED
             ),
         )
+
+    async def _finalize_game_transition(
+        self,
+        room_id: str,
+        result: RoomMutationResult,
+    ) -> None:
+        if self._departures is None or result.replayed:
+            return
+        if result.game_termination is GameTermination.SYSTEM_INVALID:
+            return
+        if result.snapshot is not None and result.snapshot.game_id is not None:
+            await self._departures.finalize_departures(
+                room_id=room_id,
+                game_id=result.snapshot.game_id,
+            )
 
     async def _active_vote_turn(self, room_id: str) -> int | None:
         runtime = await self._votes.get(room_id)

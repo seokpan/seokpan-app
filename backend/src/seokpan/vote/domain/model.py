@@ -339,6 +339,8 @@ class VoteTurnGame:
                 self.game.finish_forfeit(losing_team=losing_team)
             elif end_reason is EndReason.JOINT_LOSS and winner is Stone.EMPTY:
                 self.game.finish_joint_loss()
+            elif end_reason is EndReason.SYSTEM_INVALID and winner is Stone.EMPTY:
+                self.game.finish_system_invalid()
             else:
                 raise VoteRuleViolation("INVALID_EXTERNAL_GAME_RESULT")
         except GameRuleViolation as error:

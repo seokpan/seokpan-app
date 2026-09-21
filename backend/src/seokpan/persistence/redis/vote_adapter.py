@@ -16,7 +16,8 @@ from seokpan.persistence.redis.common import (
     RedisProviderError,
     VersionedJsonCodec,
 )
-from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
+from seokpan.persistence.redis.start_capture_script import start_intent_key, start_phase_key
+from seokpan.persistence.redis.vote_scripts import VOTE_DISCARD, VOTE_MUTATION, VOTE_READ
 from seokpan.room.application import ROOM_REQUEST_DEDUPE_TTL_MS
 from seokpan.vote.application import (
     RESOLVER_LEASE_MS,
@@ -96,6 +97,37 @@ class RedisVoteRuntimeAdapter:
         decoded = self._result(result)
         self._raise_rejection(decoded)
         return self._optional_snapshot(decoded.get("snapshot"))
+
+    async def discard_game(self, room_id: str, game_id: str) -> None:
+        game_key = RedisKeyspace.room_game(room_id)
+        for attempt in range(3):
+            try:
+                raw = await self._client.get(game_key)
+            except RedisError as error:
+                raise RedisProviderError() from error
+            if raw is None:
+                return
+            game = VersionedJsonCodec.decode(raw)
+            if _integer(game, "schema_version") != VOTE_RUNTIME_SCHEMA_VERSION:
+                raise RedisProviderError("VOTE_SCHEMA_VERSION_MISMATCH")
+            if _string(game, "game_id") != game_id:
+                raise VoteRuleViolation("STALE_GAME")
+            turn_no = _integer(game, "turn_no")
+            result = await self._scripts.execute(
+                VOTE_DISCARD,
+                keys=self._discard_keys(room_id, turn_no),
+                args=(game_id, turn_no),
+            )
+            decoded = self._result(result)
+            if (
+                decoded.get("ok") is False
+                and decoded.get("error") == "REDIS_SNAPSHOT_CHANGED"
+                and attempt < 2
+            ):
+                continue
+            self._raise_rejection(decoded)
+            return
+        raise RedisProviderError("REDIS_SNAPSHOT_CHANGED")
 
     async def cast_vote(self, command: CastRuntimeVote) -> VoteMutationResult:
         return await self._mutate(
@@ -221,6 +253,14 @@ class RedisVoteRuntimeAdapter:
                     RedisKeyspace.room_vote_tally(room_id, previous_turn_no),
                     RedisKeyspace.room_resolver(room_id, previous_turn_no),
                 )
+            )
+            + (
+                (
+                    start_intent_key(room_id, _string(payload, "game_id")),
+                    start_phase_key(room_id, _string(payload, "game_id")),
+                )
+                if operation == "initialize"
+                else ()
             ),
             args=(
                 operation,
@@ -252,6 +292,21 @@ class RedisVoteRuntimeAdapter:
             RedisKeyspace.room_meta(room_id),
             RedisKeyspace.room_participants(room_id),
             RedisKeyspace.room_connections(room_id),
+            RedisKeyspace.room_game(room_id),
+            RedisKeyspace.room_board(room_id),
+            RedisKeyspace.room_votes(room_id, turn_no),
+            RedisKeyspace.room_vote_tally(room_id, turn_no),
+            RedisKeyspace.room_resolver(room_id, turn_no),
+            RedisKeyspace.room_votes(room_id, turn_no + 1),
+            RedisKeyspace.room_vote_tally(room_id, turn_no + 1),
+            RedisKeyspace.room_resolver(room_id, turn_no + 1),
+            RedisKeyspace.room_requests(room_id),
+            RedisKeyspace.room_request_expiries(room_id),
+        )
+
+    @staticmethod
+    def _discard_keys(room_id: str, turn_no: int) -> tuple[str, ...]:
+        return (
             RedisKeyspace.room_game(room_id),
             RedisKeyspace.room_board(room_id),
             RedisKeyspace.room_votes(room_id, turn_no),

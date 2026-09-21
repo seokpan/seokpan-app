@@ -18,7 +18,7 @@ from seokpan.game.application import (
     TurnProcessingStatus,
     TurnResolutionRunner,
 )
-from seokpan.game.domain import EndReason, GameStatus, Stone
+from seokpan.game.domain import Coordinate, EndReason, GameStatus, Stone
 from seokpan.persistence.memory import (
     InMemoryDueTurnSource,
     InMemoryGamePersistenceAdapter,
@@ -35,6 +35,7 @@ from seokpan.room.application import (
     CompleteRoomGame,
     CreateRoomRuntime,
     JoinRoomRuntime,
+    PendingGameInvalidation,
     RealtimeEventPort,
     RoomMutationResult,
     SetRoomReady,
@@ -796,3 +797,198 @@ async def test_turn_resolution_runner_propagates_item_provider_failure() -> None
         await runner.run_once()
 
     votes.get.assert_awaited_once_with(due.room_id)
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_finalizes_without_stats() -> None:
+    runner, clock, _rooms, votes, games, _ = await setup_runner()
+    clock.advance(1_234)
+
+    finalized = await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=clock.now_ms,
+    )
+
+    assert finalized is True
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.end_reason is EndReason.SYSTEM_INVALID
+    assert stored.winner is Stone.EMPTY
+    assert stored.rating_adjustments == ()
+    assert await votes.get(ROOM_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_retry_is_idempotent() -> None:
+    games = CountingGamePersistenceAdapter()
+    runner, _clock, _rooms, votes, _, _ = await setup_runner(games=games)
+
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=1_000,
+    )
+    assert await votes.get(ROOM_ID) is None
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=1_000,
+    )
+    assert await votes.get(ROOM_ID) is None
+
+    assert games.finalize_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_does_not_overwrite_existing_normal_result() -> None:
+    runner, clock, _rooms, _votes, games, _ = await setup_runner()
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 1))).status is TurnProcessingStatus.PASS
+    clock.advance(5_000)
+    assert (await runner.process(DueTurn(ROOM_ID, GAME_ID, 2))).status is (
+        TurnProcessingStatus.GAME_ENDED
+    )
+    stored_before = await games.load_result(GAME_ID)
+    assert stored_before is not None
+    assert stored_before.end_reason is EndReason.JOINT_LOSS
+
+    assert (
+        await runner.finalize_system_invalid(
+            room_id=ROOM_ID,
+            game_id=GAME_ID,
+            closed_at_ms=clock.now_ms,
+        )
+        is False
+    )
+    assert await games.load_result(GAME_ID) == stored_before
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_persists_from_history_when_vote_runtime_is_missing() -> None:
+    clock = ManualClock(now_ms=2_000)
+    rooms = InMemoryRoomRuntimeAdapter(clock)
+    votes = InMemoryVoteRuntimeAdapter(clock)
+    games = InMemoryGamePersistenceAdapter({1: 1000, 2: 1000, 3: 1000})
+    runner, _, _, _, _, _ = await setup_runner(
+        rooms=rooms,
+        votes=votes,
+        games=games,
+    )
+    # Simulate a provider-loss boundary where durable Game history remains but Vote runtime is gone.
+    votes._states.pop(ROOM_ID, None)
+
+    assert await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=2_000,
+    )
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.end_reason is EndReason.SYSTEM_INVALID
+    assert stored.rating_adjustments == ()
+
+
+@pytest.mark.asyncio
+async def test_system_invalid_closure_preserves_board_conclusion_proven_by_durable_moves() -> None:
+    runner, _clock, _rooms, votes, games, _ = await setup_runner()
+    for move_no, turn_no, coordinate in (
+        (1, 1, "A1"),
+        (2, 3, "B1"),
+        (3, 5, "C1"),
+        (4, 7, "D1"),
+        (5, 9, "E1"),
+    ):
+        await games.append_move(
+            OfficialMoveRecord(
+                game_id=GAME_ID,
+                turn_no=turn_no,
+                move_no=move_no,
+                team=Stone.BLACK,
+                coordinate=Coordinate.parse(coordinate),
+                final_vote_count=1,
+                valid_voter_count=1,
+                confirmed_at=datetime.fromtimestamp(turn_no, UTC),
+            )
+        )
+
+    invalidated = await runner.finalize_system_invalid(
+        room_id=ROOM_ID,
+        game_id=GAME_ID,
+        closed_at_ms=20_000,
+    )
+
+    assert invalidated is False
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.FINISHED
+    assert stored.end_reason is EndReason.BLACK_WIN
+    assert stored.winner is Stone.BLACK
+    assert stored.ended_at == datetime.fromtimestamp(9, UTC)
+    assert await votes.get(ROOM_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_invalidation_reconciler_consumes_pending_marker_and_acks_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, clock, rooms, votes, games, _ = await setup_runner()
+    pending = PendingGameInvalidation(ROOM_ID, GAME_ID, 4_321)
+    monkeypatch.setattr(
+        rooms,
+        "pending_game_invalidations",
+        AsyncMock(return_value=(pending,)),
+    )
+    acknowledge = AsyncMock()
+    monkeypatch.setattr(rooms, "complete_game_invalidation", acknowledge)
+
+    completed = await runner.reconcile_game_invalidations(limit=10)
+
+    assert completed == 1
+    stored = await games.load_result(GAME_ID)
+    assert stored is not None
+    assert stored.status is GameStatus.SYSTEM_INVALID
+    assert stored.ended_at == datetime.fromtimestamp(4.321, UTC)
+    assert await votes.get(ROOM_ID) is None
+    acknowledge.assert_awaited_once_with(ROOM_ID, GAME_ID)
+    assert clock.now_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_invalidation_reconciler_logs_stable_failure_once_until_it_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = PendingGameInvalidation("room-missing", "game-missing", 1_000)
+    rooms = Mock()
+    rooms.pending_game_invalidations = AsyncMock(return_value=(pending,))
+    rooms.complete_game_invalidation = AsyncMock()
+    games = Mock()
+    games.load_game = AsyncMock(return_value=None)
+    votes = Mock()
+    log = Mock()
+    monkeypatch.setattr("seokpan.game.application.resolution._LOGGER.exception", log)
+    runner = TurnResolutionRunner(
+        due_turns=Mock(),
+        finalization_gate=Mock(),
+        tie_selector=Mock(),
+        tie_audit=Mock(),
+        votes=votes,
+        games=games,
+        rooms=rooms,
+        clock=ManualClock(),
+        runner_id="invalidation-retry",
+    )
+
+    assert await runner.reconcile_game_invalidations() == 0
+    assert await runner.reconcile_game_invalidations() == 0
+
+    log.assert_called_once_with(
+        "Game invalidation item failed",
+        extra={
+            "event": "game_invalidation.item_failed",
+            "room_id": "room-missing",
+            "game_id": "game-missing",
+        },
+    )

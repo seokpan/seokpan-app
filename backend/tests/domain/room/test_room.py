@@ -444,6 +444,7 @@ def test_playing_room_requests_system_invalid_only_when_room_must_close() -> Non
 
     assert result.room_closed is True
     assert result.game_termination is GameTermination.SYSTEM_INVALID
+    assert result.terminated_game_id == "game-1"
 
 
 def test_non_owner_departure_keeps_owner_and_room_open() -> None:

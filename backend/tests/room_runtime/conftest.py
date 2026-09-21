@@ -10,6 +10,7 @@ from seokpan.persistence.memory import InMemoryRoomRuntimeAdapter, ManualClock
 from seokpan.persistence.redis.common import VersionedJsonCodec
 from seokpan.persistence.redis.room_adapter import RedisRoomRuntimeAdapter
 from seokpan.persistence.redis.room_scripts import (
+    ROOM_INVALIDATION_ACK,
     ROOM_MUTATION,
     ROOM_PRIVATE_HASH_READ,
     ROOM_READ,
@@ -48,22 +49,45 @@ class EmulatedRoomRedisClient:
     def __init__(self, clock: ManualClock, *, scripts_loaded: bool = True) -> None:
         self.store = InMemoryRoomRuntimeAdapter(clock)
         self.loaded = (
-            {ROOM_MUTATION.sha, ROOM_READ.sha, ROOM_PRIVATE_HASH_READ.sha}
+            {
+                ROOM_MUTATION.sha,
+                ROOM_READ.sha,
+                ROOM_PRIVATE_HASH_READ.sha,
+                ROOM_INVALIDATION_ACK.sha,
+            }
             if scripts_loaded
             else set()
         )
         self.evalsha_calls: list[tuple[str, int, tuple[object, ...]]] = []
         self.script_load_calls: list[str] = []
 
-    async def get(self, key: str) -> None:
+    async def get(self, key: str) -> bytes | None:
+        if key.endswith(":closed"):
+            room_id = self._room_id(key)
+            pending = self.store._pending_game_invalidations.get(room_id)
+            if pending is None:
+                return None
+            return self._encode(
+                {
+                    "room_id": pending.room_id,
+                    "terminated_game_id": pending.game_id,
+                    "closed_at_ms": pending.closed_at_ms,
+                    "invalidation_pending": True,
+                }
+            )
         return None
 
     async def scan_iter(self, *, match: str, count: int) -> AsyncIterator[bytes]:
         assert match in {
             "stone:v1:room:{*}:meta",
             "stone:v1:room:{*}:connections",
+            "stone:v1:room:{*}:closed",
         }
         assert count == 100
+        if match.endswith(":closed"):
+            for pending in await self.store.pending_game_invalidations(limit=100):
+                yield f"stone:v1:room:{{{pending.room_id}}}:closed".encode()
+            return
         suffix = "meta" if match.endswith(":meta") else "connections"
         for room in await self.store.list_rooms():
             yield f"stone:v1:room:{{{room.room_id}}}:{suffix}".encode()
@@ -107,6 +131,16 @@ class EmulatedRoomRedisClient:
                     "error": None,
                 }
             )
+        if sha == ROOM_INVALIDATION_ACK.sha:
+            game_id = str(args[0])
+            pending = self.store._pending_game_invalidations.get(room_id)
+            if pending is None:
+                return self._encode({"ok": True, "missing": True, "error": None})
+            try:
+                await self.store.complete_game_invalidation(room_id, game_id)
+            except RoomRuleViolation as error:
+                return self._encode({"ok": False, "error": error.code})
+            return self._encode({"ok": True, "missing": False, "error": None})
         if sha != ROOM_MUTATION.sha:
             raise AssertionError("unknown script")
 
@@ -121,7 +155,7 @@ class EmulatedRoomRedisClient:
 
     async def script_load(self, script: str) -> str:
         self.script_load_calls.append(script)
-        for candidate in (ROOM_MUTATION, ROOM_READ, ROOM_PRIVATE_HASH_READ):
+        for candidate in (ROOM_MUTATION, ROOM_READ, ROOM_PRIVATE_HASH_READ, ROOM_INVALIDATION_ACK):
             if candidate.source == script:
                 self.loaded.add(candidate.sha)
                 return candidate.sha
@@ -309,6 +343,7 @@ class EmulatedRoomRedisClient:
                             "new_owner_id": result.departure.new_owner_id,
                             "room_closed": result.departure.room_closed,
                             "game_termination": result.departure.game_termination.value,
+                            "terminated_game_id": result.departure.terminated_game_id,
                         }
                     ),
                     "start_roster": (

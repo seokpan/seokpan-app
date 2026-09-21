@@ -8,7 +8,11 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from seokpan.persistence.memory import ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
 from seokpan.persistence.redis.room_adapter import RedisRoomRuntimeAdapter
-from seokpan.persistence.redis.room_scripts import ROOM_MUTATION, ROOM_READ
+from seokpan.persistence.redis.room_scripts import (
+    ROOM_INVALIDATION_ACK,
+    ROOM_MUTATION,
+    ROOM_READ,
+)
 from seokpan.room.application import ChangeRoomIdentity, DisconnectRoomParticipant
 from seokpan.room.application.runtime import (
     ROOM_DISCONNECT_LEASE_MS,
@@ -32,7 +36,7 @@ def test_kick_lua_checks_rules_before_removing_only_target_room_state() -> None:
     assert "HDEL', KEYS[4], payload.target_id" in kick
     assert "advance_version()" in kick
     assert "remove_vote(" not in kick and "update_game_player(" not in kick
-    assert ROOM_MUTATION.version == 9
+    assert ROOM_MUTATION.version == 12
     participant_guard = ROOM_MUTATION.source.split(
         "local current_participant_id = payload.participant_id or payload.actor_id", 1
     )[1].split("if operation ~= 'disconnect'", 1)[0]
@@ -248,3 +252,13 @@ def test_lua_schema_rejection_is_a_provider_error_not_user_input_error() -> None
         RedisRoomRuntimeAdapter._raise_rejection(
             {"ok": False, "error": "ROOM_SCHEMA_VERSION_MISMATCH"}
         )
+
+
+def test_system_invalid_tombstone_source_keeps_retry_metadata_and_longer_ttl() -> None:
+    source = ROOM_MUTATION.source
+    assert "invalidation_pending = termination == 'SYSTEM_INVALID'" in source
+    assert "terminated_game_id" in source
+    assert "closed_at_ms = current_ms" in source
+    assert "math.max(tombstone_ttl_ms, request_ttl_ms)" in source
+    assert ROOM_INVALIDATION_ACK.version == 1
+    assert "value.invalidation_pending = false" in ROOM_INVALIDATION_ACK.source

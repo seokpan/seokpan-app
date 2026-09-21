@@ -190,7 +190,7 @@ class FinalizeRuntimeGame:
             self.end_reason is EndReason.FORFEIT
             and self.winner in {Stone.BLACK, Stone.WHITE}
         ) or (
-            self.end_reason is EndReason.JOINT_LOSS
+            self.end_reason in {EndReason.JOINT_LOSS, EndReason.SYSTEM_INVALID}
             and self.winner is Stone.EMPTY
         )
         if not valid:
@@ -252,3 +252,5 @@ class VoteRuntimePort(Protocol):
     async def apply_resolution(self, command: ApplyRuntimeResolution) -> VoteMutationResult: ...
 
     async def finalize_game(self, command: FinalizeRuntimeGame) -> VoteMutationResult: ...
+
+    async def discard_game(self, room_id: str, game_id: str) -> None: ...

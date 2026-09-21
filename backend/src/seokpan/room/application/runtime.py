@@ -291,6 +291,13 @@ class DueRoomDisconnect:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingGameInvalidation:
+    room_id: str
+    game_id: str
+    closed_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RoomRuntimeSnapshot:
     room_id: str
     config: RoomConfig
@@ -329,6 +336,12 @@ class RoomMutationResult:
         if self.departure is None:
             return GameTermination.NONE
         return self.departure.game_termination
+
+    @property
+    def terminated_game_id(self) -> str | None:
+        if self.departure is None:
+            return None
+        return self.departure.terminated_game_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +391,14 @@ class RoomRuntimePort(Protocol):
     async def leave(self, command: LeaveRoomRuntime) -> RoomMutationResult: ...
 
     async def kick(self, command: KickRoomParticipant) -> RoomMutationResult: ...
+
+    async def pending_game_invalidations(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PendingGameInvalidation, ...]: ...
+
+    async def complete_game_invalidation(self, room_id: str, game_id: str) -> None: ...
 
 
 class DueRoomDisconnectSource(Protocol):

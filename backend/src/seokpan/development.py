@@ -67,6 +67,7 @@ class DevelopmentRunner:
         assert self.services.disconnect_expiry is not None
         assert self.services.turn_resolution is not None
         await self.services.disconnect_expiry.run_once()
+        await self.services.turn_resolution.reconcile_game_invalidations()
         await self.services.turn_resolution.run_once()
         self._last_tick = self.clock.now_ms
 

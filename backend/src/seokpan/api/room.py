@@ -21,7 +21,14 @@ from seokpan.api.identity import (
 from seokpan.api.problems import ApiProblem, room_problem_responses
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.room.application import RoomApplicationService, RoomMutationResult, RoomRuntimeSnapshot
-from seokpan.room.domain import RoomConfig, RoomRuleViolation, RoomStatus, RoomVisibility, Team
+from seokpan.room.domain import (
+    GameTermination,
+    RoomConfig,
+    RoomRuleViolation,
+    RoomStatus,
+    RoomVisibility,
+    Team,
+)
 
 
 UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
@@ -232,10 +239,11 @@ def room_router(services: RoomApiServices) -> APIRouter:
             ),
         )
         if (
-            not result.replayed
+            services.departures is not None
+            and not result.replayed
+            and result.game_termination is not GameTermination.SYSTEM_INVALID
             and result.snapshot is not None
             and result.snapshot.game_id is not None
-            and services.departures is not None
         ):
             await services.departures.finalize_departures(
                 room_id=room_id,
