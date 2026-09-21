@@ -188,10 +188,9 @@ class RoomGameStartIntent:
         ):
             if len(values) != len(set(values)):
                 raise StartIntentViolation()
-        if self.previous_game_id is None:
-            if self.previous_turn_no is not None:
-                raise StartIntentViolation()
-        else:
+        if self.previous_game_id is None and self.previous_turn_no is not None:
+            raise StartIntentViolation()
+        if self.previous_game_id is not None:
             _uuid4(self.previous_game_id)
             if self.previous_game_id == self.game_id:
                 raise StartIntentViolation()
