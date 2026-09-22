@@ -606,7 +606,7 @@
   height: 100%;
   overflow: hidden;
   display: grid;
-  grid-template-rows: minmax(8rem, 0.9fr) minmax(12rem, 1.15fr) minmax(7rem, 0.7fr);
+  grid-template-rows: minmax(8rem, 0.8fr) minmax(15rem, 1.3fr) minmax(7rem, 0.6fr);
   gap: 0.55rem;
 }
 .playingStage .infoPanel,
@@ -640,7 +640,7 @@
 .sidebarChat [role="log"],
 .waitingChat [role="log"] {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 7rem;
   height: auto;
   overflow-y: auto;
 }
@@ -661,7 +661,7 @@
 }
 .waitingLayout {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
-  grid-template-rows: minmax(0, 1fr) minmax(13rem, 0.72fr);
+  grid-template-rows: minmax(0, 1fr) minmax(15rem, 0.78fr);
   grid-template-areas:
     "board controls"
     "board chat";
@@ -684,6 +684,28 @@
   min-height: 0;
   overflow: hidden;
 }
+
+.playingStage .infoPanel,
+.resultStage .infoPanel,
+.analysisPanel,
+.waitingControls,
+.sidebarChat > section,
+.waitingChat > section,
+.sidebarChat [role="log"],
+.waitingChat [role="log"] {
+  scrollbar-width: none;
+}
+.playingStage .infoPanel::-webkit-scrollbar,
+.resultStage .infoPanel::-webkit-scrollbar,
+.analysisPanel::-webkit-scrollbar,
+.waitingControls::-webkit-scrollbar,
+.sidebarChat > section::-webkit-scrollbar,
+.waitingChat > section::-webkit-scrollbar,
+.sidebarChat [role="log"]::-webkit-scrollbar,
+.waitingChat [role="log"]::-webkit-scrollbar {
+  display: none;
+}
+
 .mobileTabs {
   display: none;
 }
@@ -720,7 +742,7 @@
   }
   .playingStage .infoStack,
   .resultStage .infoStack {
-    grid-template-rows: minmax(7rem, 0.9fr) minmax(10rem, 1.1fr) minmax(6rem, 0.65fr);
+    grid-template-rows: minmax(7rem, 0.75fr) minmax(13rem, 1.25fr) minmax(6rem, 0.6fr);
   }
 }
 
