@@ -197,7 +197,7 @@ function ConnectedChat({
         <div className={styles.composer}>
           <textarea
             id={id}
-            rows={2}
+            rows={3}
             value={draft}
             readOnly={pending}
             disabled={!active || busy || view.phase !== "ready"}

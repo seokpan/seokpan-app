@@ -43,7 +43,7 @@
   color: #007681;
 }
 .newMessages {
-  height: 2.5rem;
+  height: 2.1rem;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -67,12 +67,16 @@
 }
 .composer textarea {
   min-width: 0;
+  min-height: 4.5rem;
+  max-height: 7.5rem;
   flex: 1;
   resize: none;
+  overflow-y: auto;
   font: inherit;
+  line-height: 1.45;
   border: 1px solid #a1afc4;
   border-radius: 0.4rem;
-  padding: 0.5rem;
+  padding: 0.6rem;
 }
 .composer button {
   flex: 0 0 auto;
@@ -81,7 +85,7 @@
   padding: 0.6rem 0.8rem;
 }
 .feedback {
-  min-height: 3.6em;
+  min-height: 2.4em;
   font-size: 0.85rem;
   line-height: 1.5;
   margin: 0.4rem 0 0;
@@ -110,7 +114,10 @@
     height: 2rem;
   }
   .feedback {
-    min-height: 2.4em;
+    min-height: 1.8em;
+  }
+  .composer textarea {
+    min-height: 3.75rem;
   }
 }
 
