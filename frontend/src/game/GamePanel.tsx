@@ -103,7 +103,9 @@ export function GamePanel({
   }
   return (
     <section
-      className={styles.stage}
+      className={`${styles.stage} ${
+        waiting ? styles.waitingStage : finished ? styles.resultStage : styles.playingStage
+      }`}
       aria-label={waiting ? "게임 준비" : finished ? "게임 결과" : "진행 중인 게임"}
     >
       <div
@@ -158,7 +160,10 @@ export function GamePanel({
       )}
       <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
         {waiting && <div className={styles.waitingControls}>{waitingControls}</div>}
-        <div ref={boardRegion} className={waiting ? styles.waitingBoard : undefined}>
+        <div
+          ref={boardRegion}
+          className={`${styles.boardRegion} ${waiting ? styles.waitingBoard : ""}`}
+        >
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
             winning={result?.winning_line ?? []}
@@ -292,7 +297,7 @@ export function GamePanel({
                   </button>
                 </aside>
               )}
-              {chat}
+              <div className={styles.sidebarChat}>{chat}</div>
               <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
                 <div className={styles.analysisHeader}>
                   <h3>AI 판세 분석</h3>
