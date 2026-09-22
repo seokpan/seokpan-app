@@ -550,6 +550,12 @@
 .appWorkspace .header {
   min-height: 0;
 }
+.roomRoute {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .roomShell {
   width: min(1160px, 100%);
   max-width: 1160px;
