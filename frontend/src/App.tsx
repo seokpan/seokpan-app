@@ -71,7 +71,7 @@ function SessionGate({
   if (view.identity.room_id)
     return (
       <>
-        <div hidden={rankings}>
+        <div className={styles.roomRoute} hidden={rankings}>
           <RoomPage
             active={!rankings}
             key={JSON.stringify([
