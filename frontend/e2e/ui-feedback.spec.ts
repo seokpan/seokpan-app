@@ -767,6 +767,9 @@ for (const width of [1280, 390])
     const turnStatus = page.getByRole("region", { name: "현재 투표 상태" });
     await expect(turnStatus.getByLabel("남은 투표 시간", { exact: true })).toHaveText(/약 \d+초/);
     await expect(turnStatus).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+    ).toBe(true);
     expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
     const playingBoard = await board.boundingBox();
     if (!playingBoard) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
@@ -1028,6 +1031,9 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     expect(fitted!.x + fitted!.width).toBeLessThanOrEqual(width);
     await expect(page.getByRole("button", { name: "O15 백돌", exact: true })).toBeInViewport();
     if (width === 390) {
+      expect(
+        await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+      ).toBe(true);
       await page.screenshot({ path: info.outputPath("board-mobile-fit.png"), fullPage: true });
       await page.getByRole("button", { name: "보드 확대", exact: true }).click();
       expect((await board.boundingBox())!.width).toBeGreaterThan(fitted!.width);
@@ -1107,6 +1113,9 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
   expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+  ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await preparation.getByRole("button", { name: "Ready", exact: true }).scrollIntoViewIfNeeded();
@@ -1114,6 +1123,9 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   expect(await page.evaluate<number>("document.documentElement.scrollWidth")).toBeLessThanOrEqual(
     390,
   );
+  expect(
+    await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+  ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-mobile.png"), fullPage: true });
 });
 // These tests use synthetic messages only, independent of the user's trial server.
@@ -1262,8 +1274,11 @@ for (const width of [1280, 390])
           expect(Math.abs(panelBefore.x - boardBounds.x)).toBeLessThanOrEqual(2);
           expect(panelBefore.y).toBeGreaterThan(boardBounds.y + boardBounds.height);
         } else {
-          expect(preparation.y).toBeLessThan(panelBefore.y);
-          expect(panelBefore.y).toBeLessThan(boardBounds.y);
+          expect(preparation.y).toBeLessThan(boardBounds.y);
+          expect(boardBounds.y).toBeLessThan(panelBefore.y);
+          expect(
+            await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1),
+          ).toBe(true);
         }
       }
       const inputBounds = await input.boundingBox();
