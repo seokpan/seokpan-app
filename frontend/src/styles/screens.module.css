@@ -593,6 +593,40 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+.roomShell .teamPanel {
+  padding: 0.65rem;
+}
+.roomShell .waitingTeams {
+  gap: 0.45rem;
+}
+.roomShell .waitingTeams h2,
+.roomShell .readyPanel h2 {
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+}
+.roomShell .waitingTeams ul {
+  height: 4.75rem;
+  margin: 0.35rem 0;
+}
+.roomShell .waitingTeams .secondaryButton,
+.roomShell .readyPanel .primaryButton {
+  min-height: 38px;
+  padding: 0.5rem 0.7rem;
+}
+.roomShell .readyPanel {
+  padding: 0.75rem;
+}
+.roomShell .readyPanel label {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.85rem;
+}
+.roomShell .readyPanel select {
+  min-height: 38px;
+  padding: 0.45rem 0.6rem;
+}
+.roomShell .startChecklist {
+  margin: 0.5rem 0;
+}
 
 @media (max-width: 700px) {
   .appWorkspace .header {
