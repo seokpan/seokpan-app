@@ -124,7 +124,7 @@ function Shell() {
     if (busy && !(view.phase === "ready" && view.checking)) clearRoomNotice();
   }, [busy, view, clearRoomNotice]);
   return (
-    <>
+    <div className={roomWorkspace ? styles.appWorkspace : styles.appDocument}>
       <a href="#main-content" className={styles.skipLink}>
         본문으로 바로가기
       </a>
@@ -208,7 +208,7 @@ function Shell() {
       <footer className={`${styles.footer} ${roomWorkspace ? styles.roomFooter : ""}`}>
         SEOKPAN · 함께 투표하고, 하나의 수를 결정합니다.
       </footer>
-    </>
+    </div>
   );
 }
 
