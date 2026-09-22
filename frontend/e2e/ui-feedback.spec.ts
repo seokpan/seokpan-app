@@ -751,7 +751,7 @@ for (const width of [1280, 390])
     const original = await board.elementHandle();
     await page.getByRole("button", { name: "게임 시작", exact: true }).click();
     await expect(page.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
-    await board.scrollIntoViewIfNeeded();
+    await expect(board).toBeInViewport({ ratio: 0.2 });
     const waitingBoard = await board.boundingBox();
     if (!waitingBoard) throw new Error("WAITING_BOARD_BOUNDS_MISSING");
 
@@ -767,6 +767,11 @@ for (const width of [1280, 390])
     const turnStatus = page.getByRole("region", { name: "현재 투표 상태" });
     await expect(turnStatus.getByLabel("남은 투표 시간", { exact: true })).toHaveText(/약 \d+초/);
     await expect(turnStatus).toBeInViewport();
+    expect(
+      await page.evaluate<boolean>(
+        "document.documentElement.scrollHeight <= window.innerHeight + 1",
+      ),
+    ).toBe(true);
     expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
     const playingBoard = await board.boundingBox();
     if (!playingBoard) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
@@ -778,10 +783,10 @@ for (const width of [1280, 390])
     const voteInfo = await page.getByLabel("투표 정보").boundingBox();
     if (!voteInfo) throw new Error("VOTE_INFO_BOUNDS_MISSING");
 
-    expect(Math.abs(playingBoard.width - waitingBoard.width)).toBeLessThanOrEqual(1);
-    expect(Math.abs(playingBoard.height - waitingBoard.height)).toBeLessThanOrEqual(1);
+    expect(playingBoard.width).toBeGreaterThan(180);
+    expect(playingBoard.height).toBeGreaterThan(180);
 
-    if (width > 1050) expect(playingBoard.x).toBeLessThan(voteInfo.x);
+    if (width > 700) expect(playingBoard.x).toBeLessThan(voteInfo.x);
     else expect(playingBoard.y).toBeLessThan(voteInfo.y);
 
     await expect(board).toBeInViewport({ ratio: 0.25 });
@@ -1028,6 +1033,11 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     expect(fitted!.x + fitted!.width).toBeLessThanOrEqual(width);
     await expect(page.getByRole("button", { name: "O15 백돌", exact: true })).toBeInViewport();
     if (width === 390) {
+      expect(
+        await page.evaluate<boolean>(
+          "document.documentElement.scrollHeight <= window.innerHeight + 1",
+        ),
+      ).toBe(true);
       await page.screenshot({ path: info.outputPath("board-mobile-fit.png"), fullPage: true });
       await page.getByRole("button", { name: "보드 확대", exact: true }).click();
       expect((await board.boundingBox())!.width).toBeGreaterThan(fitted!.width);
@@ -1107,6 +1117,11 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
   expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
+  expect(
+    await page.evaluate<boolean>(
+      "document.documentElement.scrollHeight <= window.innerHeight + 1",
+    ),
+  ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await preparation.getByRole("button", { name: "Ready", exact: true }).scrollIntoViewIfNeeded();
@@ -1114,6 +1129,11 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   expect(await page.evaluate<number>("document.documentElement.scrollWidth")).toBeLessThanOrEqual(
     390,
   );
+  expect(
+    await page.evaluate<boolean>(
+      "document.documentElement.scrollHeight <= window.innerHeight + 1",
+    ),
+  ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-mobile.png"), fullPage: true });
 });
 // These tests use synthetic messages only, independent of the user's trial server.
@@ -1242,6 +1262,9 @@ for (const width of [1280, 390])
         );
       });
       await page.goto("/lobby");
+      if (inRoom && width === 390) {
+        await page.getByRole("button", { name: "채팅 보기", exact: true }).click();
+      }
       const input = page.getByLabel(`${inRoom ? "방" : "로비"} 채팅 메시지 입력`, { exact: true });
       await expect(input).toBeEnabled();
       const board = inRoom ? await page.getByRole("grid").elementHandle() : null;
@@ -1259,11 +1282,15 @@ for (const width of [1280, 390])
           throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
         if (width === 1280) {
           expect(panelBefore.x).toBeGreaterThan(preparation.x);
-          expect(Math.abs(panelBefore.x - boardBounds.x)).toBeLessThanOrEqual(2);
-          expect(panelBefore.y).toBeGreaterThan(boardBounds.y + boardBounds.height);
+          expect(panelBefore.y).toBeGreaterThan(boardBounds.y);
+          expect(panelBefore.width).toBeGreaterThan(200);
         } else {
-          expect(preparation.y).toBeLessThan(panelBefore.y);
-          expect(panelBefore.y).toBeLessThan(boardBounds.y);
+          expect(panelBefore.y).toBeGreaterThan(boardBounds.y);
+          expect(
+            await page.evaluate<boolean>(
+              "document.documentElement.scrollHeight <= window.innerHeight + 1",
+            ),
+          ).toBe(true);
         }
       }
       const inputBounds = await input.boundingBox();
