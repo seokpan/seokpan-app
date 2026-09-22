@@ -20,9 +20,10 @@
 //   - Candidate Health Smoke 실패 시 Promote 금지
 //   - Harbor API / Guard / Digest 오류 시 중단
 //
-// GitOps:
-//   검증된 Image/Digest Evidence 생성까지만 담당한다.
-//   GitOps Branch/Manifest/Commit/Push/PR 및 Cluster 직접 변경은 하지 않는다.
+// GitOps Promotion (#98):
+//   검증된 Final Digest 확정 뒤 별도 app-ci-check Agent에서
+//   component provenance/impact를 판정하고 seokpan-gitops PR 생성까지 자동화한다.
+//   GitOps main 직접 push/auto-merge/Cluster 직접 변경은 하지 않는다.
 //
 // Health Smoke:
 //   target 컨테이너 내부 Jenkins Durable Task(sh)는 실제 Tmp Job에서
@@ -1097,8 +1098,8 @@ PYEOF
       "cleanup_status": "${frontendCleanup}"
     }
   },
-  "gitops_change": "NONE",
-  "note": "검증된 Image/Digest는 별도 GitOps 작업으로 인계한다."
+  "gitops_change": "DELEGATED_TO_PROMOTION_STAGE",
+  "note": "검증된 Image/Digest는 후속 GitOps Promotion PR Stage가 처리한다."
 }
 """
                                 writeFile file: 'image-metadata.json', text: metadataJson
@@ -1107,6 +1108,81 @@ PYEOF
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // --------------------------------------------------------------
+        // GitOps Promotion (#98):
+        // 검증된 Final image가 모두 확정된 뒤, Harbor credential이 마운트되지
+        // 않는 app-ci-check Agent에서 GitHub promotion credential만 명시적으로
+        // 바인딩해 GitOps branch/commit/push/PR 생성까지 수행한다.
+        // main 직접 push / auto-merge / Cluster 직접 변경은 하지 않는다.
+        // --------------------------------------------------------------
+        stage('Create GitOps Promotion PR') {
+            when {
+                beforeAgent true
+                allOf {
+                    expression { env.P1_PASSED == 'true' }
+                    expression { currentBuild.currentResult == 'SUCCESS' }
+                    expression {
+                        env.FINAL_DIGEST_BACKEND &&
+                        env.FINAL_DIGEST_FRONTEND
+                    }
+                }
+            }
+            agent { kubernetes { inheritFrom 'app-ci-check' } }
+            steps {
+                container('app-ci') {
+                    script {
+                        // Branch Guard에서 고정한 App main Commit을 새 Agent에서도
+                        // 정확히 다시 Checkout한다. 최신 main을 임의로 따라가지 않는다.
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: env.SEOKPAN_GIT_SHA]],
+                            userRemoteConfigs: [[url: scm.userRemoteConfigs[0].url]]
+                        ])
+
+                        def actualSha = sh(
+                            script: 'git rev-parse HEAD',
+                            returnStdout: true
+                        ).trim()
+
+                        if (actualSha != env.SEOKPAN_GIT_SHA) {
+                            error(
+                                "Promotion source mismatch: expected " +
+                                "${env.SEOKPAN_GIT_SHA}, got ${actualSha}"
+                            )
+                        }
+                    }
+
+                    sh '''
+                        set -eu
+                        python3 --version
+                        git --version
+                        python3 scripts/test_promote_gitops.py
+                    '''
+
+                    withCredentials([usernamePassword(
+                        credentialsId: 'gitops-promotion-github',
+                        usernameVariable: 'GITOPS_GITHUB_USER',
+                        passwordVariable: 'GITOPS_GITHUB_TOKEN'
+                    )]) {
+                        sh '''
+                            set -eu
+                            python3 scripts/promote_gitops.py \
+                              --result-file gitops-promotion-result.json
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts(
+                        artifacts: 'gitops-promotion-result.json',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
                 }
             }
         }
