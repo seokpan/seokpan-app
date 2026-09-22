@@ -318,7 +318,10 @@
   margin: 0;
   height: 100%;
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+.tally::-webkit-scrollbar {
+  display: none;
 }
 .tally li {
   padding: 0.8rem;
