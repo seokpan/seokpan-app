@@ -607,6 +607,14 @@
 .roomShell .waitingTeams ul {
   height: 4.75rem;
   margin: 0.35rem 0;
+  scrollbar-width: none;
+}
+.roomShell .waitingTeams ul::-webkit-scrollbar,
+.roomShell .roomCard > p[id="room-leave-impact"]::-webkit-scrollbar {
+  display: none;
+}
+.roomShell .roomCard > p[id="room-leave-impact"] {
+  scrollbar-width: none;
 }
 .roomShell .waitingTeams .secondaryButton,
 .roomShell .readyPanel .primaryButton {
