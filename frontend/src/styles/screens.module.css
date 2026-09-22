@@ -608,6 +608,7 @@
   height: 4.75rem;
   margin: 0.35rem 0;
   scrollbar-width: none;
+  scrollbar-gutter: auto;
 }
 .roomShell .waitingTeams ul::-webkit-scrollbar,
 .roomShell .roomCard > p[id="room-leave-impact"]::-webkit-scrollbar {
