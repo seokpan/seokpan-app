@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSession } from "../session/context";
 import { Board } from "./Board";
@@ -32,6 +32,21 @@ export function GamePanel({
 }) {
   const auth = useSession();
   const waiting = waitingControls !== undefined;
+  const boardRegion = useRef<HTMLDivElement>(null);
+  const previousWaiting = useRef(waiting);
+
+  useLayoutEffect(() => {
+    const wasWaiting = previousWaiting.current;
+    previousWaiting.current = waiting;
+
+    if (!wasWaiting || waiting || window.innerWidth > 1050) return;
+
+    const board = boardRegion.current?.querySelector<HTMLElement>('[role="grid"]');
+
+    if (typeof board?.scrollIntoView === "function") {
+      board.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [waiting]);
   const [cachedGame, setCachedGame] = useState(game);
   if (game && game !== cachedGame) setCachedGame(game);
   const lastGame = cachedGame?.game_id === gameId ? cachedGame : null;
@@ -117,7 +132,7 @@ export function GamePanel({
             {chat}
           </div>
         )}
-        <div>
+        <div ref={boardRegion}>
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
             winning={result?.winning_line ?? []}

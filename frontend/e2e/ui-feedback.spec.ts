@@ -752,11 +752,32 @@ for (const width of [1280, 390])
     await page.getByRole("button", { name: "게임 시작", exact: true }).click();
     await expect(page.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
     await board.scrollIntoViewIfNeeded();
-    const position = await board.boundingBox();
+    const waitingBoard = await board.boundingBox();
+    if (!waitingBoard) throw new Error("WAITING_BOARD_BOUNDS_MISSING");
+
+    const waitingControls = await page
+      .getByRole("region", { name: "게임 시작 준비" })
+      .boundingBox();
+    if (!waitingControls) throw new Error("WAITING_CONTROLS_BOUNDS_MISSING");
+
+    if (width > 1050) expect(waitingControls.x).toBeLessThan(waitingBoard.x);
+    else expect(waitingControls.y).toBeLessThan(waitingBoard.y);
     finish();
     await expect(page.getByRole("heading", { name: "● 흑팀 차례" })).toBeVisible();
     expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-    expect(await board.boundingBox()).toEqual(position);
+    const playingBoard = await board.boundingBox();
+    if (!playingBoard) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
+
+    const voteInfo = await page.getByLabel("투표 정보").boundingBox();
+    if (!voteInfo) throw new Error("VOTE_INFO_BOUNDS_MISSING");
+
+    expect(Math.abs(playingBoard.width - waitingBoard.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(playingBoard.height - waitingBoard.height)).toBeLessThanOrEqual(1);
+
+    if (width > 1050) expect(playingBoard.x).toBeLessThan(voteInfo.x);
+    else expect(playingBoard.y).toBeLessThan(voteInfo.y);
+
+    await expect(board).toBeInViewport({ ratio: 0.25 });
     await expect(page.getByRole("button", { name: "H8 빈 자리", exact: true })).toHaveAttribute(
       "aria-disabled",
       "false",
@@ -956,8 +977,13 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const board = page.getByRole("grid", { name: "15×15 오목판" });
   await expect(board).toBeVisible();
   const analysis = page.getByRole("complementary", { name: "AI 판세 분석" });
-  await expect(analysis.getByText("추후 제공 예정")).toBeVisible();
-  await expect(analysis.getByText(/%|분석 중|분석 완료/)).toHaveCount(0);
+  await expect(analysis.getByText("주요 후보")).toBeVisible();
+  await expect(analysis.getByText("판세 변화")).toBeVisible();
+  await expect(analysis.getByLabel("주요 후보 좌표")).toContainText("—");
+  await expect(analysis.getByText(/MVP|2차|예정|미지원|분석 중|분석 완료/)).toHaveCount(0);
+  await expect(analysis.getByText(/\d+%/)).toHaveCount(0);
+  await expect(analysis.getByRole("button")).toHaveCount(0);
+  await expect(analysis.getByRole("progressbar")).toHaveCount(0);
   const original = await board.elementHandle();
   await expect(
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
@@ -1004,7 +1030,8 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await board.scrollIntoViewIfNeeded();
-  const position = await board.boundingBox();
+  const playingBounds = await board.boundingBox();
+  if (!playingBounds) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
   room.status = "WAITING";
   room.game_id = null;
   room.last_game_id = "ui-game";
@@ -1023,7 +1050,14 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   });
   await expect(page.getByText("저장된 결과를 불러오고 있습니다.")).toBeVisible();
   expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-  expect(await board.boundingBox()).toEqual(position);
+
+  const loadingBounds = await board.boundingBox();
+  if (!loadingBounds) throw new Error("RESULT_LOADING_BOARD_BOUNDS_MISSING");
+
+  expect(loadingBounds.x).toBe(playingBounds.x);
+  expect(loadingBounds.width).toBe(playingBounds.width);
+  expect(loadingBounds.height).toBe(playingBounds.height);
+  await expect(board).toBeInViewport({ ratio: 0.25 });
   await expect(page.getByRole("button", { name: "I8 빈 자리", exact: true })).toHaveAttribute(
     "aria-disabled",
     "true",
@@ -1035,7 +1069,15 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
   ).toBeVisible();
   expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-  expect(await board.boundingBox()).toEqual(position);
+
+  const resultBounds = await board.boundingBox();
+  if (!resultBounds) throw new Error("RESULT_BOARD_BOUNDS_MISSING");
+
+  expect(resultBounds.x).toBe(playingBounds.x);
+  expect(resultBounds.width).toBe(playingBounds.width);
+  expect(resultBounds.height).toBe(playingBounds.height);
+  await expect(board).toBeInViewport({ ratio: 0.25 });
+
   await page.screenshot({ path: info.outputPath("result-desktop.png"), fullPage: true });
   await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
   await expect(page.getByRole("heading", { name: "게임 준비", exact: true })).toBeVisible();
@@ -1048,7 +1090,7 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(preparation.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
-  expect(controlsBounds!.x).toBeGreaterThan(waitingBounds!.x + waitingBounds!.width);
+  expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
   await page.screenshot({ path: info.outputPath("waiting-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await preparation.getByRole("button", { name: "Ready", exact: true }).scrollIntoViewIfNeeded();
@@ -1245,7 +1287,7 @@ for (const width of [1280, 390])
       await expect(input).toHaveValue("안내를 닫아도 유지할 입력");
       await help.click();
       await dialog.getByText("자세한 규칙·재접속 안내").click();
-      await expect(dialog.getByText(/30초 안에 같은 사용자로/)).toBeVisible();
+      await expect(dialog.getByText(/10초 안에 같은\s+사용자로/)).toBeVisible();
       await dialog.getByRole("button", { name: "확인하고 닫기" }).click();
       await expect(help).toBeFocused();
       disconnectChat();

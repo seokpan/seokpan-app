@@ -167,8 +167,10 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await guest.getByRole("button", { name: "게임 방법", exact: true }).click();
     const help = guest.getByRole("dialog", { name: "함께 두는 오목, 게임 방법" });
     await help.getByText("자세한 규칙·재접속 안내").click();
-    await expect(help.getByText(/30초 안에 같은 사용자로/)).toBeVisible();
-    await expect(help.getByText(/즉시 방장을 이어받고 모든 Ready가 해제/)).toBeVisible();
+    await expect(help.getByText(/10초 안에 같은\s+사용자로/)).toBeVisible();
+    await expect(
+      help.getByText(/먼저 입장한 사람이 방장을 이어받고 모든 Ready가 해제/),
+    ).toBeVisible();
     await help.getByRole("button", { name: "확인하고 닫기" }).click();
     for (let index = 0; index < 5; index += 1) {
       await vote(black, `${String.fromCharCode(65 + index)}1`, "흑");
@@ -199,17 +201,25 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await white.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, whiteName, true);
     await black.reload();
-    await expect(black.getByRole("heading", { name: "흑팀 승리", exact: true })).toBeVisible();
-    await black.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
-    await roster(pages, blackName, false);
-    await roster(pages, whiteName, false);
-    await expect(black.getByRole("button", { name: "게임 시작", exact: true })).toHaveCount(0);
-    await expect(white.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
-    await black.getByRole("button", { name: "Ready", exact: true }).click();
-    await roster(pages, blackName, true); // Auth/CSRF recovered after reload.
-    await white.getByRole("button", { name: "Ready", exact: true }).click();
+
+    // Reload reconnects the same participant inside the disconnect lease.
+    // The previous result must not be re-exposed, ownership and Ready survive.
+    await expect(black.getByRole("heading", { name: "게임 준비", exact: true })).toBeVisible();
+    await expect(black.getByRole("heading", { name: "흑팀 승리", exact: true })).toHaveCount(0);
+
+    await roster(pages, blackName, true);
     await roster(pages, whiteName, true);
-    await white.getByRole("button", { name: "게임 시작", exact: true }).click();
+
+    await expect(black.getByRole("listitem").filter({ hasText: blackName })).toContainText("방장");
+
+    await expect(black.getByRole("button", { name: "Ready 취소", exact: true })).toBeVisible();
+    await expect(white.getByRole("button", { name: "Ready 취소", exact: true })).toBeVisible();
+
+    await expect(black.getByRole("button", { name: "게임 시작", exact: true })).toBeEnabled();
+    await expect(white.getByRole("button", { name: "게임 시작", exact: true })).toHaveCount(0);
+
+    // Mutation after reload verifies Session/CSRF recovery as well.
+    await black.getByRole("button", { name: "게임 시작", exact: true }).click();
     for (const page of pages) {
       await expect(page.getByRole("button", { name: "A1 빈 자리", exact: true })).toBeVisible();
       await expect(
@@ -228,7 +238,7 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
     await roster(pages, "Guest-", true);
     await white.getByRole("button", { name: "Ready", exact: true }).click();
     await roster(pages, whiteName, true);
-    await white.getByRole("button", { name: "게임 시작", exact: true }).click();
+    await black.getByRole("button", { name: "게임 시작", exact: true }).click();
     await expect(
       black.getByText("관전 중 · 이번 판에는 투표할 수 없습니다.", { exact: true }),
     ).toBeVisible();
@@ -248,8 +258,8 @@ test("두 Member·Guest: 정상 5목 → 새로고침·CSRF·방장 승계 → �
       await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
     const guestName = await guest.getByRole("button", { name: "사용자 메뉴" }).innerText();
     const guestDisplay = guestName.match(/Guest-[A-Z0-9]+/)![0];
-    await white.getByRole("button", { name: `${guestDisplay} 강퇴`, exact: true }).click();
-    await white
+    await black.getByRole("button", { name: `${guestDisplay} 강퇴`, exact: true }).click();
+    await black
       .getByRole("dialog", { name: "참가자 강퇴" })
       .getByRole("button", { name: "강퇴 확인" })
       .click();
