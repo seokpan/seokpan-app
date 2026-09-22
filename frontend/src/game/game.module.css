@@ -710,6 +710,19 @@
   }
 }
 
+@media (max-height: 760px) and (min-width: 701px) {
+  .boardRegion .boardFrame {
+    width: min(100%, clamp(280px, 52dvh, 480px));
+  }
+  .waitingBoard .boardFrame {
+    width: min(100%, clamp(240px, 38dvh, 340px));
+  }
+  .playingStage .infoStack,
+  .resultStage .infoStack {
+    grid-template-rows: minmax(5.5rem, 0.8fr) minmax(7.5rem, 1.2fr) minmax(4.25rem, 0.5fr);
+  }
+}
+
 @media (max-width: 700px) {
   .stage .gameHeader {
     flex-direction: row;
