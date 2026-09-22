@@ -106,7 +106,12 @@ export function GamePanel({
       className={styles.stage}
       aria-label={waiting ? "게임 준비" : finished ? "게임 결과" : "진행 중인 게임"}
     >
-      <div className={styles.gameHeader}>
+      <div
+        className={`${styles.gameHeader} ${finished && result ? styles.resultHeader : ""}`}
+        role={finished && result ? "status" : undefined}
+        aria-label={finished && result ? "게임 결과 요약" : undefined}
+        data-result-tone={finished && result ? resultTone(result.end_reason) : undefined}
+      >
         <h2>
           {waiting
             ? "게임 준비"
@@ -152,13 +157,8 @@ export function GamePanel({
         </section>
       )}
       <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
-        {waiting && (
-          <div className={styles.infoStack}>
-            {waitingControls}
-            {chat}
-          </div>
-        )}
-        <div ref={boardRegion}>
+        {waiting && <div className={styles.waitingControls}>{waitingControls}</div>}
+        <div ref={boardRegion} className={waiting ? styles.waitingBoard : undefined}>
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
             winning={result?.winning_line ?? []}
@@ -185,6 +185,7 @@ export function GamePanel({
                 : "숫자는 후보의 득표율 · 초록색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
+        {waiting && <div className={styles.waitingChat}>{chat}</div>}
         {!waiting && (
           <div className={styles.infoStack}>
             <>
@@ -291,6 +292,7 @@ export function GamePanel({
                   </button>
                 </aside>
               )}
+              {chat}
               <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
                 <div className={styles.analysisHeader}>
                   <h3>AI 판세 분석</h3>
@@ -327,7 +329,6 @@ export function GamePanel({
                 </div>
               </aside>
             </>
-            {chat}
           </div>
         )}
       </div>
@@ -338,6 +339,14 @@ export function GamePanel({
 function votingTimeLabel(game: Game, left: number) {
   if (game.turn_status !== "VOTING" || left <= 0) return null;
   return `약 ${Math.ceil(left / 1000)}초`;
+}
+
+function resultTone(endReason: Result["end_reason"]) {
+  if (endReason === "BLACK_WIN" || endReason === "WHITE_WIN" || endReason === "FORFEIT")
+    return "win";
+  if (endReason === "DRAW") return "draw";
+  if (endReason === "SYSTEM_INVALID") return "invalid";
+  return "loss";
 }
 
 const resultTitle: Record<Result["end_reason"], string> = {

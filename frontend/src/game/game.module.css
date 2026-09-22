@@ -474,3 +474,72 @@
     margin-top: 0;
   }
 }
+
+/* Final desktop layout polish: balance preparation, board and chat instead of
+   letting the left column grow indefinitely. */
+.waitingLayout {
+  grid-template-areas:
+    "controls board"
+    "controls chat";
+}
+.waitingControls {
+  grid-area: controls;
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+.waitingBoard {
+  grid-area: board;
+}
+.waitingChat {
+  grid-area: chat;
+  width: 100%;
+  max-width: 600px;
+  margin-inline: auto;
+}
+
+.resultHeader {
+  padding: 0.9rem 1rem;
+  border: 1px solid #d8e0ea;
+  border-left-width: 5px;
+  border-radius: 0.8rem;
+}
+.resultHeader h2 {
+  font-size: clamp(1.45rem, 2.8vw, 1.8rem);
+}
+.resultHeader[data-result-tone="win"] {
+  color: #075f58;
+  background: #edf9f7;
+  border-color: #78c9be;
+}
+.resultHeader[data-result-tone="loss"] {
+  color: #8c2432;
+  background: #fff3f3;
+  border-color: #e4aab1;
+}
+.resultHeader[data-result-tone="draw"] {
+  color: #5b4d1d;
+  background: #fff9e8;
+  border-color: #e5cf82;
+}
+.resultHeader[data-result-tone="invalid"] {
+  color: #4f5d73;
+  background: #f3f5f8;
+  border-color: #b8c2d1;
+}
+
+@media (max-width: 1050px) {
+  .waitingLayout {
+    grid-template-areas:
+      "controls"
+      "chat"
+      "board";
+  }
+  .waitingControls,
+  .waitingChat,
+  .waitingBoard {
+    width: 100%;
+    max-width: 680px;
+    margin-inline: auto;
+  }
+}

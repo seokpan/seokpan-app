@@ -113,3 +113,48 @@
     min-height: 2.4em;
   }
 }
+
+/* Desktop lobby is a bounded workspace. Variable room/chat content scrolls
+   inside the cards instead of stretching the page or the opposite column. */
+@media (min-width: 901px) {
+  .lobbyLayout {
+    align-items: stretch;
+  }
+  .lobbyCard,
+  .lobbyLayout > .panel {
+    height: clamp(32rem, 68dvh, 40rem);
+    min-height: 0;
+  }
+  .lobbyCard {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .lobbyRoomsViewport {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 1rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  .lobbyRoomsViewport thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .lobbyRoomsViewport .empty {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+  }
+  .lobbyLayout > .panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .lobbyLayout > .panel .log {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+}

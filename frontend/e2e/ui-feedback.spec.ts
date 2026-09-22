@@ -984,6 +984,7 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const board = page.getByRole("grid", { name: "15×15 오목판" });
   await expect(board).toBeVisible();
   const analysis = page.getByRole("complementary", { name: "AI 판세 분석" });
+  const roomChat = page.getByRole("region", { name: "방 채팅", exact: true });
   await expect(analysis.getByText("주요 후보")).toBeVisible();
   await expect(analysis.getByText("판세 변화")).toBeVisible();
   await expect(analysis.getByLabel("주요 후보 좌표")).toContainText("—");
@@ -991,6 +992,10 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(analysis.getByText(/\d+%/)).toHaveCount(0);
   await expect(analysis.getByRole("button")).toHaveCount(0);
   await expect(analysis.getByRole("progressbar")).toHaveCount(0);
+  const chatBounds = await roomChat.boundingBox();
+  const analysisBounds = await analysis.boundingBox();
+  if (!chatBounds || !analysisBounds) throw new Error("PLAYING_SIDEBAR_BOUNDS_MISSING");
+  expect(chatBounds.y).toBeLessThan(analysisBounds.y);
   const original = await board.elementHandle();
   await expect(
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
@@ -1072,6 +1077,10 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(page.getByRole("meter")).toHaveCount(0);
   finishResult();
   await expect(page.getByRole("heading", { name: "양 팀 공동 패배" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "게임 결과 요약" })).toHaveAttribute(
+    "data-result-tone",
+    "loss",
+  );
   await expect(
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
   ).toBeVisible();
@@ -1115,6 +1124,15 @@ for (const width of [1280, 390])
     }, info) => {
       await page.setViewportSize({ width, height: 900 });
       const roomId = inRoom ? "00000000-0000-4000-8000-000000000001" : null;
+      const lobbyRooms = Array.from({ length: 18 }, (_, index) => ({
+        room_id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+        name: `스크롤 검증 방 ${index + 1}`,
+        visibility: index % 3 === 0 ? "PRIVATE" : "PUBLIC",
+        password_required: index % 3 === 0,
+        participant_count: (index % 4) + 1,
+        max_participants: 8,
+        status: index % 5 === 0 ? "PLAYING" : "WAITING",
+      }));
       let sendChat!: (text: string) => void,
         disconnectChat!: () => void,
         sequence = 1;
@@ -1173,7 +1191,7 @@ for (const width of [1280, 390])
           });
         }
         if (path === "/api/v1/lobby/snapshot")
-          return route.fulfill({ json: { rooms: [], stream_version: 1 } });
+          return route.fulfill({ json: { rooms: lobbyRooms, stream_version: 1 } });
         if (path.endsWith("/state"))
           return route.fulfill({ json: { room, game: null, stream_version: 1 } });
         return route.abort();
@@ -1216,7 +1234,7 @@ for (const width of [1280, 390])
             state_version: 1,
             room_id: roomId,
             game_id: null,
-            payload: inRoom ? { room, game: null } : { rooms: [] },
+            payload: inRoom ? { room, game: null } : { rooms: lobbyRooms },
           }),
         );
       });
@@ -1229,6 +1247,22 @@ for (const width of [1280, 390])
         exact: true,
       });
       const panelBefore = await panel.boundingBox();
+      if (inRoom) {
+        const preparation = await page
+          .getByRole("region", { name: "게임 시작 준비" })
+          .boundingBox();
+        const boardBounds = await page.getByRole("grid").boundingBox();
+        if (!preparation || !boardBounds || !panelBefore)
+          throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
+        if (width === 1280) {
+          expect(panelBefore.x).toBeGreaterThan(preparation.x);
+          expect(Math.abs(panelBefore.x - boardBounds.x)).toBeLessThanOrEqual(2);
+          expect(panelBefore.y).toBeGreaterThan(boardBounds.y + boardBounds.height);
+        } else {
+          expect(preparation.y).toBeLessThan(panelBefore.y);
+          expect(panelBefore.y).toBeLessThan(boardBounds.y);
+        }
+      }
       const inputBounds = await input.boundingBox();
       expect(inputBounds!.width).toBeGreaterThan(100);
       const sendBounds = await panel
@@ -1263,10 +1297,19 @@ for (const width of [1280, 390])
       expect(
         await page.evaluate<number>("document.documentElement.scrollWidth"),
       ).toBeLessThanOrEqual(width);
-      if (!inRoom && width === 1280)
-        expect(panelAfter!.x).toBeGreaterThan(
-          (await page.getByRole("region", { name: "게임 방", exact: true }).boundingBox())!.x,
-        );
+      if (!inRoom && width === 1280) {
+        const lobbyRoomsCard = await page
+          .getByRole("region", { name: "게임 방", exact: true })
+          .boundingBox();
+        const roomsViewport = page.getByLabel("게임 방 목록 영역", { exact: true });
+        if (!lobbyRoomsCard) throw new Error("LOBBY_ROOMS_BOUNDS_MISSING");
+        expect(panelAfter!.x).toBeGreaterThan(lobbyRoomsCard.x);
+        expect(Math.abs(panelAfter!.y - lobbyRoomsCard.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(panelAfter!.height - lobbyRoomsCard.height)).toBeLessThanOrEqual(1);
+        expect(
+          await roomsViewport.evaluate((node) => node.scrollHeight > node.clientHeight),
+        ).toBe(true);
+      }
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({
         path: info.outputPath(`chat-${inRoom ? "room" : "lobby"}-${width}.png`),
