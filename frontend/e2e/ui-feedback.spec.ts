@@ -764,9 +764,16 @@ for (const width of [1280, 390])
     else expect(waitingControls.y).toBeLessThan(waitingBoard.y);
     finish();
     await expect(page.getByRole("heading", { name: "● 흑팀 차례" })).toBeVisible();
+    const turnStatus = page.getByRole("region", { name: "현재 투표 상태" });
+    await expect(turnStatus.getByLabel("남은 투표 시간", { exact: true })).toHaveText(/약 \d+초/);
+    await expect(turnStatus).toBeInViewport();
     expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
     const playingBoard = await board.boundingBox();
     if (!playingBoard) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
+
+    const turnStatusBounds = await turnStatus.boundingBox();
+    if (!turnStatusBounds) throw new Error("TURN_STATUS_BOUNDS_MISSING");
+    expect(turnStatusBounds.y).toBeLessThan(playingBoard.y);
 
     const voteInfo = await page.getByLabel("투표 정보").boundingBox();
     if (!voteInfo) throw new Error("VOTE_INFO_BOUNDS_MISSING");

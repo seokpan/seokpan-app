@@ -33,6 +33,7 @@ export function GamePanel({
   const auth = useSession();
   const waiting = waitingControls !== undefined;
   const boardRegion = useRef<HTMLDivElement>(null);
+  const turnStatus = useRef<HTMLElement>(null);
   const previousWaiting = useRef(waiting);
 
   useLayoutEffect(() => {
@@ -41,10 +42,11 @@ export function GamePanel({
 
     if (!wasWaiting || waiting || window.innerWidth > 1050) return;
 
-    const board = boardRegion.current?.querySelector<HTMLElement>('[role="grid"]');
+    const target =
+      turnStatus.current ?? boardRegion.current?.querySelector<HTMLElement>('[role="grid"]');
 
-    if (typeof board?.scrollIntoView === "function") {
-      board.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (typeof target?.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "start", inline: "nearest" });
     }
   }, [waiting]);
   const [cachedGame, setCachedGame] = useState(game);
@@ -56,6 +58,11 @@ export function GamePanel({
   const requested = useRef("");
   const left = game ? remainingMs(game, now) : 0,
     turnKey = game ? `${game.game_id}:${game.turn_no}` : "";
+  const timeLabel = game ? votingTimeLabel(game, left) : null;
+  const timeProgress =
+    game?.turn_status === "VOTING"
+      ? Math.min(100, Math.max(0, (100 * left) / (voteSeconds * 1000)))
+      : 0;
   useEffect(() => {
     if (!game) return;
     const timer = setInterval(() => setNow(performance.now()), 200);
@@ -125,6 +132,25 @@ export function GamePanel({
                 : "관전 중 · 이번 판에는 투표할 수 없습니다."}
         </p>
       </div>
+      {game && (
+        <section ref={turnStatus} className={styles.turnStatus} aria-label="현재 투표 상태">
+          <p className={styles.turnCounter}>
+            투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
+          </p>
+          <p className={styles.clock} aria-label="남은 투표 시간">
+            {timeLabel ?? "마감 처리 중"}
+          </p>
+          <progress
+            className={styles.timeBar}
+            max={100}
+            value={timeProgress}
+            aria-label="남은 투표 시간 비율"
+          />
+          <p className={styles.voterSummary}>
+            투표 가능 {game.valid_voter_count}명 · 제출 {total}개
+          </p>
+        </section>
+      )}
       <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
         {waiting && (
           <div className={styles.infoStack}>
@@ -164,27 +190,6 @@ export function GamePanel({
             <>
               {game ? (
                 <aside className={styles.infoPanel} aria-label="투표 정보">
-                  <p>
-                    투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
-                  </p>
-                  {votingTimeLabel(game, left) && (
-                    <p className={styles.clock} aria-label="남은 투표 시간">
-                      {votingTimeLabel(game, left)}
-                    </p>
-                  )}
-                  <progress
-                    className={styles.timeBar}
-                    max={100}
-                    value={
-                      game.turn_status === "VOTING"
-                        ? Math.min(100, Math.max(0, (100 * left) / (voteSeconds * 1000)))
-                        : 0
-                    }
-                    aria-label="남은 투표 시간 비율"
-                  />
-                  <p>
-                    현재 투표 가능 인원 {game.valid_voter_count}명 · 제출된 유효표 {total}개
-                  </p>
                   <details className={styles.hint}>
                     <summary>득표율 계산 기준</summary>
                     <p className={screens.muted}>

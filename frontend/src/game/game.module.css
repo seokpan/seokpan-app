@@ -25,6 +25,31 @@
 .gameHeader p {
   margin: 0.5rem 0;
 }
+.turnStatus {
+  display: grid;
+  grid-template-columns: auto auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem 1rem;
+  margin: 0.65rem 0 0.25rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid #c9dce5;
+  border-radius: 0.75rem;
+  background: linear-gradient(90deg, #f4fbfc, #f7f9fc);
+}
+.turnStatus p {
+  margin: 0;
+}
+.turnCounter {
+  color: #31435f;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.voterSummary {
+  color: #52617a;
+  font-size: 0.9rem;
+  text-align: right;
+  white-space: nowrap;
+}
 .boardScroll {
   overflow-x: auto;
   max-width: 600px;
@@ -35,7 +60,7 @@
   height: 0.5rem;
   accent-color: #007c87;
   display: block;
-  margin: -0.3rem 0 1.2rem;
+  margin: 0;
 }
 .boardFrame {
   min-width: 0;
@@ -382,6 +407,8 @@
   font-variant-numeric: tabular-nums;
   font-size: 1.3rem;
   color: #006c79;
+  font-weight: 800;
+  white-space: nowrap;
 }
 @media (max-width: 1050px) {
   .layout,
@@ -406,5 +433,44 @@
   .gameHeader p {
     line-height: 1.5;
     min-height: 3em;
+  }
+}
+
+@media (max-width: 1050px) {
+  .infoStack {
+    width: 100%;
+    max-width: 680px;
+    margin-inline: auto;
+  }
+  .turnStatus {
+    grid-template-columns: minmax(0, 1fr) auto;
+    max-width: 680px;
+    width: 100%;
+    margin: 0.65rem auto 0.25rem;
+  }
+  .turnStatus .timeBar,
+  .voterSummary {
+    grid-column: 1 / -1;
+  }
+  .voterSummary {
+    text-align: left;
+  }
+}
+
+@media (max-width: 700px) {
+  .turnStatus {
+    gap: 0.35rem 0.75rem;
+    padding: 0.65rem 0.75rem;
+  }
+  .turnCounter,
+  .voterSummary {
+    font-size: 0.82rem;
+  }
+  .clock {
+    font-size: 1.15rem;
+  }
+  .gameHeader p {
+    min-height: 0;
+    margin-top: 0;
   }
 }

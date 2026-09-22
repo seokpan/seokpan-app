@@ -514,3 +514,25 @@
     margin-left: auto;
   }
 }
+
+@media (max-width: 700px) {
+  .roomCard {
+    padding: 0.85rem;
+  }
+  .shell {
+    padding: 1rem 0.75rem 3rem;
+  }
+  .teamPanel {
+    padding: 0.85rem;
+  }
+  .waitingTeams {
+    gap: 0.55rem;
+  }
+  .waitingTeams ul {
+    height: auto;
+    min-height: 2.75rem;
+    max-height: 7rem;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}

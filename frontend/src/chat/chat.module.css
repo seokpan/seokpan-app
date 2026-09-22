@@ -98,3 +98,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+@media (max-width: 700px) {
+  .panel {
+    padding: 0.85rem;
+  }
+  .log {
+    height: 12rem;
+  }
+  .newMessages {
+    height: 2rem;
+  }
+  .feedback {
+    min-height: 2.4em;
+  }
+}
