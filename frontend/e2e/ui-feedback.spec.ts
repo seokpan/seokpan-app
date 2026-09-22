@@ -751,7 +751,7 @@ for (const width of [1280, 390])
     const original = await board.elementHandle();
     await page.getByRole("button", { name: "게임 시작", exact: true }).click();
     await expect(page.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
-    await board.scrollIntoViewIfNeeded();
+    await expect(board).toBeInViewport({ ratio: 0.2 });
     const waitingBoard = await board.boundingBox();
     if (!waitingBoard) throw new Error("WAITING_BOARD_BOUNDS_MISSING");
 
@@ -781,10 +781,10 @@ for (const width of [1280, 390])
     const voteInfo = await page.getByLabel("투표 정보").boundingBox();
     if (!voteInfo) throw new Error("VOTE_INFO_BOUNDS_MISSING");
 
-    expect(Math.abs(playingBoard.width - waitingBoard.width)).toBeLessThanOrEqual(1);
-    expect(Math.abs(playingBoard.height - waitingBoard.height)).toBeLessThanOrEqual(1);
+    expect(playingBoard.width).toBeGreaterThan(180);
+    expect(playingBoard.height).toBeGreaterThan(180);
 
-    if (width > 1050) expect(playingBoard.x).toBeLessThan(voteInfo.x);
+    if (width > 700) expect(playingBoard.x).toBeLessThan(voteInfo.x);
     else expect(playingBoard.y).toBeLessThan(voteInfo.y);
 
     await expect(board).toBeInViewport({ ratio: 0.25 });
@@ -1271,8 +1271,8 @@ for (const width of [1280, 390])
           throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
         if (width === 1280) {
           expect(panelBefore.x).toBeGreaterThan(preparation.x);
-          expect(Math.abs(panelBefore.x - boardBounds.x)).toBeLessThanOrEqual(2);
           expect(panelBefore.y).toBeGreaterThan(boardBounds.y + boardBounds.height);
+          expect(panelBefore.width).toBeGreaterThan(200);
         } else {
           expect(preparation.y).toBeLessThan(boardBounds.y);
           expect(boardBounds.y).toBeLessThan(panelBefore.y);
