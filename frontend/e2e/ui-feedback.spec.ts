@@ -1309,9 +1309,9 @@ for (const width of [1280, 390])
         expect(panelAfter!.x).toBeGreaterThan(lobbyRoomsCard.x);
         expect(Math.abs(panelAfter!.y - lobbyRoomsCard.y)).toBeLessThanOrEqual(1);
         expect(Math.abs(panelAfter!.height - lobbyRoomsCard.height)).toBeLessThanOrEqual(1);
-        expect(
-          await roomsViewport.evaluate((node) => node.scrollHeight > node.clientHeight),
-        ).toBe(true);
+        expect(await roomsViewport.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(
+          true,
+        );
       }
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({
