@@ -158,12 +158,15 @@ local function update_game_player(participant_id, connected, vote_removed)
   return true
 end
 
-local function departure(previous_owner_id, new_owner_id, room_closed, termination)
+local function departure(
+  previous_owner_id, new_owner_id, room_closed, termination, terminated_game_id
+)
   return {
     previous_owner_id = previous_owner_id == nil and cjson.null or previous_owner_id,
     new_owner_id = new_owner_id == nil and cjson.null or new_owner_id,
     room_closed = room_closed,
-    game_termination = termination
+    game_termination = termination,
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id
   }
 end
 
@@ -190,15 +193,28 @@ local function owner_departure(departed_id, previous_owner_id)
   end
   local status = redis.call('HGET', KEYS[1], 'status')
   local termination = status == 'PLAYING' and 'SYSTEM_INVALID' or 'NONE'
+  local game_id = redis.call('HGET', KEYS[1], 'game_id')
+  local terminated_game_id = termination == 'SYSTEM_INVALID' and game_id ~= '' and game_id or nil
+  local marker = cjson.encode({
+    room_id = ARGV[1],
+    terminated_game_id = terminated_game_id == nil and cjson.null or terminated_game_id,
+    closed_at_ms = current_ms,
+    invalidation_pending = termination == 'SYSTEM_INVALID'
+  })
+  if termination == 'SYSTEM_INVALID' then
+    -- Unfinished durable work is not completed by a TTL expiry.
+    redis.call('SET', KEYS[7], marker)
+  else
+    redis.call('SET', KEYS[7], marker, 'PX', tombstone_ttl_ms)
+  end
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[8])
-  redis.call('SET', KEYS[7], '1', 'PX', tombstone_ttl_ms)
-  return departure(previous_owner_id, nil, true, termination)
+  return departure(previous_owner_id, nil, true, termination, terminated_game_id)
 end
 """
 
 ROOM_MUTATION = VersionedLuaScript(
     name="room-runtime-mutation",
-    version=9,
+    version=15,
     source=_SNAPSHOT
     + _MUTATION_COMMON
     + r"""
@@ -240,7 +256,9 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
 end
 
 if operation == 'join' then
-  if not expected_version_matches() then return rejection('STATE_VERSION_CONFLICT') end
+  -- Join is evaluated against current server state. Lobby snapshots intentionally
+  -- do not advance for Ready/team-only changes, so their Room state_version is
+  -- an observation rather than an admission precondition.
   if redis.call('HEXISTS', KEYS[2], payload.participant_id) == 1 then
     return rejection('PARTICIPANT_ALREADY_JOINED')
   end
@@ -351,9 +369,11 @@ if operation == 'start_game' then
   if redis.call('HGET', KEYS[1], 'owner_id') ~= payload.actor_id then
     return rejection('OWNER_REQUIRED')
   end
-  local ready_ids = redis.call('SMEMBERS', KEYS[3])
+  if not current_participant.connected then
+    return rejection('PARTICIPANT_DISCONNECTED')
+  end
   local minimum_ready = tonumber(redis.call('HGET', KEYS[1], 'minimum_ready'))
-  if #ready_ids < minimum_ready then return rejection('MINIMUM_READY_NOT_MET') end
+  local connected_ready_count = 0
   local has_black = false
   local has_white = false
   local values = redis.call('HGETALL', KEYS[2])
@@ -361,7 +381,8 @@ if operation == 'start_game' then
   for index = 1, #values, 2 do
     local participant_id = values[index]
     local value = cjson.decode(values[index + 1])
-    local ready = redis.call('SISMEMBER', KEYS[3], participant_id) == 1
+    local ready = redis.call('SISMEMBER', KEYS[3], participant_id) == 1 and value.connected
+    if ready then connected_ready_count = connected_ready_count + 1 end
     if ready and value.team == 'BLACK' then has_black = true end
     if ready and value.team == 'WHITE' then has_white = true end
     table.insert(roster, {
@@ -370,6 +391,9 @@ if operation == 'start_game' then
       role = ready and 'PLAYER' or 'SPECTATOR',
       joined_order = value.joined_order
     })
+  end
+  if connected_ready_count < minimum_ready then
+    return rejection('MINIMUM_READY_NOT_MET')
   end
   if not has_black or not has_white then return rejection('BOTH_TEAMS_REQUIRED') end
   table.sort(roster, function(left, right) return left.joined_order < right.joined_order end)
@@ -435,13 +459,12 @@ if operation == 'disconnect' then
   redis.call('HSET', KEYS[4], payload.participant_id, cjson.encode(connection))
   local vote_removed = remove_vote(payload.participant_id)
   update_game_player(payload.participant_id, false, vote_removed)
-  local resolved = owner_departure(payload.participant_id, previous_owner_id)
-  if not resolved.room_closed then advance_version() end
+  advance_version()
   return save({
     snapshot = snapshot(),
     disconnect_expires_at_ms = connection.disconnect_expires_at_ms,
     vote_removed = vote_removed,
-    departure = resolved
+    departure = departure(previous_owner_id, previous_owner_id, false, 'NONE')
   })
 end
 
@@ -522,5 +545,31 @@ ROOM_PRIVATE_HASH_READ = VersionedLuaScript(
 local value = redis.call('HGET', KEYS[1], 'password_hash')
 if not value or value == '' then value = cjson.null end
 return cjson.encode({ok = true, encoded_password = value, error = cjson.null})
+""",
+)
+
+
+ROOM_INVALIDATION_ACK = VersionedLuaScript(
+    name="room-invalidation-ack",
+    version=2,
+    source=r"""
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({ok = true, missing = true})
+end
+local value = cjson.decode(raw)
+if value.terminated_game_id ~= ARGV[1] then
+  return cjson.encode({ok = false, error = 'STALE_GAME'})
+end
+if value.invalidation_pending == false then
+  return cjson.encode({ok = true, missing = false})
+end
+local ttl = tonumber(ARGV[2])
+if not ttl or ttl <= 0 or ttl ~= math.floor(ttl) then
+  return cjson.encode({ok = false, error = 'INVALID_INVALIDATION_RETENTION'})
+end
+value.invalidation_pending = false
+redis.call('SET', KEYS[1], cjson.encode(value), 'PX', ttl)
+return cjson.encode({ok = true, missing = false})
 """,
 )

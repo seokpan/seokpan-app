@@ -508,7 +508,7 @@ for (const width of [1280, 390])
     const table = page.getByRole("table");
     expect(await table.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await page.screenshot({ path: info.outputPath(`rankings-${width}.png`), fullPage: true });
-    const menuTrigger = page.getByRole("button", { name: "내 전적 메뉴" });
+    const menuTrigger = page.getByRole("button", { name: "사용자 메뉴" });
     await menuTrigger.click();
     const menu = page.getByRole("region", { name: "사용자 정보" });
     await expect(menu).toContainText("1,428");
@@ -751,12 +751,47 @@ for (const width of [1280, 390])
     const original = await board.elementHandle();
     await page.getByRole("button", { name: "게임 시작", exact: true }).click();
     await expect(page.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
-    await board.scrollIntoViewIfNeeded();
-    const position = await board.boundingBox();
+    await expect(board).toBeInViewport({ ratio: 0.2 });
+    const waitingBoard = await board.boundingBox();
+    if (!waitingBoard) throw new Error("WAITING_BOARD_BOUNDS_MISSING");
+
+    const waitingControls = await page
+      .getByRole("region", { name: "게임 시작 준비" })
+      .boundingBox();
+    if (!waitingControls) throw new Error("WAITING_CONTROLS_BOUNDS_MISSING");
+
+    if (width > 1050) expect(waitingControls.x).toBeLessThan(waitingBoard.x);
+    else expect(waitingBoard.y).toBeLessThan(waitingControls.y);
     finish();
     await expect(page.getByRole("heading", { name: "● 흑팀 차례" })).toBeVisible();
+    const turnStatus = page.getByRole("region", { name: "현재 투표 상태" });
+    await expect(turnStatus.getByLabel("남은 투표 시간", { exact: true })).toHaveText(/약 \d+초/);
+    await expect(turnStatus).toBeInViewport();
+    expect(
+      await page.evaluate<boolean>(
+        "document.documentElement.scrollHeight <= window.innerHeight + 1",
+      ),
+    ).toBe(true);
     expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-    expect(await board.boundingBox()).toEqual(position);
+    const playingBoard = await board.boundingBox();
+    if (!playingBoard) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
+
+    const turnStatusBounds = await turnStatus.boundingBox();
+    if (!turnStatusBounds) throw new Error("TURN_STATUS_BOUNDS_MISSING");
+    expect(turnStatusBounds.y).toBeLessThan(playingBoard.y);
+
+    const voteInfo = await page.getByLabel("투표 정보").boundingBox();
+    if (!voteInfo) throw new Error("VOTE_INFO_BOUNDS_MISSING");
+
+    expect(playingBoard.width).toBeGreaterThan(180);
+    expect(playingBoard.height).toBeGreaterThan(180);
+    expect(playingBoard.y).toBeGreaterThanOrEqual(0);
+    expect(playingBoard.y + playingBoard.height).toBeLessThanOrEqual(900);
+
+    if (width > 700) expect(playingBoard.x).toBeLessThan(voteInfo.x);
+    else expect(playingBoard.y).toBeLessThan(voteInfo.y);
+
+    await expect(board).toBeInViewport({ ratio: 0.25 });
     await expect(page.getByRole("button", { name: "H8 빈 자리", exact: true })).toHaveAttribute(
       "aria-disabled",
       "false",
@@ -956,8 +991,18 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const board = page.getByRole("grid", { name: "15×15 오목판" });
   await expect(board).toBeVisible();
   const analysis = page.getByRole("complementary", { name: "AI 판세 분석" });
-  await expect(analysis.getByText("추후 제공 예정")).toBeVisible();
-  await expect(analysis.getByText(/%|분석 중|분석 완료/)).toHaveCount(0);
+  const roomChat = page.getByRole("region", { name: "방 채팅", exact: true });
+  await expect(analysis.getByText("주요 후보")).toBeVisible();
+  await expect(analysis.getByText("판세 변화")).toBeVisible();
+  await expect(analysis.getByLabel("주요 후보 좌표")).toContainText("—");
+  await expect(analysis.getByText(/MVP|2차|예정|미지원|분석 중|분석 완료/)).toHaveCount(0);
+  await expect(analysis.getByText(/\d+%/)).toHaveCount(0);
+  await expect(analysis.getByRole("button")).toHaveCount(0);
+  await expect(analysis.getByRole("progressbar")).toHaveCount(0);
+  const chatBounds = await roomChat.boundingBox();
+  const analysisBounds = await analysis.boundingBox();
+  if (!chatBounds || !analysisBounds) throw new Error("PLAYING_SIDEBAR_BOUNDS_MISSING");
+  expect(chatBounds.y).toBeLessThan(analysisBounds.y);
   const original = await board.elementHandle();
   await expect(
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
@@ -988,8 +1033,15 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     const fitted = await board.boundingBox();
     expect(fitted!.x).toBeGreaterThanOrEqual(0);
     expect(fitted!.x + fitted!.width).toBeLessThanOrEqual(width);
+    expect(fitted!.y).toBeGreaterThanOrEqual(0);
+    expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(900);
     await expect(page.getByRole("button", { name: "O15 백돌", exact: true })).toBeInViewport();
     if (width === 390) {
+      expect(
+        await page.evaluate<boolean>(
+          "document.documentElement.scrollHeight <= window.innerHeight + 1",
+        ),
+      ).toBe(true);
       await page.screenshot({ path: info.outputPath("board-mobile-fit.png"), fullPage: true });
       await page.getByRole("button", { name: "보드 확대", exact: true }).click();
       expect((await board.boundingBox())!.width).toBeGreaterThan(fitted!.width);
@@ -1004,7 +1056,8 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await board.scrollIntoViewIfNeeded();
-  const position = await board.boundingBox();
+  const playingBounds = await board.boundingBox();
+  if (!playingBounds) throw new Error("PLAYING_BOARD_BOUNDS_MISSING");
   room.status = "WAITING";
   room.game_id = null;
   room.last_game_id = "ui-game";
@@ -1023,7 +1076,14 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   });
   await expect(page.getByText("저장된 결과를 불러오고 있습니다.")).toBeVisible();
   expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-  expect(await board.boundingBox()).toEqual(position);
+
+  const loadingBounds = await board.boundingBox();
+  if (!loadingBounds) throw new Error("RESULT_LOADING_BOARD_BOUNDS_MISSING");
+
+  expect(loadingBounds.x).toBe(playingBounds.x);
+  expect(loadingBounds.width).toBe(playingBounds.width);
+  expect(loadingBounds.height).toBe(playingBounds.height);
+  await expect(board).toBeInViewport({ ratio: 0.25 });
   await expect(page.getByRole("button", { name: "I8 빈 자리", exact: true })).toHaveAttribute(
     "aria-disabled",
     "true",
@@ -1031,11 +1091,23 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(page.getByRole("meter")).toHaveCount(0);
   finishResult();
   await expect(page.getByRole("heading", { name: "양 팀 공동 패배" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "게임 결과 요약" })).toHaveAttribute(
+    "data-result-tone",
+    "loss",
+  );
   await expect(
     page.getByRole("button", { name: "A1 흑돌, 마지막 착수", exact: true }),
   ).toBeVisible();
   expect(await original!.evaluate((node) => node.isConnected)).toBe(true);
-  expect(await board.boundingBox()).toEqual(position);
+
+  const resultBounds = await board.boundingBox();
+  if (!resultBounds) throw new Error("RESULT_BOARD_BOUNDS_MISSING");
+
+  expect(resultBounds.x).toBe(playingBounds.x);
+  expect(resultBounds.width).toBe(playingBounds.width);
+  expect(resultBounds.height).toBe(playingBounds.height);
+  await expect(board).toBeInViewport({ ratio: 0.25 });
+
   await page.screenshot({ path: info.outputPath("result-desktop.png"), fullPage: true });
   await page.getByRole("button", { name: "결과 닫고 대기방 보기" }).click();
   await expect(page.getByRole("heading", { name: "게임 준비", exact: true })).toBeVisible();
@@ -1048,7 +1120,12 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(preparation.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
-  expect(controlsBounds!.x).toBeGreaterThan(waitingBounds!.x + waitingBounds!.width);
+  expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
+  expect(waitingBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(waitingBounds!.y + waitingBounds!.height).toBeLessThanOrEqual(900);
+  expect(
+    await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
+  ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await preparation.getByRole("button", { name: "Ready", exact: true }).scrollIntoViewIfNeeded();
@@ -1056,6 +1133,12 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   expect(await page.evaluate<number>("document.documentElement.scrollWidth")).toBeLessThanOrEqual(
     390,
   );
+  expect(
+    await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
+  ).toBe(true);
+  const waitingMobileBounds = await board.boundingBox();
+  expect(waitingMobileBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(waitingMobileBounds!.y + waitingMobileBounds!.height).toBeLessThanOrEqual(844);
   await page.screenshot({ path: info.outputPath("waiting-mobile.png"), fullPage: true });
 });
 // These tests use synthetic messages only, independent of the user's trial server.
@@ -1066,6 +1149,18 @@ for (const width of [1280, 390])
     }, info) => {
       await page.setViewportSize({ width, height: 900 });
       const roomId = inRoom ? "00000000-0000-4000-8000-000000000001" : null;
+      const lobbyRooms = Array.from({ length: 18 }, (_, index) => ({
+        room_id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+        name: `스크롤 검증 방 ${index + 1}`,
+        visibility: index % 3 === 0 ? "PRIVATE" : "PUBLIC",
+        password_required: index % 3 === 0,
+        participant_count: (index % 4) + 1,
+        max_participants: 8,
+        minimum_ready: 2,
+        vote_seconds: 15,
+        state_version: index + 1,
+        status: index % 5 === 0 ? "PLAYING" : "WAITING",
+      }));
       let sendChat!: (text: string) => void,
         disconnectChat!: () => void,
         sequence = 1;
@@ -1124,7 +1219,7 @@ for (const width of [1280, 390])
           });
         }
         if (path === "/api/v1/lobby/snapshot")
-          return route.fulfill({ json: { rooms: [], stream_version: 1 } });
+          return route.fulfill({ json: { rooms: lobbyRooms, stream_version: 1 } });
         if (path.endsWith("/state"))
           return route.fulfill({ json: { room, game: null, stream_version: 1 } });
         return route.abort();
@@ -1167,27 +1262,60 @@ for (const width of [1280, 390])
             state_version: 1,
             room_id: roomId,
             game_id: null,
-            payload: inRoom ? { room, game: null } : { rooms: [] },
+            payload: inRoom ? { room, game: null } : { rooms: lobbyRooms },
           }),
         );
       });
       await page.goto("/lobby");
+      const board = inRoom ? await page.getByRole("grid").elementHandle() : null;
+
+      if (inRoom) {
+        const preparationRegion = page.getByRole("region", { name: "게임 시작 준비" });
+        await expect(preparationRegion).toBeVisible();
+        const preparation = await preparationRegion.boundingBox();
+        const boardBounds = await page.getByRole("grid").boundingBox();
+        if (!preparation || !boardBounds) throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
+
+        if (width === 1280) {
+          const desktopChat = page.getByRole("region", { name: "방 채팅", exact: true });
+          const desktopChatBounds = await desktopChat.boundingBox();
+          if (!desktopChatBounds) throw new Error("WAITING_ROOM_CHAT_BOUNDS_MISSING");
+          expect(desktopChatBounds.x).toBeGreaterThan(preparation.x);
+          expect(desktopChatBounds.y).toBeGreaterThan(boardBounds.y);
+          expect(desktopChatBounds.width).toBeGreaterThan(200);
+        } else {
+          expect(boardBounds.y).toBeLessThan(preparation.y);
+          expect(
+            await page.evaluate<boolean>(
+              "document.documentElement.scrollHeight <= window.innerHeight + 1",
+            ),
+          ).toBe(true);
+          await page.getByRole("button", { name: "채팅 보기", exact: true }).click();
+          await expect(preparationRegion).not.toBeVisible();
+        }
+      }
+
       const input = page.getByLabel(`${inRoom ? "방" : "로비"} 채팅 메시지 입력`, { exact: true });
       await expect(input).toBeEnabled();
-      const board = inRoom ? await page.getByRole("grid").elementHandle() : null;
       const panel = page.getByRole("region", {
         name: inRoom ? "방 채팅" : "로비 채팅",
         exact: true,
       });
       const panelBefore = await panel.boundingBox();
+      if (!panelBefore) throw new Error("CHAT_PANEL_BOUNDS_MISSING");
+      await input.scrollIntoViewIfNeeded();
       const inputBounds = await input.boundingBox();
       expect(inputBounds!.width).toBeGreaterThan(100);
-      const sendBounds = await panel
-        .getByRole("button", { name: "전송", exact: true })
-        .boundingBox();
+      expect(inputBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(inputBounds!.y + inputBounds!.height).toBeLessThanOrEqual(900);
+      const sendButton = panel.getByRole("button", { name: "전송", exact: true });
+      await sendButton.scrollIntoViewIfNeeded();
+      const sendBounds = await sendButton.boundingBox();
       expect(sendBounds!.x + sendBounds!.width).toBeLessThanOrEqual(
         panelBefore!.x + panelBefore!.width,
       );
+      expect(sendBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(sendBounds!.y + sendBounds!.height).toBeLessThanOrEqual(900);
       await input.fill("함께 즐겨요 😀");
       await input.press("Enter");
       await expect(input).toHaveValue("");
@@ -1214,10 +1342,19 @@ for (const width of [1280, 390])
       expect(
         await page.evaluate<number>("document.documentElement.scrollWidth"),
       ).toBeLessThanOrEqual(width);
-      if (!inRoom && width === 1280)
-        expect(panelAfter!.x).toBeGreaterThan(
-          (await page.getByRole("region", { name: "게임 방", exact: true }).boundingBox())!.x,
+      if (!inRoom && width === 1280) {
+        const lobbyRoomsCard = await page
+          .getByRole("region", { name: "게임 방", exact: true })
+          .boundingBox();
+        const roomsViewport = page.getByLabel("게임 방 목록 영역", { exact: true });
+        if (!lobbyRoomsCard) throw new Error("LOBBY_ROOMS_BOUNDS_MISSING");
+        expect(panelAfter!.x).toBeGreaterThan(lobbyRoomsCard.x);
+        expect(Math.abs(panelAfter!.y - lobbyRoomsCard.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(panelAfter!.height - lobbyRoomsCard.height)).toBeLessThanOrEqual(1);
+        expect(await roomsViewport.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(
+          true,
         );
+      }
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({
         path: info.outputPath(`chat-${inRoom ? "room" : "lobby"}-${width}.png`),
@@ -1245,7 +1382,7 @@ for (const width of [1280, 390])
       await expect(input).toHaveValue("안내를 닫아도 유지할 입력");
       await help.click();
       await dialog.getByText("자세한 규칙·재접속 안내").click();
-      await expect(dialog.getByText(/30초 안에 같은 사용자로/)).toBeVisible();
+      await expect(dialog.getByText(/10초 안에 같은\s+사용자로/)).toBeVisible();
       await dialog.getByRole("button", { name: "확인하고 닫기" }).click();
       await expect(help).toBeFocused();
       disconnectChat();

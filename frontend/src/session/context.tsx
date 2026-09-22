@@ -68,6 +68,9 @@ function useSessionState(services: SessionServices) {
           } else void services.recovery.recover(ready);
         },
         services.tabChannelFactory,
+        document,
+        window,
+        () => services.recovery.getSnapshot().phase !== "anonymous",
       ),
   );
 

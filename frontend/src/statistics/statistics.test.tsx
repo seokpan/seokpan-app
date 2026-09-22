@@ -56,7 +56,7 @@ function page(query: URLSearchParams, row = me) {
 afterEach(cleanup);
 
 describe("rankings and user record screens", () => {
-  it("refreshes a changed record without unmounting rows and labels stale data on failure", async () => {
+  it("refreshes changed records and labels stale data on failure", async () => {
     let status = "ready";
     let complete!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>(async (url) => {
@@ -141,6 +141,11 @@ describe("rankings and user record screens", () => {
     const board = screen.getByRole("grid");
     fireEvent.click(screen.getByRole("link", { name: "랭킹" }));
     await screen.findByRole("region", { name: "내 순위와 전적" });
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
+    expect(screen.getByText(/로그아웃하면 참여 중인 방에서도 나갑니다/)).toBeInTheDocument();
+    expect(screen.getByText(/승계할 Member가 없으면 방이 종료될 수 있습니다/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "로그아웃" })).toHaveAttribute("aria-describedby");
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(board.isConnected).toBe(true);
     expect(board).not.toBeVisible();
     room = { ...room, name: "변경된 방", state_version: 2 };
@@ -160,7 +165,7 @@ describe("rankings and user record screens", () => {
       ),
     ).toBe(true);
   });
-  it("shows server stats, own row and page-independent summary; opens and closes the user menu", async () => {
+  it("shows stats, own row, summary and the user menu", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) =>
       url === "/api/v1/session/csrf"
         ? json(identity)
@@ -172,7 +177,7 @@ describe("rankings and user record screens", () => {
     expect(summary).toHaveTextContent("1,016");
     const table = screen.getByRole("table", { name: "Member 랭킹" });
     expect(within(table).getByRole("rowheader")).toHaveTextContent("돌하나");
-    const trigger = screen.getByRole("button", { name: "내 전적 메뉴" });
+    const trigger = screen.getByRole("button", { name: "사용자 메뉴" });
     fireEvent.click(trigger);
     const menu = screen.getByRole("region", { name: "사용자 정보" });
     await waitFor(() => expect(menu).toHaveTextContent("1,016"));
@@ -250,7 +255,7 @@ describe("rankings and user record screens", () => {
     expect(screen.queryByText("1,016")).toBeNull();
     expect(screen.queryByText("돌하나")).toBeNull();
   });
-  it("lets Guest read rankings without querying a personal record when opening the menu", async () => {
+  it("lets Guest read rankings without querying a personal record", async () => {
     const fetcher = vi.fn<typeof fetch>(async (url) =>
       url === "/api/v1/session/csrf"
         ? json({
@@ -264,7 +269,7 @@ describe("rankings and user record screens", () => {
     mount(fetcher);
     await waitFor(() => expect(screen.getByRole("table")).toHaveTextContent("1,016"));
     expect(screen.queryByRole("region", { name: "내 순위와 전적" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
     expect(screen.getByRole("region", { name: "사용자 정보" })).toHaveTextContent(
       "개인 전적과 Rating은 저장되지 않습니다",
     );

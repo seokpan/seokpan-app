@@ -61,7 +61,7 @@ async def test_room_result_reference_serialization_keeps_missing_identity_fallba
     rooms.participant_identity.return_value = None
     response = await room_snapshot_response(api, rooms.get.return_value)
     assert response.last_game_id == GAME
-    assert [p.display_name for p in response.participants] == [BLACK, WHITE]
+    assert [p.display_name for p in response.participants] == ["참가자", "참가자"]
     assert _room_status("ROOM_NOT_FOUND")[0] == 404
     assert _room_status("INVALID_ROOM_NAME")[0] == 422
 

@@ -173,6 +173,30 @@ class ApplyRuntimeResolution:
 
 
 @dataclass(frozen=True, slots=True)
+class FinalizeRuntimeGame:
+    room_id: str
+    request_id: str
+    game_id: str
+    turn_no: int
+    expected_state_version: int
+    end_reason: EndReason
+    winner: Stone
+
+    def __post_init__(self) -> None:
+        _base(self.room_id, self.request_id, self.game_id)
+        _positive(self.turn_no, code="INVALID_TURN_NUMBER")
+        _positive(self.expected_state_version, code="INVALID_STATE_VERSION")
+        valid = (
+            self.end_reason is EndReason.FORFEIT and self.winner in {Stone.BLACK, Stone.WHITE}
+        ) or (
+            self.end_reason in {EndReason.JOINT_LOSS, EndReason.SYSTEM_INVALID}
+            and self.winner is Stone.EMPTY
+        )
+        if not valid:
+            raise VoteRuleViolation("INVALID_EXTERNAL_GAME_RESULT")
+
+
+@dataclass(frozen=True, slots=True)
 class ResolverLease:
     resolution_id: str
     expires_at_ms: int
@@ -225,3 +249,7 @@ class VoteRuntimePort(Protocol):
     async def acquire_resolver(self, command: AcquireRuntimeResolver) -> VoteMutationResult: ...
 
     async def apply_resolution(self, command: ApplyRuntimeResolution) -> VoteMutationResult: ...
+
+    async def finalize_game(self, command: FinalizeRuntimeGame) -> VoteMutationResult: ...
+
+    async def discard_game(self, room_id: str, game_id: str) -> None: ...

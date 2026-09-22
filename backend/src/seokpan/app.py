@@ -19,6 +19,7 @@ from seokpan.api.statistics import StatisticsApiServices, statistics_router
 from seokpan.clock import MillisecondClock
 from seokpan.game.application import GameApplicationService, TurnResolutionRunner
 from seokpan.game.application.resolution import DueTurnSource, TieSelector
+from seokpan.game_lifecycle import build_memory_game_lifecycle, build_redis_game_lifecycle
 from seokpan.health import RuntimeReadiness
 from seokpan.health import router as health_router
 from seokpan.identity.application import (
@@ -32,7 +33,6 @@ from seokpan.persistence.memory import (
     InMemoryGamePersistenceAdapter,
     InMemoryIdentityAdapter,
     InMemoryRealtimeEventAdapter,
-    InMemoryRoomRuntimeAdapter,
     InMemorySessionAdapter,
     InMemorySessionWorkflow,
     InMemoryTieSelectionAudit,
@@ -44,6 +44,9 @@ from seokpan.persistence.memory import (
 from seokpan.persistence.memory.chat_adapter import InMemoryChatAdapter
 from seokpan.persistence.memory.presence_adapter import InMemoryPresenceAdapter
 from seokpan.persistence.memory.resolution import MemoryRoomTurnSource
+from seokpan.persistence.memory.room_admission import (
+    SessionAdmissionMemoryRoomAdapter as InMemoryRoomRuntimeAdapter,
+)
 from seokpan.persistence.memory.statistics_adapter import InMemoryStatisticsAdapter
 from seokpan.room.application import (
     DisconnectExpiryRunner,
@@ -113,16 +116,23 @@ def build_headless_services(
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
     games = InMemoryGamePersistenceAdapter(member_ratings)
+    lifecycle = build_memory_game_lifecycle(
+        mode=settings.game_lifecycle_mode,
+        rooms=room_runtime,
+        votes=votes,
+        games=games,
+        room_service=room_service,
+        clock=clock,
+    )
     game_service = GameApplicationService(
         rooms=room_service,
         games=games,
         votes=votes,
         clock=clock,
         events=events,
+        captured_startup=lifecycle.startup,
     )
-    room_api = RoomApiServices(identity_api, room_service)
     game_api = GameApiServices(identity_api, game_service)
-    connections = RoomConnectionCoordinator(rooms=room_service, votes=votes, clock=clock)
     registry = ActiveWebSocketRegistry()
     due_turns: DueTurnSource = (
         MemoryRoomTurnSource(room_runtime, votes) if discover_turns else InMemoryDueTurnSource()
@@ -138,6 +148,15 @@ def build_headless_services(
         clock=clock,
         runner_id="headless",
         events=events,
+        captured_invalidation=lifecycle.invalidation,
+        captured_completion=lifecycle.completion,
+    )
+    room_api = RoomApiServices(identity_api, room_service, turn_resolution)
+    connections = RoomConnectionCoordinator(
+        rooms=room_service,
+        votes=votes,
+        clock=clock,
+        departures=turn_resolution,
     )
     return ApplicationServices(
         identity_api,
@@ -183,7 +202,7 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         resolver,
     )
     sessions = AuthSessionService(
-        RedisSessionWorkflow(providers.sessions, room_service),
+        RedisSessionWorkflow(providers.sessions, room_service, providers.rooms),
         providers.tokens,
     )
     members = MemberIdentityService(
@@ -192,26 +211,47 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
         dummy_password_hash=providers.passwords.hash(providers.tokens.issue()),
     )
     identity_api = IdentityApiServices(settings, members, sessions, room_service)
-    room_api = RoomApiServices(identity_api, room_service)
+    lifecycle = build_redis_game_lifecycle(
+        mode=settings.game_lifecycle_mode,
+        providers=providers,
+        room_service=room_service,
+    )
     game_service = GameApplicationService(
         rooms=room_service,
         games=providers.games,
         votes=providers.votes,
         clock=providers.clock,
         events=providers.realtime,
+        captured_startup=lifecycle.startup,
     )
     game_api = GameApiServices(identity_api, game_service)
     registry = ActiveWebSocketRegistry()
-    connections = RoomConnectionCoordinator(
-        rooms=room_service,
-        votes=providers.votes,
-        clock=providers.clock,
-    )
     turn_coordinator = RedisTurnCoordinator(
         providers.redis_client,
         providers.rooms,
         providers.votes,
         providers.games,
+    )
+    turn_resolution = TurnResolutionRunner(
+        due_turns=turn_coordinator,
+        finalization_gate=turn_coordinator,
+        tie_selector=turn_coordinator,
+        tie_audit=turn_coordinator,
+        votes=providers.votes,
+        games=providers.games,
+        rooms=providers.rooms,
+        clock=providers.clock,
+        runner_id=settings.instance_id,
+        events=providers.realtime,
+        captured_invalidation=lifecycle.invalidation,
+        captured_completion=lifecycle.completion,
+    )
+    room_api = RoomApiServices(identity_api, room_service, turn_resolution)
+    connections = RoomConnectionCoordinator(
+        rooms=room_service,
+        votes=providers.votes,
+        clock=providers.clock,
+        departures=turn_resolution,
     )
     return ApplicationServices(
         identity_api=identity_api,
@@ -230,18 +270,7 @@ def build_production_services(settings: Settings, providers: object) -> Applicat
             connections=connections,
             clock=providers.clock,
         ),
-        turn_resolution=TurnResolutionRunner(
-            due_turns=turn_coordinator,
-            finalization_gate=turn_coordinator,
-            tie_selector=turn_coordinator,
-            tie_audit=turn_coordinator,
-            votes=providers.votes,
-            games=providers.games,
-            rooms=providers.rooms,
-            clock=providers.clock,
-            runner_id=settings.instance_id,
-            events=providers.realtime,
-        ),
+        turn_resolution=turn_resolution,
         statistics_api=StatisticsApiServices(identity_api, providers.statistics),
         chat_api=ChatApiServices(identity_api, room_service, providers.chat, registry),
         presence_api=PresenceApiServices(identity_api, providers.presence, registry),

@@ -129,6 +129,23 @@ local function remember(result)
 end
 
 if operation == 'initialize' then
+  -- Append guard keys after the optional predecessor cleanup keys (14..16).
+  -- Reject before cached-response replay, expiry pruning or any state mutation.
+  local key_count = 15
+  if payload.previous_game_id ~= nil and payload.previous_game_id ~= cjson.null then
+    key_count = 18
+  end
+  if #KEYS ~= key_count then
+    return rejection('START_INITIALIZE_KEYS_INVALID')
+  end
+  local prefix = 'stone:v1:room:{' .. payload.room_id .. '}:'
+  if KEYS[key_count - 1] ~= prefix .. 'start-intent:' .. payload.game_id
+      or KEYS[key_count] ~= prefix .. 'start-phase:' .. payload.game_id then
+    return rejection('START_INITIALIZE_KEYS_INVALID')
+  end
+  if redis.call('EXISTS', KEYS[key_count - 1], KEYS[key_count]) > 0 then
+    return rejection('CAPTURED_START_REQUIRED')
+  end
   if redis.call('EXISTS', KEYS[1]) == 0 then return rejection('ROOM_NOT_FOUND') end
   if redis.call('HGET', KEYS[1], 'status') ~= 'PLAYING'
       or redis.call('HGET', KEYS[1], 'game_id') ~= payload.game_id then
@@ -387,14 +404,65 @@ if operation == 'apply_resolution' then
   return remember(response({snapshot = snapshot(game), resolution = resolution}))
 end
 
+if operation == 'finalize_game' then
+  if game.game_id ~= payload.game_id or game.turn_no ~= payload.turn_no then
+    return rejection('STALE_GAME')
+  end
+  if not expected_version_matches(game) then return rejection('STATE_VERSION_CONFLICT') end
+  if game.game_status ~= 'ACTIVE' then
+    if game.end_reason == payload.end_reason then
+      return remember(response({snapshot = snapshot(game)}))
+    end
+    return rejection('GAME_ALREADY_FINISHED')
+  end
+  local valid = (payload.end_reason == 'FORFEIT'
+      and (payload.winner == 'BLACK' or payload.winner == 'WHITE'))
+      or ((payload.end_reason == 'JOINT_LOSS' or payload.end_reason == 'SYSTEM_INVALID')
+          and payload.winner == 'EMPTY')
+  if not valid then return rejection('INVALID_EXTERNAL_GAME_RESULT') end
+  game.game_status = payload.end_reason == 'SYSTEM_INVALID' and 'SYSTEM_INVALID' or 'FINISHED'
+  game.end_reason = payload.end_reason
+  game.deadline_ms = cjson.null
+  game.turn_status = 'PASSED'
+  game.candidates = {}
+  game.valid_voter_count = 0
+  redis.call('DEL', KEYS[6], KEYS[7], KEYS[8])
+  advance_version(game)
+  return remember(response({snapshot = snapshot(game)}))
+end
+
 return rejection('VOTE_OPERATION_INVALID')
 """
 
 VOTE_MUTATION = VersionedLuaScript(
     name="vote-runtime-mutation",
-    version=5,
+    version=8,
     source=_COMMON + _MUTATION,
 )
+
+VOTE_DISCARD = VersionedLuaScript(
+    name="vote-runtime-discard",
+    version=1,
+    source=r"""
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({ok = true, missing = true, error = cjson.null})
+end
+local game = cjson.decode(raw)
+if game.schema_version ~= 3 then
+  return cjson.encode({ok = false, error = 'VOTE_SCHEMA_VERSION_MISMATCH'})
+end
+if game.game_id ~= ARGV[1] then
+  return cjson.encode({ok = false, error = 'STALE_GAME'})
+end
+if tonumber(game.turn_no) ~= tonumber(ARGV[2]) then
+  return cjson.encode({ok = false, error = 'REDIS_SNAPSHOT_CHANGED'})
+end
+redis.call('DEL', unpack(KEYS))
+return cjson.encode({ok = true, missing = false, error = cjson.null})
+""",
+)
+
 
 VOTE_READ = VersionedLuaScript(
     name="vote-runtime-read",

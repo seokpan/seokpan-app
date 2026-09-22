@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["local", "test", "development", "production"] = "local"
+    # Switch only after the captured-lifecycle rollout gates; never per request.
+    game_lifecycle_mode: Literal["legacy", "captured"] = "legacy"
     log_level: str = "INFO"
     instance_id: str = "local"
     identity_database_url: str | None = Field(default=None, repr=False)

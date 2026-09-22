@@ -1,41 +1,113 @@
 .header {
   background: #081637;
   color: white;
-  padding: 1.1rem max(1rem, calc((100vw - 1160px) / 2));
+  padding: 0 1.25rem;
+  border-bottom: 1px solid #20304f;
+}
+.headerInner {
+  width: min(1160px, 100%);
+  min-height: 68px;
+  margin: 0 auto;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1rem 1.5rem;
 }
 .header a {
   color: white;
   text-decoration: none;
 }
-.header a[aria-current="page"] {
-  color: #54e0e5;
-  text-decoration: underline;
-  text-underline-offset: 0.5rem;
-}
 .brand {
-  font-size: 1.35rem;
-  font-weight: 800;
-}
-.brand span {
-  margin-right: 0.5rem;
-}
-.header nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
+  display: inline-flex;
   align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+  min-height: 44px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
-.header button {
-  background: transparent;
+.brand > span:first-child {
+  color: #54e0e5;
+  letter-spacing: -0.18rem;
+  margin-right: 0.08rem;
+}
+.headerControls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+.primaryNav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid #2d3f61;
+  border-radius: 0.7rem;
+  background: #0d2046;
+}
+.primaryNav a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.8rem;
+  border-radius: 0.5rem;
+  color: #dce7f7;
+  font-weight: 700;
+}
+.primaryNav a:hover {
+  background: #17305e;
   color: white;
-  border: 1px solid #73809b;
-  border-radius: 0.4rem;
+}
+.primaryNav a[aria-current="page"] {
+  background: #173d70;
+  color: #71edf0;
+  box-shadow: inset 0 0 0 1px #35668c;
+}
+.utilityGroup,
+.accountGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+.utilityGroup,
+.accountGroup {
+  padding-left: 0.65rem;
+  border-left: 1px solid #2d3f61;
+}
+.utilityGroup > button,
+.accountGroup button {
+  min-height: 40px;
   padding: 0.45rem 0.7rem;
+  color: #dce7f7;
+  background: transparent;
+  border: 1px solid #435574;
+  border-radius: 0.55rem;
+}
+.utilityGroup > button:hover,
+.accountGroup button:hover {
+  color: white;
+  background: #132a52;
+  border-color: #627596;
+}
+.header .memberUpgrade {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid #54aeb8;
+  border-radius: 0.55rem;
+  color: #bff8fa;
+  font-weight: 700;
+  background: #0d2c4c;
+}
+.header .memberUpgrade:hover {
+  color: white;
+  background: #123b60;
 }
 .shell {
   max-width: 1160px;
@@ -89,6 +161,7 @@
 }
 .roomCard {
   padding: clamp(1rem, 2vw, 1.75rem);
+  overflow-anchor: none;
 }
 .guestCard {
   background: linear-gradient(145deg, #123a6c, #081b3f);
@@ -337,7 +410,7 @@
   margin-bottom: 0.65rem;
 }
 .waitingTeams ul {
-  max-height: 9rem;
+  height: 9rem;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -347,6 +420,57 @@
 }
 .readyPanel .primaryButton {
   margin-top: 0.6rem;
+}
+.readyPanel {
+  order: -1;
+}
+.waitingTeams button[aria-pressed="true"]:disabled {
+  opacity: 1;
+  color: #00636d;
+  background: #e5f2f4;
+  border-color: #007c87;
+  box-shadow: inset 0 0 0 1px #007c87;
+}
+.startChecklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0.8rem 0;
+  padding: 0;
+}
+.startChecklist li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 32px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d8e0ea;
+  border-radius: 999px;
+  background: #f5f7fa;
+  color: #52617a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.startChecklist li[data-met="true"] {
+  color: #00636d;
+  background: #e8f7f6;
+  border-color: #81c8c8;
+}
+.commandStatus {
+  margin: 0.65rem 0 0;
+  color: #52617a;
+  font-size: 0.85rem;
+}
+@media (max-width: 920px) {
+  .headerInner {
+    flex-wrap: wrap;
+    padding: 0.65rem 0;
+  }
+  .headerControls {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
 }
 @media (max-width: 700px) {
   .authGrid,
@@ -363,9 +487,157 @@
   .stones {
     font-size: 2rem;
   }
-  .header nav {
-    font-size: 0.85rem;
+  .header {
+    padding-inline: 0.85rem;
+  }
+  .headerInner {
+    min-height: 0;
+    padding: 0.75rem 0;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .headerControls {
     width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .primaryNav {
+    flex: 1 1 auto;
+  }
+  .primaryNav a {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .utilityGroup,
+  .accountGroup {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .accountGroup {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .roomCard {
+    padding: 0.85rem;
+  }
+  .shell {
+    padding: 1rem 0.75rem 3rem;
+  }
+  .teamPanel {
+    padding: 0.85rem;
+  }
+  .waitingTeams {
+    gap: 0.55rem;
+  }
+  .waitingTeams ul {
+    height: auto;
+    min-height: 2.75rem;
+    max-height: 7rem;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
+/* Room pages use the viewport as an application workspace. */
+.appDocument {
+  min-height: 100dvh;
+}
+.appWorkspace {
+  height: 100dvh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.roomShell {
+  width: min(1160px, 100%);
+  max-width: 1160px;
+  height: 100%;
+  min-height: 0;
+  padding: 0.65rem 1.25rem;
+  overflow: hidden;
+}
+.roomRoute {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.roomFooter {
+  display: none;
+}
+.roomShell .roomCard {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.roomShell .roomCard > .sectionHeading,
+.roomShell .roomCard > .notice,
+.roomShell .roomCard > .recoveryActions {
+  flex: 0 0 auto;
+}
+.roomShell .roomCard > p {
+  flex: 0 0 auto;
+  margin: 0.2rem 0 0.35rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+.roomShell .roomCard > p[id="room-leave-impact"] {
+  max-height: 3.2rem;
+  overflow: auto;
+}
+.roomShell .roomCard > section[aria-label] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 700px) {
+  .appWorkspace .header {
+    padding-inline: 0.55rem;
+  }
+  .appWorkspace .headerInner {
+    padding: 0.3rem 0;
+    gap: 0.25rem;
+  }
+  .appWorkspace .brand {
+    min-height: 32px;
+    font-size: 0.98rem;
+  }
+  .appWorkspace .headerControls {
+    gap: 0.25rem;
+  }
+  .appWorkspace .primaryNav a,
+  .appWorkspace .utilityGroup > button,
+  .appWorkspace .accountGroup button,
+  .appWorkspace .memberUpgrade {
+    min-height: 32px;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.76rem;
+  }
+  .roomShell {
+    padding: 0.35rem 0.45rem;
+  }
+  .roomShell .roomCard {
+    padding: 0.5rem;
+    border-radius: 0.7rem;
+  }
+  .roomShell .sectionHeading {
+    gap: 0.25rem;
+  }
+  .roomShell .sectionHeading h1 {
+    margin-bottom: 0;
+    font-size: 1rem;
+  }
+  .roomShell .sectionHeading .secondaryButton {
+    min-height: 32px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.76rem;
+  }
+  .roomShell .roomCard > p {
+    font-size: 0.68rem;
+    margin: 0.08rem 0 0.2rem;
   }
 }

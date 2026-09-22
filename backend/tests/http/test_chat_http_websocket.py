@@ -239,7 +239,6 @@ def test_room_chat_accepts_shared_generation_without_local_game_registry() -> No
             connected=generation is not None,
         )
 
-    services.room_api.rooms.resolve_participation = resolve_with_shared_generation  # type: ignore[method-assign]
     services = replace(services, chat_api=replace(services.chat_api, registry=chat_registry))
     with TestClient(create_app(settings=settings, services=services), base_url=ORIGIN) as client:
         owner, guest = actor(client, "crosspod"), actor(client)
@@ -247,6 +246,7 @@ def test_room_chat_accepts_shared_generation_without_local_game_registry() -> No
         room_id = target["room_id"]
         with client.websocket_connect(f"/ws/v1/rooms/{room_id}", headers=guest.headers) as game:
             game.receive_json()
+            services.room_api.rooms.resolve_participation = resolve_with_shared_generation  # type: ignore[method-assign]
             assert (
                 chat_registry.connection_generation(
                     room_id,

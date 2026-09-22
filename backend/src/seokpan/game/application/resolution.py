@@ -7,8 +7,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
+from seokpan.game.application.history import replay_game_history
 from seokpan.game.application.persistence import (
     FinalizeGameCommand,
     GamePersistencePort,
@@ -36,6 +37,7 @@ from seokpan.vote.application import (
     AcquireRuntimeResolver,
     ApplyRuntimeResolution,
     CloseRuntimeTurn,
+    FinalizeRuntimeGame,
     VoteRuntimePort,
     VoteRuntimeSnapshot,
 )
@@ -46,6 +48,10 @@ from seokpan.vote.domain import (
     VoteRuleViolation,
     VoteTurnGame,
 )
+
+if TYPE_CHECKING:
+    from seokpan.game.application.captured_completion import CapturedGameCompletion
+    from seokpan.game.application.captured_invalidation import CapturedGameInvalidation
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,6 +142,8 @@ class TurnResolutionRunner:
         clock: MillisecondClock,
         runner_id: str,
         events: RealtimeEventPort | None = None,
+        captured_invalidation: CapturedGameInvalidation | None = None,
+        captured_completion: CapturedGameCompletion | None = None,
     ) -> None:
         if not runner_id:
             raise ValueError("INVALID_RUNNER_ID")
@@ -149,10 +157,214 @@ class TurnResolutionRunner:
         self._clock = clock
         self._runner_id = hashlib.sha256(runner_id.encode()).hexdigest()[:12]
         self._events = events or NullRealtimeEventAdapter()
+        self._invalidation_failures: set[tuple[str, str]] = set()
+        self._captured_invalidation = captured_invalidation
+        self._captured_completion = captured_completion
+
+    async def finalize_departures(self, *, room_id: str, game_id: str) -> bool:
+        """Finalize an active Game after Room state confirms player departures."""
+        room = await self._rooms.get(room_id)
+        runtime = await self._votes.get(room_id)
+        if room is None or runtime is None or room.game_id != game_id or runtime.game_id != game_id:
+            return False
+
+        history = await self._games.load_game(game_id)
+        if history is None:
+            raise PersistenceRuleViolation("GAME_NOT_FOUND")
+        roster_ids = {item.participant_id for item in history.participants}
+        present_ids = {item.participant_id for item in room.participants}
+        departed = frozenset(roster_ids - present_ids)
+        if not departed:
+            return False
+
+        stored = await self._games.load_result(game_id)
+        if stored is None:
+            game = self._rebuild_before_turn(runtime, history)
+            try:
+                result = GameResultService(
+                    game_id=game_id,
+                    game=game,
+                    participants=history.participants,
+                ).finalize_confirmed_departures(departed_participant_ids=departed)
+            except GameResultRuleViolation as error:
+                if error.code == "FORFEIT_NOT_CONFIRMED":
+                    return False
+                raise
+            command = FinalizeGameCommand(
+                result=result,
+                ended_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+            )
+            if not await self._games.result_matches(command):
+                await self._games.finalize_game(command)
+            end_reason = result.end_reason
+            winner = result.winner
+        else:
+            if stored.end_reason not in {EndReason.FORFEIT, EndReason.JOINT_LOSS}:
+                return False
+            end_reason = stored.end_reason
+            winner = stored.winner
+
+        runtime = await self._votes.get(room_id)
+        if runtime is None or runtime.game_id != game_id:
+            return False
+        if runtime.game_status is GameStatus.ACTIVE:
+            finalized = await self._votes.finalize_game(
+                FinalizeRuntimeGame(
+                    room_id=room_id,
+                    request_id=_stable_id(
+                        "departure-finalize",
+                        DueTurn(room_id, game_id, runtime.turn_no),
+                    ),
+                    game_id=game_id,
+                    turn_no=runtime.turn_no,
+                    expected_state_version=runtime.state_version,
+                    end_reason=end_reason,
+                    winner=winner,
+                )
+            )
+            runtime = finalized.snapshot
+
+        due = DueTurn(room_id, game_id, runtime.turn_no)
+        await self._game_finished(due, runtime)
+        await self._complete_room(due)
+        return True
+
+    async def finalize_system_invalid(
+        self,
+        *,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
+    ) -> bool:
+        """Converge a closed Room to one durable Game result, then remove ephemeral runtime."""
+        if self._captured_invalidation is not None:
+            await self._captured_invalidation.prepare_history(
+                room_id=room_id,
+                game_id=game_id,
+                closed_at_ms=closed_at_ms,
+            )
+        history = await self._games.load_game(game_id)
+        if history is None:
+            raise PersistenceRuleViolation("GAME_NOT_FOUND")
+        if history.start.room_id != room_id:
+            raise PersistenceRuleViolation("GAME_START_CONFLICT")
+
+        stored = await self._games.load_result(game_id)
+        runtime = await self._votes.get(room_id)
+        runtime_to_discard = game_id
+        if runtime is not None and runtime.game_id != game_id:
+            if self._captured_invalidation is None or not (
+                await self._captured_invalidation.permits_previous_runtime_cleanup(
+                    room_id=room_id,
+                    game_id=game_id,
+                    closed_at_ms=closed_at_ms,
+                    runtime=runtime,
+                )
+            ):
+                raise VoteRuleViolation("STALE_GAME")
+            runtime_to_discard = runtime.game_id
+            runtime = None
+
+        if stored is not None and stored.end_reason is not EndReason.SYSTEM_INVALID:
+            await self._votes.discard_game(room_id, runtime_to_discard)
+            await self._acknowledge_invalidation(room_id, game_id, closed_at_ms)
+            return False
+
+        if stored is None:
+            history_game = replay_game_history(history)
+            if history_game.status is not GameStatus.ACTIVE:
+                result = GameResultService(
+                    game_id=game_id,
+                    game=history_game,
+                    participants=history.participants,
+                ).finalize_completed_game()
+                if not history.moves:
+                    raise PersistenceRuleViolation("GAME_RESULT_HISTORY_MISMATCH")
+                command = FinalizeGameCommand(
+                    result=result,
+                    ended_at=history.moves[-1].confirmed_at,
+                )
+                if not await self._games.result_matches(command):
+                    await self._games.finalize_game(command)
+                await self._votes.discard_game(room_id, runtime_to_discard)
+                await self._acknowledge_invalidation(room_id, game_id, closed_at_ms)
+                return False
+
+            game = history_game if runtime is None else self._rebuild_before_turn(runtime, history)
+            result = GameResultService(
+                game_id=game_id,
+                game=game,
+                participants=history.participants,
+            ).finalize_system_invalid()
+            command = FinalizeGameCommand(
+                result=result,
+                ended_at=datetime.fromtimestamp(closed_at_ms / 1000, UTC),
+            )
+            if not await self._games.result_matches(command):
+                await self._games.finalize_game(command)
+
+        await self._votes.discard_game(room_id, runtime_to_discard)
+        await self._acknowledge_invalidation(room_id, game_id, closed_at_ms)
+        return True
+
+    async def _acknowledge_invalidation(
+        self,
+        room_id: str,
+        game_id: str,
+        closed_at_ms: int,
+    ) -> None:
+        if self._captured_invalidation is not None:
+            handled = await self._captured_invalidation.acknowledge(
+                room_id=room_id,
+                game_id=game_id,
+                closed_at_ms=closed_at_ms,
+            )
+            if handled:
+                return
+        await self._rooms.complete_game_invalidation(room_id, game_id)
+
+    async def reconcile_game_invalidations(self, *, limit: int = 100) -> int:
+        """Retry room-closure invalidations from durable Room provider markers."""
+        pending = await self._rooms.pending_game_invalidations(limit=limit)
+        completed = 0
+        for item in pending:
+            key = (item.room_id, item.game_id)
+            try:
+                await self.finalize_system_invalid(
+                    room_id=item.room_id,
+                    game_id=item.game_id,
+                    closed_at_ms=item.closed_at_ms,
+                )
+                self._invalidation_failures.discard(key)
+                completed += 1
+            except (
+                VoteRuleViolation,
+                PersistenceRuleViolation,
+                GameRuleViolation,
+                GameResultRuleViolation,
+                RoomRuleViolation,
+            ):
+                if key not in self._invalidation_failures:
+                    _LOGGER.exception(
+                        "Game invalidation item failed",
+                        extra={
+                            "event": "game_invalidation.item_failed",
+                            "room_id": item.room_id,
+                            "game_id": item.game_id,
+                        },
+                    )
+                    self._invalidation_failures.add(key)
+        return completed
 
     async def run_once(self, *, limit: int = 100) -> tuple[TurnProcessingResult, ...]:
         if limit < 1:
             raise ValueError("INVALID_DUE_TURN_LIMIT")
+        if self._captured_completion is not None:
+            try:
+                # Independent of PLAYING Room discovery; repair WAITING/successor tasks too.
+                await self._captured_completion.reconcile(limit=limit)
+            except Exception:
+                _LOGGER.exception("Normal completion discovery failed")
         due = await self._due_turns.due_turns(now_ms=self._clock.now_ms, limit=limit)
         results: list[TurnProcessingResult] = []
         for item in due:
@@ -432,6 +644,16 @@ class TurnResolutionRunner:
         return room
 
     async def _complete_room(self, due_turn: DueTurn) -> None:
+        if self._captured_completion is not None:
+            changed = await self._captured_completion.complete(
+                room_id=due_turn.room_id,
+                game_id=due_turn.game_id,
+                final_turn_no=due_turn.turn_no,
+            )
+            if changed is not None:
+                if changed:
+                    await self._room_completed_events(due_turn)
+                return
         room = await self._rooms.get(due_turn.room_id)
         if room is None:
             raise VoteRuleViolation("ROOM_NOT_FOUND")
@@ -453,6 +675,9 @@ class TurnResolutionRunner:
         )
         if completed.replayed or completed.snapshot is None:
             return
+        await self._room_completed_events(due_turn)
+
+    async def _room_completed_events(self, due_turn: DueTurn) -> None:
         try:
             await self._events.room_changed(
                 event_type="snapshot.required",

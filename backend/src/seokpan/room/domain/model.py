@@ -114,6 +114,7 @@ class DepartureResult:
     new_owner_id: str | None
     room_closed: bool
     game_termination: GameTermination
+    terminated_game_id: str | None = None
 
 
 class Room:
@@ -242,9 +243,14 @@ class Room:
     def start_game(self, *, actor_id: str, game_id: str) -> StartRoster:
         self._require_waiting()
         self._require_owner(actor_id)
+        owner = self.participant(actor_id)
+        if not owner.connected:
+            raise RoomRuleViolation("PARTICIPANT_DISCONNECTED")
         if not game_id:
             raise RoomRuleViolation("INVALID_GAME_ID")
-        ready_participants = tuple(item for item in self.participants if item.ready)
+        ready_participants = tuple(
+            item for item in self.participants if item.ready and item.connected
+        )
         if len(ready_participants) < self.config.minimum_ready:
             raise RoomRuleViolation("MINIMUM_READY_NOT_MET")
         ready_teams = {item.team for item in ready_participants}
@@ -255,8 +261,12 @@ class Room:
             entries=tuple(
                 RosterEntry(
                     participant_id=item.participant_id,
-                    team=item.team if item.ready else Team.NONE,
-                    role=(ParticipantRole.PLAYER if item.ready else ParticipantRole.SPECTATOR),
+                    team=item.team if item.ready and item.connected else Team.NONE,
+                    role=(
+                        ParticipantRole.PLAYER
+                        if item.ready and item.connected
+                        else ParticipantRole.SPECTATOR
+                    ),
                 )
                 for item in self.participants
             )
@@ -292,12 +302,13 @@ class Room:
 
         previous_owner_id = self.owner_id
         self._participants[participant_id] = replace(participant, connected=False)
-        result = self._resolve_owner_departure(
-            departed_id=participant_id,
-            previous_owner_id=previous_owner_id,
-        )
         self._advance_version()
-        return result
+        return DepartureResult(
+            previous_owner_id=previous_owner_id,
+            new_owner_id=previous_owner_id,
+            room_closed=False,
+            game_termination=GameTermination.NONE,
+        )
 
     def reconnect(self, *, participant_id: str) -> None:
         self._require_not_closed()
@@ -365,6 +376,9 @@ class Room:
             if self.status is RoomStatus.PLAYING
             else GameTermination.NONE
         )
+        terminated_game_id = (
+            self.game_id if game_termination is GameTermination.SYSTEM_INVALID else None
+        )
         self.owner_id = None
         self.status = RoomStatus.CLOSED
         return DepartureResult(
@@ -372,6 +386,7 @@ class Room:
             new_owner_id=None,
             room_closed=True,
             game_termination=game_termination,
+            terminated_game_id=terminated_game_id,
         )
 
     def _unchanged_departure_result(self) -> DepartureResult:

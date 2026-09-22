@@ -7,7 +7,7 @@ from seokpan.game.domain import Stone
 from seokpan.persistence.memory import ManualClock
 from seokpan.persistence.redis.common import RedisKeyspace, RedisProviderError, VersionedJsonCodec
 from seokpan.persistence.redis.vote_adapter import RedisVoteRuntimeAdapter, _list
-from seokpan.persistence.redis.vote_scripts import VOTE_MUTATION, VOTE_READ
+from seokpan.persistence.redis.vote_scripts import VOTE_DISCARD, VOTE_MUTATION, VOTE_READ
 from seokpan.vote.application import InitializeVoteRuntime
 from seokpan.vote.domain import Voter
 
@@ -16,13 +16,13 @@ from .conftest import EmulatedVoteRedisClient, _snapshot
 
 def test_vote_keyspace_uses_one_room_hash_tag() -> None:
     keys = (
-        RedisKeyspace.room_game("room-1"),
-        RedisKeyspace.room_board("room-1"),
-        RedisKeyspace.room_votes("room-1", 1),
-        RedisKeyspace.room_vote_tally("room-1", 1),
-        RedisKeyspace.room_resolver("room-1", 1),
+        RedisKeyspace.room_game("00000000-0000-4000-8000-000000000101"),
+        RedisKeyspace.room_board("00000000-0000-4000-8000-000000000101"),
+        RedisKeyspace.room_votes("00000000-0000-4000-8000-000000000101", 1),
+        RedisKeyspace.room_vote_tally("00000000-0000-4000-8000-000000000101", 1),
+        RedisKeyspace.room_resolver("00000000-0000-4000-8000-000000000101", 1),
     )
-    assert all("{room-1}" in key for key in keys)
+    assert all("{00000000-0000-4000-8000-000000000101}" in key for key in keys)
     assert len(set(keys)) == len(keys)
     assert "local function response(value)" in VOTE_MUTATION.source
     assert "return value\nend" in VOTE_MUTATION.source
@@ -35,6 +35,35 @@ def test_vote_keyspace_uses_one_room_hash_tag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discard_game_uses_atomic_same_slot_cleanup() -> None:
+    client = EmulatedVoteRedisClient(ManualClock())
+    adapter = RedisVoteRuntimeAdapter(client)
+    await adapter.initialize(
+        InitializeVoteRuntime(
+            "00000000-0000-4000-8000-000000000101",
+            "init-discard",
+            "00000000-0000-4000-8000-000000000102",
+            (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE)),
+            1_000,
+            1,
+        )
+    )
+
+    await adapter.discard_game(
+        "00000000-0000-4000-8000-000000000101", "00000000-0000-4000-8000-000000000102"
+    )
+
+    sha, count, values = client.evalsha_calls[-1]
+    assert sha == VOTE_DISCARD.sha
+    assert count == 10
+    assert all("{00000000-0000-4000-8000-000000000101}" in str(key) for key in values[:count])
+    assert "game.game_id ~= ARGV[1]" in VOTE_DISCARD.source
+    assert "game.turn_no" in VOTE_DISCARD.source
+    assert "redis.call('DEL', unpack(KEYS))" in VOTE_DISCARD.source
+    assert await adapter.get("00000000-0000-4000-8000-000000000101") is None
+
+
+@pytest.mark.asyncio
 async def test_script_cache_miss_loads_exact_versioned_script() -> None:
     clock = ManualClock()
     client = EmulatedVoteRedisClient(clock, scripts_loaded=False)
@@ -42,9 +71,9 @@ async def test_script_cache_miss_loads_exact_versioned_script() -> None:
 
     await adapter.initialize(
         InitializeVoteRuntime(
-            "room-1",
+            "00000000-0000-4000-8000-000000000101",
             "initialize-1",
-            "game-1",
+            "00000000-0000-4000-8000-000000000102",
             (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE)),
             1_000,
             1,
@@ -54,7 +83,7 @@ async def test_script_cache_miss_loads_exact_versioned_script() -> None:
     assert client.script_load_calls == [VOTE_MUTATION.source]
     assert len(client.evalsha_calls) == 2
     assert client.evalsha_calls[0][0] == VOTE_MUTATION.sha
-    assert client.evalsha_calls[0][1] == 13
+    assert client.evalsha_calls[0][1] == 15
 
 
 class FailingRedisClient:
@@ -72,7 +101,7 @@ class FailingRedisClient:
 async def test_provider_error_is_sanitized() -> None:
     adapter = RedisVoteRuntimeAdapter(FailingRedisClient())
     with pytest.raises(RedisProviderError) as raised:
-        await adapter.get("room-1")
+        await adapter.get("00000000-0000-4000-8000-000000000101")
     assert str(raised.value) == "REDIS_PROVIDER_UNAVAILABLE"
     assert "secret-host" not in str(raised.value)
 
@@ -82,28 +111,37 @@ async def test_replacement_declares_only_previous_turn_cleanup_keys() -> None:
     client = EmulatedVoteRedisClient(ManualClock())
     adapter = RedisVoteRuntimeAdapter(client)
     voters = (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE))
-    await adapter.initialize(InitializeVoteRuntime("room-1", "start-1", "game-1", voters, 1000, 1))
-    client.store._states["room-1"].game.game.finish_system_invalid()
     await adapter.initialize(
         InitializeVoteRuntime(
-            "room-1",
+            "00000000-0000-4000-8000-000000000101",
+            "start-1",
+            "00000000-0000-4000-8000-000000000102",
+            voters,
+            1000,
+            1,
+        )
+    )
+    client.store._states["00000000-0000-4000-8000-000000000101"].game.game.finish_system_invalid()
+    await adapter.initialize(
+        InitializeVoteRuntime(
+            "00000000-0000-4000-8000-000000000101",
             "start-2",
-            "game-2",
+            "00000000-0000-4000-8000-000000000103",
             voters,
             2000,
             1,
-            previous_game_id="game-1",
+            previous_game_id="00000000-0000-4000-8000-000000000102",
             previous_turn_no=1,
         )
     )
     _, count, values = client.evalsha_calls[-1]
-    assert count == 16
+    assert count == 18
     assert values[13:16] == (
-        RedisKeyspace.room_votes("room-1", 1),
-        RedisKeyspace.room_vote_tally("room-1", 1),
-        RedisKeyspace.room_resolver("room-1", 1),
+        RedisKeyspace.room_votes("00000000-0000-4000-8000-000000000101", 1),
+        RedisKeyspace.room_vote_tally("00000000-0000-4000-8000-000000000101", 1),
+        RedisKeyspace.room_resolver("00000000-0000-4000-8000-000000000101", 1),
     )
-    assert all("{room-1}" in str(key) for key in values[:count])
+    assert all("{00000000-0000-4000-8000-000000000101}" in str(key) for key in values[:count])
     # Static Lua checks, not a claim that a real Redis server executed the script.
     assert "local request_id = 'vote:' .. ARGV[2]" in VOTE_MUTATION.source
     assert "redis.call('DEL', KEYS[14], KEYS[15], KEYS[16])" in VOTE_MUTATION.source
@@ -117,7 +155,11 @@ class ChangedSnapshotClient(EmulatedVoteRedisClient):
     async def evalsha(self, sha: str, numkeys: int, *keys_and_args: object) -> bytes:
         if sha == VOTE_READ.sha:
             payload = VersionedJsonCodec.decode(str(keys_and_args[numkeys]))
-            assert payload == {"room_id": "room-1", "game_id": "game-1", "turn_no": 1}
+            assert payload == {
+                "room_id": "00000000-0000-4000-8000-000000000101",
+                "game_id": "00000000-0000-4000-8000-000000000102",
+                "turn_no": 1,
+            }
             return self._encode({"ok": False, "error": "REDIS_SNAPSHOT_CHANGED"})
         return await super().evalsha(sha, numkeys, *keys_and_args)
 
@@ -127,16 +169,16 @@ async def test_read_does_not_mix_new_game_with_previous_turn_keys() -> None:
     adapter = RedisVoteRuntimeAdapter(ChangedSnapshotClient(ManualClock()))
     await adapter.initialize(
         InitializeVoteRuntime(
-            "room-1",
+            "00000000-0000-4000-8000-000000000101",
             "init",
-            "game-1",
+            "00000000-0000-4000-8000-000000000102",
             (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE)),
             1000,
             1,
         )
     )
     with pytest.raises(RedisProviderError, match="REDIS_SNAPSHOT_CHANGED"):
-        await adapter.get("room-1")
+        await adapter.get("00000000-0000-4000-8000-000000000101")
     assert "game.game_id ~= payload.game_id or game.turn_no ~= payload.turn_no" in VOTE_READ.source
 
 
@@ -158,7 +200,8 @@ def test_old_or_future_vote_snapshot_is_not_interpreted(version: int) -> None:
 
 
 def test_last_move_lua_write_is_persistence_gated_and_readable() -> None:
-    assert VOTE_MUTATION.version == VOTE_READ.version == 5
+    assert VOTE_MUTATION.version == 8
+    assert VOTE_READ.version == 5
     assert VOTE_MUTATION.source.index("existing.schema_version ~= 3") < VOTE_MUTATION.source.index(
         "local expired"
     )
@@ -194,9 +237,9 @@ async def test_last_move_must_match_snapshot_board_and_count() -> None:
     client = EmulatedVoteRedisClient(ManualClock())
     start = await client.store.initialize(
         InitializeVoteRuntime(
-            "room-1",
+            "00000000-0000-4000-8000-000000000101",
             "init",
-            "game-1",
+            "00000000-0000-4000-8000-000000000102",
             (Voter("b", Stone.BLACK), Voter("w", Stone.WHITE)),
             1000,
             1,
@@ -234,5 +277,12 @@ class OldVoteClient(EmulatedVoteRedisClient):
 async def test_old_game_read_stops_before_script_execution() -> None:
     client = OldVoteClient(ManualClock())
     with pytest.raises(RedisProviderError, match="VOTE_SCHEMA_VERSION_MISMATCH"):
-        await RedisVoteRuntimeAdapter(client).get("room-1")
+        await RedisVoteRuntimeAdapter(client).get("00000000-0000-4000-8000-000000000101")
     assert client.evalsha_calls == []
+
+
+def test_external_finalization_lua_accepts_system_invalid_without_winner() -> None:
+    source = VOTE_MUTATION.source
+    assert "payload.end_reason == 'SYSTEM_INVALID'" in source
+    assert "payload.winner == 'EMPTY'" in source
+    assert "game.game_status = payload.end_reason == 'SYSTEM_INVALID'" in source

@@ -9,7 +9,7 @@ import { FakeSocket, event } from "../realtime/testing";
 afterEach(cleanup);
 
 describe("waiting owner kick", () => {
-  it("confirms the named target, sends one versioned request and keeps the owner's board/socket", async () => {
+  it("kicks the named target with one versioned request", async () => {
     const target = {
       ...participant,
       participant_id: "p2",
@@ -161,6 +161,53 @@ function mount(fetcher: typeof fetch) {
 }
 
 describe("room HTTP and receive-only connection integration", () => {
+  it("allows an explicit leave from a disconnected snapshot and retries only a definite stale rejection", async () => {
+    let left = false;
+    let leaveCalls = 0;
+    const fetcher = vi.fn<typeof fetch>(async (url, options) => {
+      if (url === "/api/v1/session/csrf")
+        return left
+          ? json({ ...identity, room_id: null, participant_id: null })
+          : json({ ...identity, room_id: "r1", participant_id: "p1" });
+      if (url === "/api/v1/rooms/r1/participants/me" && options?.method === "DELETE") {
+        leaveCalls += 1;
+        const body = JSON.parse(String(options.body));
+        if (leaveCalls === 1) {
+          expect(body.expected_state_version).toBe(3);
+          return new Response(
+            JSON.stringify({
+              code: "STALE_STATE",
+              current_version: 4,
+              request_id: "stale-leave",
+            }),
+            {
+              status: 409,
+              headers: { "Content-Type": "application/problem+json" },
+            },
+          );
+        }
+        expect(body.expected_state_version).toBe(4);
+        left = true;
+        return json(null);
+      }
+      if (url === "/api/v1/lobby/snapshot") return json({ rooms: [], stream_version: 1 });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    const socket = sockets.get("/ws/v1/rooms/r1")!;
+    act(() => socket.message(event("room.snapshot", 8, { room, game: null }, "r1")));
+    act(() => socket.disconnect(1006));
+
+    expect(screen.getByRole("heading", { name: room.name })).toBeInTheDocument();
+    const leave = screen.getByRole("button", { name: "방 나가기" });
+    expect(leave).toBeEnabled();
+    fireEvent.click(leave);
+
+    await waitFor(() => expect(leaveCalls).toBe(2));
+    expect(await screen.findByRole("heading", { name: "게임 방" })).toBeInTheDocument();
+  });
+
   it.each([true, false])(
     "keeps participation and the Socket on in-room Member login success=%s",
     async (success) => {
@@ -259,11 +306,12 @@ describe("room HTTP and receive-only connection integration", () => {
     loggedOut = true;
     act(() => window.dispatchEvent(new Event("focus")));
     expect(screen.getByRole("button", { name: "Ready" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "팀 선택 해제" })).not.toBeInTheDocument();
     await screen.findByRole("button", { name: "로그인" });
     expect(socket.close).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls.some((c) => c[0] === "/api/v1/sessions/guest")).toBe(false);
   });
-  it("creates one public room with CSRF and enters the server-confirmed participation", async () => {
+  it("creates a public room and enters confirmed participation", async () => {
     let joined = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
       if (url === "/api/v1/session/csrf")
@@ -301,7 +349,7 @@ describe("room HTTP and receive-only connection integration", () => {
     expect(new Headers(creates[0][1]?.headers).get("X-CSRF-Token")).toBe(identity.csrf_token);
     expect(sockets.get("/ws/v1/lobby")!.close).toHaveBeenCalledTimes(1);
   });
-  it("uses room resource version for a team command and keeps the socket during recheck", async () => {
+  it("uses the room version for team change without reconnecting", async () => {
     let changed = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
       if (url === "/api/v1/session/csrf")
@@ -327,6 +375,20 @@ describe("room HTTP and receive-only connection integration", () => {
     const emptyCell = screen.getByRole("button", { name: "H8 빈 자리" });
     expect(emptyCell).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Ready 0명 / 최소 2명")).toBeInTheDocument();
+    expect(
+      screen.getByText(/방장이 나가면 접속 중인 Member에게 권한이 넘어가고/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
+    expect(screen.getByLabelText("투표 제한 시간")).toHaveAttribute(
+      "aria-describedby",
+      "room-vote-seconds-impact",
+    );
+    expect(
+      screen.getByText("투표 시간을 바꾸면 모든 참가자의 Ready가 해제됩니다."),
+    ).toBeInTheDocument();
     const requestsBeforeClick = fetcher.mock.calls.length;
     fireEvent.click(emptyCell);
     expect(fetcher.mock.calls).toHaveLength(requestsBeforeClick);
@@ -345,7 +407,113 @@ describe("room HTTP and receive-only connection integration", () => {
     });
     expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
   });
-  it("joins with the latest lobby version and never exposes a private password in the URL", async () => {
+  it("does not count disconnected Ready participants toward the start condition", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    act(() =>
+      sockets.get("/ws/v1/rooms/r1")!.message(
+        event(
+          "room.snapshot",
+          8,
+          {
+            room: {
+              ...room,
+              minimum_ready: 2,
+              owner_id: "p1",
+              participants: [
+                { ...participant, team: "BLACK", ready: true, connected: true },
+                {
+                  ...participant,
+                  participant_id: "p2",
+                  display_name: "돌둘",
+                  joined_order: 2,
+                  team: "WHITE",
+                  ready: true,
+                  connected: false,
+                },
+              ],
+            },
+            game: null,
+          },
+          "r1",
+        ),
+      ),
+    );
+
+    expect(screen.getByText("Ready 1명 / 최소 2명")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "게임 시작" })).toBeDisabled();
+  });
+
+  it("warns a playing owner about room closure without a successor", async () => {
+    const playingRoom = {
+      ...room,
+      status: "PLAYING",
+      state_version: 4,
+      game_id: "g1",
+      participants: [{ ...participant, ready: true, team: "BLACK" }],
+    };
+    const playingGame = {
+      room_id: "r1",
+      game_id: "g1",
+      game_status: "ACTIVE",
+      state_version: 1,
+      turn_no: 1,
+      move_no: 0,
+      current_team: "BLACK",
+      turn_status: "VOTING",
+      deadline_ms: 10_000,
+      server_now_ms: 1_000,
+      valid_voter_count: 1,
+      can_vote: true,
+      participants: [
+        {
+          participant_id: "p1",
+          actor_type: "MEMBER",
+          connected: true,
+          role: "PLAYER",
+          team: "BLACK",
+        },
+      ],
+      vote_aggregation: [],
+      board: [],
+      last_move: null,
+      forbidden_for_black: [],
+      candidates: [],
+      my_vote: null,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      if (url === "/api/v1/rooms/r1/state")
+        return json({ room: playingRoom, game: playingGame, stream_version: 9 });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    act(() =>
+      sockets
+        .get("/ws/v1/rooms/r1")!
+        .message(event("room.snapshot", 9, { room: playingRoom, game: playingGame }, "r1")),
+    );
+
+    expect(
+      await screen.findByText(
+        /승계할 Member가 없으면 방이 종료되어 현재 판이 무효 처리될 수 있습니다/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "방 나가기" })).toHaveAttribute(
+      "aria-describedby",
+      "room-leave-impact",
+    );
+  });
+
+  it("joins privately without exposing the password in the URL", async () => {
     const listed = {
       ...room,
       visibility: "PRIVATE",

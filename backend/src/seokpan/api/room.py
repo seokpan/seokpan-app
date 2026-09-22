@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Header, Request, status
@@ -21,13 +21,27 @@ from seokpan.api.identity import (
 from seokpan.api.problems import ApiProblem, room_problem_responses
 from seokpan.identity.application import SessionActorType, SessionRecord
 from seokpan.room.application import RoomApplicationService, RoomMutationResult, RoomRuntimeSnapshot
-from seokpan.room.domain import RoomConfig, RoomRuleViolation, RoomStatus, RoomVisibility, Team
+from seokpan.room.domain import (
+    GameTermination,
+    RoomConfig,
+    RoomRuleViolation,
+    RoomStatus,
+    RoomVisibility,
+    Team,
+)
+
+UNKNOWN_PARTICIPANT_DISPLAY_NAME = "참가자"
+
+
+class ConfirmedDepartureFinalizer(Protocol):
+    async def finalize_departures(self, *, room_id: str, game_id: str) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
 class RoomApiServices:
     identity: IdentityApiServices
     rooms: RoomApplicationService
+    departures: ConfirmedDepartureFinalizer | None = None
 
 
 class CreateRoomRequest(BaseModel):
@@ -223,9 +237,21 @@ def room_router(services: RoomApiServices) -> APIRouter:
                 expected_state_version=payload.expected_state_version,
             ),
         )
-        if result.snapshot is None:
+        if (
+            services.departures is not None
+            and not result.replayed
+            and result.game_termination is not GameTermination.SYSTEM_INVALID
+            and result.snapshot is not None
+            and result.snapshot.game_id is not None
+        ):
+            await services.departures.finalize_departures(
+                room_id=room_id,
+                game_id=result.snapshot.game_id,
+            )
+        latest = await services.rooms.get(room_id)
+        if latest is None:
             return None
-        return await room_snapshot_response(services, result.snapshot, result.replayed)
+        return await room_snapshot_response(services, latest, result.replayed)
 
     @router.post(
         "/{room_id}/participants/{participant_id}/kick",
@@ -394,12 +420,12 @@ async def room_snapshot_response(
     for participant in snapshot.participants:
         identity = await services.rooms.resolve_participant_identity(participant.participant_id)
         if identity is None:
-            display_name = participant.participant_id
+            display_name = UNKNOWN_PARTICIPANT_DISPLAY_NAME
         elif identity.actor_type is SessionActorType.GUEST:
             display_name = guest_display_name(identity.actor_id)
         else:
             member = await services.identity.members.find_member(int(identity.actor_id))
-            display_name = participant.participant_id if member is None else member.nickname
+            display_name = UNKNOWN_PARTICIPANT_DISPLAY_NAME if member is None else member.nickname
         participants.append(
             RoomParticipantResponse(
                 participant_id=participant.participant_id,

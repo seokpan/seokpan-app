@@ -164,7 +164,11 @@ export function JoinRoomForm({
   cancel,
   enabled,
   trigger,
-}: EntryProps & { room: LobbySnapshot["rooms"][number] }) {
+  refreshList,
+}: EntryProps & {
+  room: LobbySnapshot["rooms"][number];
+  refreshList: () => void;
+}) {
   const auth = useSession();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -215,12 +219,16 @@ export function JoinRoomForm({
           };
           setPassword("");
           setSubmitted(true);
-          void auth.enterRoom(() =>
-            auth.api.request("/api/v1/rooms/{room_id}/joins", "post", {
-              path: { room_id: room.room_id },
-              body,
-            }),
-          );
+          void auth
+            .enterRoom(() =>
+              auth.api.request("/api/v1/rooms/{room_id}/joins", "post", {
+                path: { room_id: room.room_id },
+                body,
+              }),
+            )
+            .then((entered) => {
+              if (!entered) refreshList();
+            });
         }}
       >
         {room.password_required && (

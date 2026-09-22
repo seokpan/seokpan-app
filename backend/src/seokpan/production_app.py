@@ -38,6 +38,7 @@ async def _run_background_services(
     try:
         while True:
             await disconnects.run_once()
+            await turns.reconcile_game_invalidations()
             try:
                 await turns.run_once()
             except Exception as error:

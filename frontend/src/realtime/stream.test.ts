@@ -221,7 +221,10 @@ describe("receive-only snapshot stream", () => {
     await vi.advanceTimersByTimeAsync(60000);
     stream.resumeAfterSessionCheck();
     await vi.advanceTimersByTimeAsync(0);
-    expect(stream.getSnapshot().phase).toBe("blocked");
+    expect(stream.getSnapshot()).toMatchObject({
+      phase: "blocked",
+      blockReason: "connection-replaced",
+    });
     expect(factory).toHaveBeenCalledTimes(1);
   });
   it.each([2, 0, "1"])(
@@ -246,10 +249,18 @@ describe("receive-only snapshot stream", () => {
     expect(read).toHaveBeenCalledTimes(3);
     expect(stream.getSnapshot().phase).toBe("blocked");
   });
-  it("bounds consecutive reconnects and discards previous snapshots", async () => {
+  it("bounds consecutive reconnects while preserving the last confirmed snapshot", async () => {
     const { stream, socket, sockets, factory } = setup();
     socket.disconnect(1006);
-    expect(stream.getSnapshot().snapshot).toBeNull();
+    expect(stream.getSnapshot()).toMatchObject({
+      phase: "disconnected",
+      snapshot: { stream_version: 1, count: 1 },
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(stream.getSnapshot()).toMatchObject({
+      phase: "connecting",
+      snapshot: { stream_version: 1, count: 1 },
+    });
     for (let index = 0; index < 5; index++) {
       await vi.advanceTimersByTimeAsync(8000);
       sockets.at(-1)!.disconnect(1006);

@@ -6,7 +6,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from seokpan.game.application.history import CompletedGameReplay, replay_completed_game
@@ -35,7 +35,7 @@ from seokpan.room.application import (
     RoomRuntimeSnapshot,
 )
 from seokpan.room.domain import ParticipantRole as RoomParticipantRole
-from seokpan.room.domain import RoomRuleViolation, Team
+from seokpan.room.domain import RoomRuleViolation, RoomStatus, Team
 from seokpan.vote.application import (
     CastRuntimeVote,
     InitializeVoteRuntime,
@@ -45,6 +45,9 @@ from seokpan.vote.application import (
 )
 from seokpan.vote.domain import ParticipantRole as VoteParticipantRole
 from seokpan.vote.domain import Voter, VoteRuleViolation
+
+if TYPE_CHECKING:
+    from seokpan.game.application.captured_startup import CapturedGameStartup
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,7 +85,9 @@ class GameApplicationService:
         votes: VoteRuntimePort,
         clock: MillisecondClock,
         events: RealtimeEventPort | None = None,
+        captured_startup: CapturedGameStartup | None = None,
     ) -> None:
+        self._captured_startup = captured_startup
         self._rooms = rooms
         self._games = games
         self._votes = votes
@@ -97,18 +102,40 @@ class GameApplicationService:
         request_id: str,
         expected_state_version: int,
     ) -> GameApplicationSnapshot:
+        if self._captured_startup is not None:
+            outcome = await self._captured_startup.start_game(
+                session=session,
+                room_id=room_id,
+                request_id=request_id,
+                expected_state_version=expected_state_version,
+            )
+            if outcome.initialized_now:
+                await self._game_started(outcome.snapshot, request_id)
+            return outcome.snapshot
         participation = await self._require_participation(session)
         if participation.room_id != room_id:
             raise RoomRuleViolation("SESSION_NOT_IN_ROOM")
         game_id = _stable_uuid4(f"{participation.room_id}\nstart\n{request_id}")
 
-        room_result = await self._rooms.start_game(
-            session=session,
-            request_id=request_id,
-            game_id=game_id,
-            expected_state_version=expected_state_version,
-            notify_realtime=False,
-        )
+        try:
+            room_result = await self._rooms.start_game(
+                session=session,
+                request_id=request_id,
+                game_id=game_id,
+                expected_state_version=expected_state_version,
+                notify_realtime=False,
+            )
+        except RoomRuleViolation as error:
+            if error.code != "ROOM_NOT_WAITING":
+                raise
+            recovered = await self._recover_partial_start(
+                participation=participation,
+                request_id=request_id,
+                expected_state_version=expected_state_version,
+            )
+            if recovered is None:
+                raise
+            return recovered
         room = room_result.snapshot
         roster = room_result.start_roster
         if room is None or roster is None:
@@ -173,6 +200,152 @@ class GameApplicationService:
             replayed,
         )
         if not completed_before:
+            await self._game_started(snapshot, request_id)
+        return snapshot
+
+    async def _recover_partial_start(
+        self,
+        *,
+        participation: RoomParticipation,
+        request_id: str,
+        expected_state_version: int,
+    ) -> GameApplicationSnapshot | None:
+        room = await self._rooms.get(participation.room_id)
+        if (
+            room is None
+            or room.status is not RoomStatus.PLAYING
+            or room.game_id is None
+            or room.owner_id != participation.participant_id
+        ):
+            return None
+        if room.state_version != expected_state_version:
+            raise RoomRuleViolation("STATE_VERSION_CONFLICT")
+
+        history = await self._games.load_game(room.game_id)
+        runtime = await self._votes.get(room.room_id)
+        if runtime is not None:
+            if runtime.game_id != room.game_id or history is None:
+                raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+            return None
+
+        if history is None:
+            ready_players = tuple(
+                item
+                for item in room.participants
+                if item.ready and item.team in {Team.BLACK, Team.WHITE}
+            )
+            if (
+                len(ready_players) < room.config.minimum_ready
+                or not any(item.team is Team.BLACK for item in ready_players)
+                or not any(item.team is Team.WHITE for item in ready_players)
+            ):
+                raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+            intended_participants = tuple(
+                [
+                    await self._persistence_participant(item.participant_id, item.team)
+                    for item in ready_players
+                ]
+            )
+            command = StartGameCommand(
+                game_id=room.game_id,
+                room_id=room.room_id,
+                voting_time_seconds=room.config.vote_seconds,
+                started_at=datetime.fromtimestamp(self._clock.now_ms / 1000, UTC),
+                participants=intended_participants,
+            )
+            try:
+                await self._games.start_game(command)
+            except PersistenceRuleViolation as error:
+                if error.code != "GAME_START_CONFLICT":
+                    raise
+            history = await self._games.load_game(room.game_id)
+            if history is None:
+                raise PersistenceRuleViolation("GAME_NOT_FOUND")
+            intended_roster = {
+                (item.participant_id, item.team, item.member_id, item.guest_label)
+                for item in intended_participants
+            }
+            persisted_roster = {
+                (item.participant_id, item.team, item.member_id, item.guest_label)
+                for item in history.start.participants
+            }
+            if (
+                history.start.room_id != room.room_id
+                or history.start.voting_time_seconds != room.config.vote_seconds
+                or persisted_roster != intended_roster
+            ):
+                raise PersistenceRuleViolation("GAME_START_CONFLICT")
+        if (
+            history.start.game_id != room.game_id
+            or history.start.room_id != room.room_id
+            or history.start.voting_time_seconds != room.config.vote_seconds
+        ):
+            raise PersistenceRuleViolation("GAME_START_CONFLICT")
+        # Missing Redis state is not proof of an unfinished startup. Never reset
+        # a played or finalized Game to an empty first turn through this path.
+        if history.moves or await self._games.load_result(room.game_id) is not None:
+            raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+
+        persisted_players = tuple(history.participants)
+        if not persisted_players:
+            raise PersistenceRuleViolation("PARTICIPANTS_REQUIRED")
+        latest_room = await self._rooms.get(room.room_id)
+        if (
+            latest_room is None
+            or latest_room.status is not RoomStatus.PLAYING
+            or latest_room.game_id is None
+            or latest_room.game_id != room.game_id
+        ):
+            raise RoomRuleViolation("GAME_NOT_IN_CURRENT_ROOM")
+        if (
+            latest_room.state_version != expected_state_version
+            or latest_room.owner_id != participation.participant_id
+        ):
+            raise RoomRuleViolation("STATE_VERSION_CONFLICT")
+        present_ids = {item.participant_id for item in latest_room.participants}
+        if any(item.participant_id not in present_ids for item in persisted_players):
+            raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED")
+        # This reread detects observed changes; Redis initialize remains the
+        # atomic Room/Game guard. It is not a cross-provider transaction.
+        game_id = latest_room.game_id
+        room = latest_room
+        initialize = InitializeVoteRuntime(
+            room_id=room.room_id,
+            request_id=request_id,
+            game_id=game_id,
+            participants=tuple(
+                Voter(
+                    participant_id=item.participant_id,
+                    team=item.team,
+                    role=VoteParticipantRole.PLAYER,
+                    connected=_connected(room, item.participant_id),
+                )
+                for item in persisted_players
+            ),
+            deadline_ms=self._clock.now_ms + room.config.vote_seconds * 1000,
+            expected_state_version=1,
+            previous_game_id=room.last_game_id,
+            previous_turn_no=room.last_game_turn_no,
+        )
+        initialized_now = False
+        try:
+            vote_result = await self._votes.initialize(initialize)
+            runtime = vote_result.snapshot
+            initialized_now = not vote_result.replayed
+        except VoteRuleViolation as error:
+            if error.code != "GAME_RUNTIME_ALREADY_EXISTS":
+                raise
+            runtime = await self._votes.get(room.room_id)
+            if runtime is None or runtime.game_id != room.game_id:
+                raise RoomRuleViolation("GAME_START_RECOVERY_REQUIRED") from error
+        snapshot = GameApplicationSnapshot(
+            room,
+            runtime,
+            participation.participant_id,
+            self._clock.now_ms,
+            replayed=True,
+        )
+        if initialized_now:
             await self._game_started(snapshot, request_id)
         return snapshot
 

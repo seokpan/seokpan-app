@@ -29,6 +29,41 @@ const room = {
   status: "WAITING",
   state_version: 4,
 };
+const inRoomMember = {
+  ...member,
+  room_id: "room-one",
+  participant_id: "participant-one",
+};
+const roomState = {
+  room: {
+    room_id: "room-one",
+    owner_id: "participant-one",
+    name: "한 수 같이 둬요",
+    visibility: "PUBLIC",
+    password_required: false,
+    max_participants: 4,
+    minimum_ready: 2,
+    vote_seconds: 15,
+    status: "WAITING",
+    state_version: 4,
+    game_id: null,
+    last_game_id: null,
+    replayed: false,
+    participants: [
+      {
+        participant_id: "participant-one",
+        actor_type: "MEMBER",
+        display_name: "돌하나",
+        joined_order: 1,
+        connected: true,
+        ready: false,
+        team: "BLACK",
+      },
+    ],
+  },
+  game: null,
+  stream_version: 4,
+};
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -81,6 +116,91 @@ function fill(login = "member01", password = "pass word12") {
 }
 
 describe("authentication and lobby screens", () => {
+  it("separates primary navigation, service utility and account controls", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(member))
+      .mockResolvedValueOnce(json({ rooms: [], stream_version: 1 }));
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(within(navigation).getByRole("link", { name: "로비" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "랭킹" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    expect(screen.getByRole("group", { name: "서비스 상태와 도움말" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "계정" })).toContainElement(
+      screen.getByRole("button", { name: "사용자 메뉴" }),
+    );
+  });
+
+  it("keeps Guest upgrade action in the account group instead of primary navigation", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(guest))
+      .mockResolvedValueOnce(json({ rooms: [], stream_version: 1 }));
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(
+      within(navigation).queryByRole("link", { name: "Member 로그인" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "계정" })).getByRole("link", {
+        name: "Member 로그인",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the logical room destination as 게임방 while participating", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf") return json(inRoomMember);
+      if (url === "/api/v1/rooms/room-one/state") return json(roomState);
+      throw new Error(`Unexpected request ${url}`);
+    });
+    mount(fetcher, "/lobby");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(within(navigation).getByRole("link", { name: "게임방" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).queryByRole("link", { name: "로비" })).not.toBeInTheDocument();
+  });
+
+  it("does not duplicate the Member login action on the login screen", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(guest));
+    mount(fetcher, "/login");
+
+    await screen.findByRole("heading", { name: "Member 로그인" });
+    expect(
+      within(screen.getByRole("group", { name: "계정" })).queryByRole("link", {
+        name: "Member 로그인",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "주요 메뉴" })).queryByRole("link", {
+        current: "page",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks rankings as the current primary destination", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(member));
+    mount(fetcher, "/rankings");
+
+    const navigation = await screen.findByRole("navigation", { name: "주요 메뉴" });
+    expect(await within(navigation).findByRole("link", { name: "랭킹" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "로비" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
   it("does not carry logout feedback into the registration dialog", async () => {
     let loggedOut = false;
     const fetcher = vi.fn<typeof fetch>(async (url, options) => {
@@ -93,7 +213,7 @@ describe("authentication and lobby screens", () => {
       throw new Error("Unexpected request");
     });
     mount(fetcher, "/login");
-    fireEvent.click(await screen.findByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(await screen.findByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByText("로그아웃 요청을 처리했습니다.");
     fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
@@ -191,7 +311,7 @@ describe("authentication and lobby screens", () => {
     await act(async () => resolve(json(guest, 201)));
     await screen.findByText("아직 열린 방이 없습니다.");
     expect(screen.getByText("Guest-0123 · Guest")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(screen.getByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByRole("button", { name: "로그인" });
     expect(fetcher.mock.calls.filter((call) => call[0] === "/api/v1/sessions/guest")).toHaveLength(
@@ -307,7 +427,7 @@ describe("authentication and lobby screens", () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(anonymous());
     mount(fetcher);
-    fireEvent.click(await screen.findByRole("button", { name: "내 전적 메뉴" }));
+    fireEvent.click(await screen.findByRole("button", { name: "사용자 메뉴" }));
     fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
     await screen.findByRole("button", { name: "로그인" });
     await act(async () => resolve(json({ rooms: [room], stream_version: 2 })));
@@ -339,7 +459,7 @@ describe("authentication and lobby screens", () => {
     expect(fetcher.mock.calls.every((call) => call[0] === "/api/v1/session/csrf")).toBe(true);
   });
 
-  it("offers manual refresh after malformed list data instead of showing fake empty success", async () => {
+  it("offers manual refresh after malformed list data", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(json(member))

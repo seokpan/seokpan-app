@@ -98,18 +98,29 @@ def test_playing_kick_is_rejected_without_changing_roster_or_ready() -> None:
     assert room.game_id == "game-1"
 
 
-def test_previous_owner_cannot_kick_after_handoff() -> None:
+def test_owner_handoff_occurs_on_departure_not_disconnect() -> None:
     room = create_room()
     join_ready_player(room, "successor", Team.BLACK)
     join_ready_player(room, "target", Team.WHITE)
+
     room.disconnect(
         participant_id="member-owner", reason=DisconnectReason.PARTICIPANT_CONNECTION_LOST
     )
+
+    assert room.owner_id == "member-owner"
+    assert room.participant("member-owner").connected is False
+    assert_rejected_without_mutation(
+        room, "OWNER_REQUIRED", lambda: room.kick(actor_id="successor", target_id="target")
+    )
+
+    departure = room.leave(participant_id="member-owner")
+
+    assert departure.previous_owner_id == "member-owner"
+    assert departure.new_owner_id == "successor"
+    assert room.owner_id == "successor"
     assert_rejected_without_mutation(
         room, "OWNER_REQUIRED", lambda: room.kick(actor_id="member-owner", target_id="target")
     )
-    room.kick(actor_id="successor", target_id="member-owner")
-    assert room.owner_id == "successor"
 
 
 def test_closed_room_cannot_be_reopened_by_kick() -> None:

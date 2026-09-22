@@ -5,6 +5,7 @@ import pytest
 from seokpan.room.application import (
     ROOM_CLOSED_TOMBSTONE_TTL_MS,
     ROOM_DISCONNECT_LEASE_MS,
+    ROOM_REQUEST_DEDUPE_TTL_MS,
     ChangeRoomIdentity,
     ChangeRoomTeam,
     ChangeRoomVoteSeconds,
@@ -226,7 +227,7 @@ async def test_new_generation_supersedes_old_and_stale_disconnect_is_ignored(
 
 
 @pytest.mark.asyncio
-async def test_owner_disconnect_immediately_promotes_member_and_clears_ready(
+async def test_owner_disconnect_lease_preserves_owner_until_expiry(
     room_harness: RoomRuntimeHarness,
 ) -> None:
     await room_harness.adapter.create(create_room())
@@ -269,18 +270,61 @@ async def test_owner_disconnect_immediately_promotes_member_and_clears_ready(
     )
 
     assert result.snapshot is not None
-    assert result.snapshot.owner_id == "member-2"
-    assert all(not participant.ready for participant in result.snapshot.participants)
+    assert result.snapshot.owner_id == "member-1"
+    assert result.snapshot.participants[0].connected is False
+    assert all(participant.ready for participant in result.snapshot.participants)
     assert result.disconnect_expires_at_ms == 1_000 + ROOM_DISCONNECT_LEASE_MS
 
-    reconnected = await room_harness.adapter.connect(
-        ConnectRoomParticipant(
-            "room-1", "reconnect-1", "member-1", digest("d"), expected_version + 1
+    room_harness.clock.advance(ROOM_DISCONNECT_LEASE_MS)
+    expired = await room_harness.adapter.expire_disconnect(
+        ExpireRoomDisconnect(
+            "room-1",
+            "expire-owner",
+            "member-1",
+            1,
+            expected_version + 1,
         )
     )
-    assert reconnected.snapshot is not None
-    assert reconnected.snapshot.owner_id == "member-2"
-    assert reconnected.snapshot.state_version == expected_version + 2
+    assert expired.snapshot is not None
+    assert expired.snapshot.owner_id == "member-2"
+    assert all(not participant.ready for participant in expired.snapshot.participants)
+
+
+@pytest.mark.asyncio
+async def test_disconnected_ready_participant_does_not_count_for_game_start(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room(minimum_ready=2))
+    await room_harness.adapter.join(
+        join_member("member-2", request_id="join-start-disconnected", session_character="b")
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-owner", "member-1", Team.BLACK, 2)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-owner", "member-1", True, 3))
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "team-member", "member-2", Team.WHITE, 4)
+    )
+    await room_harness.adapter.set_ready(
+        SetRoomReady("room-1", "ready-member", "member-2", True, 5)
+    )
+    disconnected = await room_harness.adapter.disconnect(
+        DisconnectRoomParticipant("room-1", "disconnect-member", "member-2", 1, 6)
+    )
+    assert disconnected.snapshot is not None
+    assert disconnected.snapshot.participants[1].ready is True
+    assert disconnected.snapshot.participants[1].connected is False
+
+    with pytest.raises(RoomRuleViolation, match="MINIMUM_READY_NOT_MET"):
+        await room_harness.adapter.start_game(
+            StartRoomGame(
+                "room-1",
+                "start-with-disconnected",
+                "member-1",
+                "game-1",
+                disconnected.snapshot.state_version,
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -350,6 +394,49 @@ async def test_last_member_departure_closes_room_with_tombstone_without_game_los
 
 
 @pytest.mark.asyncio
+async def test_playing_room_closure_records_retryable_game_invalidation(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    await room_harness.adapter.create(create_room(minimum_ready=2))
+    await room_harness.adapter.join(
+        join_guest("guest-1", request_id="join-1", expected_state_version=1)
+    )
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "black", "member-1", Team.BLACK, 2)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-black", "member-1", True, 3))
+    await room_harness.adapter.change_team(
+        ChangeRoomTeam("room-1", "white", "guest-1", Team.WHITE, 4)
+    )
+    await room_harness.adapter.set_ready(SetRoomReady("room-1", "ready-white", "guest-1", True, 5))
+    await room_harness.adapter.start_game(StartRoomGame("room-1", "start", "member-1", "game-1", 6))
+
+    closed = await room_harness.adapter.leave(
+        LeaveRoomRuntime("room-1", "leave-owner", "member-1", 7)
+    )
+
+    assert closed.room_closed is True
+    assert closed.game_termination is GameTermination.SYSTEM_INVALID
+    assert closed.terminated_game_id == "game-1"
+    assert closed.operation_at_ms == 1_000
+    pending = await room_harness.adapter.pending_game_invalidations(limit=10)
+    assert [(item.room_id, item.game_id, item.closed_at_ms) for item in pending] == [
+        ("room-1", "game-1", 1_000)
+    ]
+
+    # The correctness marker outlives the ordinary 10-minute anti-reuse tombstone.
+    room_harness.clock.advance(ROOM_CLOSED_TOMBSTONE_TTL_MS)
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == pending
+
+    await room_harness.adapter.complete_game_invalidation("room-1", "game-1")
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == ()
+
+    # The closure marker still follows the request-dedupe horizon for bounded retention.
+    room_harness.clock.advance(ROOM_REQUEST_DEDUPE_TTL_MS)
+    assert await room_harness.adapter.pending_game_invalidations(limit=10) == ()
+
+
+@pytest.mark.asyncio
 async def test_request_id_replay_returns_original_result_without_second_mutation(
     room_harness: RoomRuntimeHarness,
 ) -> None:
@@ -386,18 +473,44 @@ async def test_request_id_reuse_with_different_command_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_stale_expected_state_version_is_rejected_without_mutation(
+async def test_join_uses_current_server_state_when_lobby_version_is_stale(
     room_harness: RoomRuntimeHarness,
 ) -> None:
     created = await room_harness.adapter.create(create_room())
+    assert created.snapshot is not None
+
+    joined = await room_harness.adapter.join(
+        join_member(
+            "member-2",
+            request_id="join-stale-observation",
+            session_character="b",
+            expected_state_version=created.snapshot.state_version + 10,
+        )
+    )
+
+    assert joined.snapshot is not None
+    assert tuple(item.participant_id for item in joined.snapshot.participants) == (
+        "member-1",
+        "member-2",
+    )
+    assert joined.snapshot.state_version == created.snapshot.state_version + 1
+
+
+@pytest.mark.asyncio
+async def test_stale_version_still_rejects_versioned_room_mutations(
+    room_harness: RoomRuntimeHarness,
+) -> None:
+    created = await room_harness.adapter.create(create_room())
+    assert created.snapshot is not None
 
     with pytest.raises(RoomRuleViolation, match="STATE_VERSION_CONFLICT"):
-        await room_harness.adapter.join(
-            join_member(
-                "member-2",
-                request_id="join-stale",
-                session_character="b",
-                expected_state_version=2,
+        await room_harness.adapter.change_team(
+            ChangeRoomTeam(
+                "room-1",
+                "team-stale",
+                "member-1",
+                Team.BLACK,
+                created.snapshot.state_version + 10,
             )
         )
 

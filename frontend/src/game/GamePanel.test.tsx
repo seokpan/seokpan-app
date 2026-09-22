@@ -75,6 +75,30 @@ async function mount(
   return { ...app, socket, factory, fetcher };
 }
 describe("game screen flow", () => {
+  it("places team and Ready controls before the inactive waiting board", async () => {
+    await mount(() => ({ room: waiting, game: null, stream_version: 8 }));
+    const blackTeam = screen.getByRole("heading", { name: "● 흑팀" });
+    const readyPanel = screen.getByRole("region", { name: "게임 시작 준비" });
+    const board = screen.getByRole("grid", { name: "15×15 오목판" });
+    expect(screen.getByRole("button", { name: "흑팀 선택" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Ready 취소" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const conditions = within(screen.getByRole("list", { name: "게임 시작 조건" }));
+    expect(conditions.getByText("최소 Ready").closest("li")).toHaveAttribute("data-met", "true");
+    expect(conditions.getByText("흑팀 Ready").closest("li")).toHaveAttribute("data-met", "true");
+    expect(conditions.getByText("백팀 Ready").closest("li")).toHaveAttribute("data-met", "true");
+    expect(
+      blackTeam.compareDocumentPosition(readyPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      readyPanel.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
   it("keeps pointer voting from taking focus and marks my vote distinctly", () => {
     const vote = vi.fn();
     render(
@@ -90,7 +114,7 @@ describe("game screen flow", () => {
     expect(fireEvent.mouseDown(cell, { detail: 1 })).toBe(false);
     fireEvent.click(cell);
     expect(vote).toHaveBeenCalledWith("I8");
-    expect(within(cell).getByText("내")).toBeInTheDocument();
+    expect(within(cell).getByText("나")).toBeInTheDocument();
   });
   it("keeps the board read-only through delayed result, failure and retry", async () => {
     let room = { ...waiting, status: "PLAYING", game_id: "g1" as string | null };
@@ -137,46 +161,31 @@ describe("game screen flow", () => {
     expect(fetcher.mock.calls.filter((c) => String(c[0]).endsWith("/result"))).toHaveLength(2);
     expect(socket.close).not.toHaveBeenCalled();
   });
-  it("ignores a late result after another game starts and resets board focus", async () => {
-    let room = { ...waiting, last_game_id: "g1" as string | null };
-    let game: ReturnType<typeof gameFixture> | null = null,
-      version = 8;
-    let finish!: (r: Response) => void;
-    const { socket } = await mount(
-      () => ({ room, game, stream_version: version }),
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
-    await screen.findByText("저장된 결과를 불러오고 있습니다.");
-    const previousBoard = screen.getByRole("grid");
-    game = { ...gameFixture(), game_id: "g2" };
-    room = { ...room, status: "PLAYING", game_id: "g2" };
-    version++;
-    act(() => socket.message(event("game.started", version, {}, "r1")));
-    await screen.findByRole("heading", { name: "● 흑팀 차례" });
-    expect(screen.getByRole("grid")).toBe(previousBoard);
-    await act(async () => finish(json(resultFixture())));
-    expect(screen.queryByText("내 Rating: 1000 → 1016 (+16)")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "흑팀 승리" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "A1 빈 자리" })).toBeInTheDocument();
-    expect(socket.close).not.toHaveBeenCalled();
+  it("does not expose a result that existed before entering the room", async () => {
+    const room = { ...waiting, last_game_id: "g1" as string | null };
+    const { fetcher } = await mount(() => ({ room, game: null, stream_version: 8 }));
+    expect(screen.queryByRole("button", { name: "지난 판 결과 보기" })).not.toBeInTheDocument();
+    expect(screen.queryByText("저장된 결과를 불러오고 있습니다.")).not.toBeInTheDocument();
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
-  it("shows a static analysis placeholder without predictions or analysis requests", async () => {
+  it("shows a static analysis preview without fabricating results or requests", async () => {
     const { fetcher } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
       stream_version: 8,
     }));
     const panel = within(screen.getByRole("complementary", { name: "AI 판세 분석" }));
-    expect(panel.getByText("추후 제공 예정")).toBeInTheDocument();
-    expect(panel.queryByText(/%|분석 중|분석 완료/)).not.toBeInTheDocument();
+    expect(panel.getByText("AI 판세 분석")).toBeInTheDocument();
+    expect(panel.getByText("주요 후보")).toBeInTheDocument();
+    expect(panel.getByText("판세 변화")).toBeInTheDocument();
+    expect(panel.getByLabelText("주요 후보 좌표")).toHaveTextContent("—");
+    expect(panel.queryByText(/MVP|2차|예정|미지원|분석 중|분석 완료/)).not.toBeInTheDocument();
+    expect(panel.queryByText(/\d+%/)).not.toBeInTheDocument();
     expect(panel.queryByRole("button")).not.toBeInTheDocument();
     expect(panel.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(fetcher.mock.calls.some(([url]) => /analysis|prediction/.test(String(url)))).toBe(false);
   });
-  it("explains reconnect grace separately from immediate owner handoff without changing state", async () => {
+  it("explains explicit leave and 10-second reconnect handoff", async () => {
     const { fetcher, socket } = await mount(() => ({
       room: { ...waiting, status: "PLAYING", game_id: "g1" },
       game: gameFixture(),
@@ -185,10 +194,12 @@ describe("game screen flow", () => {
     const before = fetcher.mock.calls.length;
     fireEvent.click(screen.getByText("게임 방법", { exact: true }));
     fireEvent.click(screen.getByText("자세한 규칙·재접속 안내"));
-    expect(screen.getByText(/30초 안에 같은 사용자로/)).toBeInTheDocument();
+    expect(screen.getByText(/10초 안에 같은 사용자로/)).toBeInTheDocument();
     expect(screen.getByText(/이전 표는 자동 복원되지 않습니다/)).toBeInTheDocument();
-    expect(screen.getByText(/즉시 방장을 이어받고 모든 Ready가 해제/)).toBeInTheDocument();
-    expect(screen.getByText(/방장 권한은 자동으로 돌아오지 않습니다/)).toBeInTheDocument();
+    expect(screen.getByText(/직접 방 나가기를 선택하면 이탈이 즉시 확정/)).toBeInTheDocument();
+    expect(screen.getByText(/10초 동안 기존 방장과 Ready 상태를 유지/)).toBeInTheDocument();
+    expect(screen.getByText(/10초가 지나 이탈이 확정되면/)).toBeInTheDocument();
+    expect(screen.getByText(/방장 권한이 자동으로 돌아가지는 않습니다/)).toBeInTheDocument();
     expect(
       screen.getByText(/서버 장애는 개인의 무투표나 이탈로 처리하지 않습니다/),
     ).toBeInTheDocument();
@@ -298,7 +309,7 @@ describe("game screen flow", () => {
     expect(screen.getByRole("grid")).toBe(board);
     expect(document.activeElement).toBe(document.body);
   });
-  it("starts, votes, recovers Pass/Move, reads a result, and starts the next game without closing the socket", async () => {
+  it("runs two games through vote recovery without closing the socket", async () => {
     let room = structuredClone(waiting),
       game: ReturnType<typeof gameFixture> | null = null,
       version = 8,
@@ -470,23 +481,15 @@ describe("game screen flow", () => {
       expect(fetcher.mock.calls.filter((c) => String(c[0]).endsWith("/vote"))).toHaveLength(1),
     );
   });
-  it("discards a late previous-game result when the next game starts", async () => {
-    let resolve!: (value: Response) => void;
+  it("keeps a pre-existing last_game_id hidden when the next game starts", async () => {
     let state: unknown = {
       room: { ...waiting, last_game_id: "g1" },
       game: null,
       stream_version: 8,
     };
-    const { socket, fetcher } = await mount(
-      () => state,
-      () =>
-        new Promise((done) => {
-          resolve = done;
-        }),
-    );
-    await waitFor(() =>
-      expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(true),
-    );
+    const { socket, fetcher } = await mount(() => state);
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
+    expect(screen.queryByRole("button", { name: "지난 판 결과 보기" })).not.toBeInTheDocument();
     state = {
       room: { ...waiting, status: "PLAYING", game_id: "g2", last_game_id: "g1" },
       game: { ...gameFixture(), game_id: "g2" },
@@ -494,9 +497,7 @@ describe("game screen flow", () => {
     };
     act(() => socket.message(event("game.started", 9, {}, "r1")));
     await screen.findByRole("heading", { name: "● 흑팀 차례" });
-    await act(async () => resolve(json(resultFixture())));
-    expect(screen.queryByText("내 Rating: 1000 → 1016 (+16)")).not.toBeInTheDocument();
-    expect(socket.close).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.some((c) => String(c[0]).endsWith("/result"))).toBe(false);
   });
   it("does not replay a lost vote response and refreshes the confirmed vote", async () => {
     let game = gameFixture();

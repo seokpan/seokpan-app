@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSession } from "../session/context";
 import { Board } from "./Board";
@@ -32,16 +32,26 @@ export function GamePanel({
 }) {
   const auth = useSession();
   const waiting = waitingControls !== undefined;
+  const boardRegion = useRef<HTMLDivElement>(null);
+  const turnStatus = useRef<HTMLElement>(null);
+  const [mobilePanel, setMobilePanel] = useState<"primary" | "chat" | "analysis">("primary");
   const [cachedGame, setCachedGame] = useState(game);
   if (game && game !== cachedGame) setCachedGame(game);
   const lastGame = cachedGame?.game_id === gameId ? cachedGame : null;
   const finished = !waiting && game === null;
-  const { layoutRef, retainedHeight } = useRetainedLayout();
+  useEffect(() => {
+    setMobilePanel("primary");
+  }, [waiting, game?.game_id, finished]);
   const { result, error, retry } = useGameResult(gameId, roomId, finished);
   const [now, setNow] = useState(() => performance.now());
   const requested = useRef("");
   const left = game ? remainingMs(game, now) : 0,
     turnKey = game ? `${game.game_id}:${game.turn_no}` : "";
+  const timeLabel = game ? votingTimeLabel(game, left) : null;
+  const timeProgress =
+    game?.turn_status === "VOTING"
+      ? Math.min(100, Math.max(0, (100 * left) / (voteSeconds * 1000)))
+      : 0;
   useEffect(() => {
     if (!game) return;
     const timer = setInterval(() => setNow(performance.now()), 200);
@@ -82,10 +92,17 @@ export function GamePanel({
   }
   return (
     <section
-      className={styles.stage}
+      className={`${styles.stage} ${
+        waiting ? styles.waitingStage : finished ? styles.resultStage : styles.playingStage
+      }`}
       aria-label={waiting ? "게임 준비" : finished ? "게임 결과" : "진행 중인 게임"}
     >
-      <div className={styles.gameHeader}>
+      <div
+        className={`${styles.gameHeader} ${finished && result ? styles.resultHeader : ""}`}
+        role={finished && result ? "status" : undefined}
+        aria-label={finished && result ? "게임 결과 요약" : undefined}
+        data-result-tone={finished && result ? resultTone(result.end_reason) : undefined}
+      >
         <h2>
           {waiting
             ? "게임 준비"
@@ -111,12 +128,38 @@ export function GamePanel({
                 : "관전 중 · 이번 판에는 투표할 수 없습니다."}
         </p>
       </div>
-      <div
-        className={styles.layout}
-        ref={layoutRef}
-        style={{ minHeight: retainedHeight || undefined }}
-      >
-        <div>
+      {game && (
+        <section ref={turnStatus} className={styles.turnStatus} aria-label="현재 투표 상태">
+          <p className={styles.turnCounter}>
+            투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
+          </p>
+          <p className={styles.clock} aria-label="남은 투표 시간">
+            {timeLabel ?? "마감 처리 중"}
+          </p>
+          <progress
+            className={styles.timeBar}
+            max={100}
+            value={timeProgress}
+            aria-label="남은 투표 시간 비율"
+          />
+          <p className={styles.voterSummary}>
+            투표 가능 {game.valid_voter_count}명 · 제출 {total}개
+          </p>
+        </section>
+      )}
+      <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
+        {waiting && (
+          <div
+            className={styles.waitingControls}
+            data-mobile-active={mobilePanel === "primary" ? "true" : "false"}
+          >
+            {waitingControls}
+          </div>
+        )}
+        <div
+          ref={boardRegion}
+          className={`${styles.boardRegion} ${waiting ? styles.waitingBoard : ""}`}
+        >
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
             winning={result?.winning_line ?? []}
@@ -140,37 +183,22 @@ export function GamePanel({
                   : lastGame
                     ? "마지막으로 확인한 보드입니다. 최종 결과를 확인하고 있습니다."
                     : "아직 최종 보드를 받지 못했습니다."
-                : "숫자는 후보의 득표율 · 청록 테두리는 내 표 · 진한 표시는 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
+                : "숫자는 후보의 득표율 · 초록색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
-        <div className={styles.infoStack}>
-          {waiting ? (
-            waitingControls
-          ) : (
+        {waiting && (
+          <div
+            className={styles.waitingChat}
+            data-mobile-active={mobilePanel === "chat" ? "true" : "false"}
+          >
+            {chat}
+          </div>
+        )}
+        {!waiting && (
+          <div className={styles.infoStack} data-mobile-panel={mobilePanel}>
             <>
               {game ? (
                 <aside className={styles.infoPanel} aria-label="투표 정보">
-                  <p>
-                    투표 기회 {game.turn_no}번째 · 공식 착수 {game.move_no}수
-                  </p>
-                  <p className={styles.clock} aria-label="남은 투표 시간">
-                    {game.turn_status === "VOTING" && left > 0
-                      ? `약 ${Math.ceil(left / 1000)}초`
-                      : "서버 마감 처리 대기"}
-                  </p>
-                  <progress
-                    className={styles.timeBar}
-                    max={100}
-                    value={
-                      game.turn_status === "VOTING"
-                        ? Math.min(100, Math.max(0, (100 * left) / (voteSeconds * 1000)))
-                        : 0
-                    }
-                    aria-label="남은 투표 시간 비율"
-                  />
-                  <p>
-                    현재 투표 가능 인원 {game.valid_voter_count}명 · 제출된 유효표 {total}개
-                  </p>
                   <details className={styles.hint}>
                     <summary>득표율 계산 기준</summary>
                     <p className={screens.muted}>
@@ -179,34 +207,36 @@ export function GamePanel({
                     </p>
                   </details>
                   <h3>실시간 투표 현황</h3>
-                  {total === 0 ? (
-                    <p className={styles.emptyVotes}>아직 제출된 표가 없습니다.</p>
-                  ) : (
-                    <ol className={styles.tally} aria-label="좌표별 득표 순위">
-                      {rows.map((t) => (
-                        <li
-                          key={t.coordinate}
-                          className={t.coordinate === game.my_vote ? styles.myCandidate : ""}
-                        >
-                          <div className={styles.tallyHeading}>
-                            <span>
-                              {t.rank}위 · <strong>{t.coordinate}</strong>
-                              {t.coordinate === game.my_vote ? " · 내 표" : ""}
-                            </span>
-                            <span>
-                              {t.count}표 · {t.label}
-                            </span>
-                          </div>
-                          <meter
-                            min={0}
-                            max={100}
-                            value={t.percent}
-                            aria-label={`${t.coordinate} 득표율`}
-                          />
-                        </li>
-                      ))}
-                    </ol>
-                  )}
+                  <div className={styles.tallyFrame}>
+                    {total === 0 ? (
+                      <p className={styles.emptyVotes}>아직 제출된 표가 없습니다.</p>
+                    ) : (
+                      <ol className={styles.tally} aria-label="좌표별 득표 순위">
+                        {rows.map((t) => (
+                          <li
+                            key={t.coordinate}
+                            className={t.coordinate === game.my_vote ? styles.myCandidate : ""}
+                          >
+                            <div className={styles.tallyHeading}>
+                              <span>
+                                {t.rank}위 · <strong>{t.coordinate}</strong>
+                                {t.coordinate === game.my_vote ? " · 내 표" : ""}
+                              </span>
+                              <span>
+                                {t.count}표 · {t.label}
+                              </span>
+                            </div>
+                            <meter
+                              min={0}
+                              max={100}
+                              value={t.percent}
+                              aria-label={`${t.coordinate} 득표율`}
+                            />
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
                   {rows.filter((t) => t.rank === 1).length > 1 && (
                     <p className={screens.muted}>
                       공동 1위입니다. 마감 때까지 동률이면 서버가 후보 중 무작위로 선택합니다.
@@ -214,7 +244,9 @@ export function GamePanel({
                   )}
                   {isPlayer ? (
                     <>
-                      <p>내 투표: {game.my_vote ?? "없음"}</p>
+                      <p role="status" aria-live="polite">
+                        내 투표: {game.my_vote ?? "없음"}
+                      </p>
                       <button
                         className={screens.secondaryButton}
                         disabled={!canVote || game.my_vote === null}
@@ -234,6 +266,11 @@ export function GamePanel({
                     <p className={screens.muted}>
                       투표 집계와 확정된 착수를 확인할 수 있습니다. 관전자는 표를 제출하거나 취소할
                       수 없습니다.
+                    </p>
+                  )}
+                  {auth.busy && (
+                    <p role="status" className={screens.commandStatus}>
+                      요청을 처리하고 있습니다.
                     </p>
                   )}
                   <button
@@ -263,20 +300,89 @@ export function GamePanel({
                   </button>
                 </aside>
               )}
-              <aside className={styles.analysisPlaceholder} aria-label="AI 판세 분석">
-                <h3>AI 판세 분석</h3>
-                <p>추후 제공 예정</p>
-                <p className={screens.muted}>
-                  현재 MVP에서는 제공하지 않습니다. 게임은 분석 없이 진행됩니다.
-                </p>
+              <div className={styles.sidebarChat}>{chat}</div>
+              <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
+                <div className={styles.analysisHeader}>
+                  <h3>AI 판세 분석</h3>
+                  <span className={styles.analysisMark} aria-hidden="true">
+                    ● ○
+                  </span>
+                </div>
+                <div className={styles.analysisBalance} aria-label="흑과 백 판세">
+                  <span>흑</span>
+                  <div className={styles.analysisTrack} aria-hidden="true">
+                    <span />
+                  </div>
+                  <span>백</span>
+                </div>
+                <div className={styles.analysisGrid}>
+                  <section>
+                    <h4>주요 후보</h4>
+                    <div className={styles.analysisCandidates} aria-label="주요 후보 좌표">
+                      <span>—</span>
+                      <span>—</span>
+                      <span>—</span>
+                    </div>
+                  </section>
+                  <section>
+                    <h4>판세 변화</h4>
+                    <div className={styles.analysisTrend} aria-label="판세 변화">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </section>
+                </div>
               </aside>
             </>
+          </div>
+        )}
+        <nav className={styles.mobileTabs} aria-label="게임 보조 패널">
+          <button
+            type="button"
+            aria-pressed={mobilePanel === "primary"}
+            aria-label={waiting ? "준비 보기" : finished ? "결과 보기" : "투표 보기"}
+            onClick={() => setMobilePanel("primary")}
+          >
+            {waiting ? "준비" : finished ? "결과" : "투표"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={mobilePanel === "chat"}
+            aria-label="채팅 보기"
+            onClick={() => setMobilePanel("chat")}
+          >
+            채팅
+          </button>
+          {!waiting && (
+            <button
+              type="button"
+              aria-pressed={mobilePanel === "analysis"}
+              aria-label="AI 보기"
+              onClick={() => setMobilePanel("analysis")}
+            >
+              AI
+            </button>
           )}
-          {chat}
-        </div>
+        </nav>
       </div>
     </section>
   );
+}
+
+function votingTimeLabel(game: Game, left: number) {
+  if (game.turn_status !== "VOTING" || left <= 0) return null;
+  return `약 ${Math.ceil(left / 1000)}초`;
+}
+
+function resultTone(endReason: Result["end_reason"]) {
+  if (endReason === "BLACK_WIN" || endReason === "WHITE_WIN" || endReason === "FORFEIT")
+    return "win";
+  if (endReason === "DRAW") return "draw";
+  if (endReason === "SYSTEM_INVALID") return "invalid";
+  return "loss";
 }
 
 const resultTitle: Record<Result["end_reason"], string> = {
@@ -287,28 +393,6 @@ const resultTitle: Record<Result["end_reason"], string> = {
   JOINT_LOSS: "양 팀 공동 패배",
   SYSTEM_INVALID: "경기 무효",
 };
-function useRetainedLayout() {
-  const layoutRef = useRef<HTMLDivElement>(null);
-  const [retainedHeight, setRetainedHeight] = useState(0);
-  useLayoutEffect(() => {
-    // Preserve room-stage height across waiting/game/result transitions.
-    // Explicit viewport changes may reflow; do not carry desktop height to mobile.
-    const element = layoutRef.current;
-    if (!element) return;
-    const measure = () =>
-      setRetainedHeight((previous) => Math.max(previous, element.getBoundingClientRect().height));
-    const resize = () => setRetainedHeight(0);
-    window.addEventListener("resize", resize);
-    measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(element);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", resize);
-    };
-  }, []);
-  return { layoutRef, retainedHeight };
-}
 function useGameResult(gameId: string, roomId: string, enabled: boolean) {
   const { api, view } = useSession();
   const [result, setResult] = useState<Result | null>(null);
