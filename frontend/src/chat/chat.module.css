@@ -19,9 +19,16 @@
   height: 16rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
   border-block: 1px solid #e0e5ee;
   padding: 0.6rem 0;
+}
+.log::-webkit-scrollbar,
+.composer textarea::-webkit-scrollbar {
+  display: none;
+}
+.composer textarea {
+  scrollbar-width: none;
 }
 .empty {
   color: #52617a;
