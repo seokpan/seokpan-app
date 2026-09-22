@@ -67,16 +67,16 @@
 }
 .composer textarea {
   min-width: 0;
-  min-height: 4.5rem;
-  max-height: 7.5rem;
+  min-height: 3.25rem;
+  max-height: 4.5rem;
   flex: 1;
   resize: none;
   overflow-y: auto;
   font: inherit;
-  line-height: 1.45;
+  line-height: 1.4;
   border: 1px solid #a1afc4;
   border-radius: 0.4rem;
-  padding: 0.6rem;
+  padding: 0.55rem;
 }
 .composer button {
   flex: 0 0 auto;
@@ -117,7 +117,7 @@
     min-height: 1.8em;
   }
   .composer textarea {
-    min-height: 3.75rem;
+    min-height: 3.25rem;
   }
 }
 
