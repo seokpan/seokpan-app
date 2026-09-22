@@ -785,6 +785,8 @@ for (const width of [1280, 390])
 
     expect(playingBoard.width).toBeGreaterThan(180);
     expect(playingBoard.height).toBeGreaterThan(180);
+    expect(playingBoard.y).toBeGreaterThanOrEqual(0);
+    expect(playingBoard.y + playingBoard.height).toBeLessThanOrEqual(900);
 
     if (width > 700) expect(playingBoard.x).toBeLessThan(voteInfo.x);
     else expect(playingBoard.y).toBeLessThan(voteInfo.y);
@@ -1031,6 +1033,8 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     const fitted = await board.boundingBox();
     expect(fitted!.x).toBeGreaterThanOrEqual(0);
     expect(fitted!.x + fitted!.width).toBeLessThanOrEqual(width);
+    expect(fitted!.y).toBeGreaterThanOrEqual(0);
+    expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(900);
     await expect(page.getByRole("button", { name: "O15 백돌", exact: true })).toBeInViewport();
     if (width === 390) {
       expect(
