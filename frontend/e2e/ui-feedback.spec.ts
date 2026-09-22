@@ -761,7 +761,7 @@ for (const width of [1280, 390])
     if (!waitingControls) throw new Error("WAITING_CONTROLS_BOUNDS_MISSING");
 
     if (width > 1050) expect(waitingControls.x).toBeLessThan(waitingBoard.x);
-    else expect(waitingControls.y).toBeLessThan(waitingBoard.y);
+    else expect(waitingBoard.y).toBeLessThan(waitingControls.y);
     finish();
     await expect(page.getByRole("heading", { name: "● 흑팀 차례" })).toBeVisible();
     const turnStatus = page.getByRole("region", { name: "현재 투표 상태" });
@@ -1262,37 +1262,42 @@ for (const width of [1280, 390])
         );
       });
       await page.goto("/lobby");
-      if (inRoom && width === 390) {
-        await page.getByRole("button", { name: "채팅 보기", exact: true }).click();
-      }
-      const input = page.getByLabel(`${inRoom ? "방" : "로비"} 채팅 메시지 입력`, { exact: true });
-      await expect(input).toBeEnabled();
       const board = inRoom ? await page.getByRole("grid").elementHandle() : null;
-      const panel = page.getByRole("region", {
-        name: inRoom ? "방 채팅" : "로비 채팅",
-        exact: true,
-      });
-      const panelBefore = await panel.boundingBox();
+
       if (inRoom) {
-        const preparation = await page
-          .getByRole("region", { name: "게임 시작 준비" })
-          .boundingBox();
+        const preparationRegion = page.getByRole("region", { name: "게임 시작 준비" });
+        await expect(preparationRegion).toBeVisible();
+        const preparation = await preparationRegion.boundingBox();
         const boardBounds = await page.getByRole("grid").boundingBox();
-        if (!preparation || !boardBounds || !panelBefore)
-          throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
+        if (!preparation || !boardBounds) throw new Error("WAITING_ROOM_LAYOUT_BOUNDS_MISSING");
+
         if (width === 1280) {
-          expect(panelBefore.x).toBeGreaterThan(preparation.x);
-          expect(panelBefore.y).toBeGreaterThan(boardBounds.y);
-          expect(panelBefore.width).toBeGreaterThan(200);
+          const desktopChat = page.getByRole("region", { name: "방 채팅", exact: true });
+          const desktopChatBounds = await desktopChat.boundingBox();
+          if (!desktopChatBounds) throw new Error("WAITING_ROOM_CHAT_BOUNDS_MISSING");
+          expect(desktopChatBounds.x).toBeGreaterThan(preparation.x);
+          expect(desktopChatBounds.y).toBeGreaterThan(boardBounds.y);
+          expect(desktopChatBounds.width).toBeGreaterThan(200);
         } else {
-          expect(panelBefore.y).toBeGreaterThan(boardBounds.y);
+          expect(boardBounds.y).toBeLessThan(preparation.y);
           expect(
             await page.evaluate<boolean>(
               "document.documentElement.scrollHeight <= window.innerHeight + 1",
             ),
           ).toBe(true);
+          await page.getByRole("button", { name: "채팅 보기", exact: true }).click();
+          await expect(preparationRegion).not.toBeVisible();
         }
       }
+
+      const input = page.getByLabel(`${inRoom ? "방" : "로비"} 채팅 메시지 입력`, { exact: true });
+      await expect(input).toBeEnabled();
+      const panel = page.getByRole("region", {
+        name: inRoom ? "방 채팅" : "로비 채팅",
+        exact: true,
+      });
+      const panelBefore = await panel.boundingBox();
+      if (!panelBefore) throw new Error("CHAT_PANEL_BOUNDS_MISSING");
       const inputBounds = await input.boundingBox();
       expect(inputBounds!.width).toBeGreaterThan(100);
       const sendBounds = await panel
