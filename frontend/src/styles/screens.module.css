@@ -421,6 +421,9 @@
 .readyPanel .primaryButton {
   margin-top: 0.6rem;
 }
+.readyPanel {
+  order: -1;
+}
 .waitingTeams button[aria-pressed="true"]:disabled {
   opacity: 1;
   color: #00636d;
