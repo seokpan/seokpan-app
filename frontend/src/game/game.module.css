@@ -825,3 +825,67 @@
     overflow: hidden;
   }
 }
+
+/* Definite-size corrections for the final viewport workspace. */
+.stage,
+.stage .layout,
+.boardRegion,
+.playingStage .infoStack,
+.resultStage .infoStack,
+.waitingControls,
+.waitingBoard,
+.waitingChat,
+.sidebarChat {
+  min-height: 0;
+}
+.stage {
+  height: 100%;
+}
+.stage .layout {
+  overflow: hidden;
+}
+.playingStage .infoStack,
+.resultStage .infoStack {
+  height: 100%;
+}
+.sidebarChat,
+.waitingChat {
+  height: 100%;
+}
+.sidebarChat > section,
+.waitingChat > section {
+  box-sizing: border-box;
+  max-height: 100%;
+  overflow: hidden;
+}
+.sidebarChat [role="log"],
+.waitingChat [role="log"] {
+  overflow-y: auto;
+}
+.waitingControls {
+  max-height: 100%;
+}
+.waitingBoard {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  .playingStage .layout,
+  .resultStage .layout,
+  .waitingStage .layout {
+    height: 100%;
+  }
+  .playingStage .infoStack,
+  .resultStage .infoStack {
+    height: 100%;
+    max-height: 100%;
+  }
+  .waitingLayout {
+    height: 100%;
+  }
+  .waitingChat > section {
+    height: 100%;
+    max-height: 100%;
+  }
+}
