@@ -185,11 +185,11 @@ export function LobbyPage() {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
         </div>
-                </tbody>
-              </table>
-            </div>
-          ))}
       </section>
       <ChatPanel
         enabled={
