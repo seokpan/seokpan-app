@@ -536,3 +536,105 @@
     scrollbar-gutter: stable;
   }
 }
+
+/* Room pages use the viewport as an application workspace. */
+.appDocument {
+  min-height: 100dvh;
+}
+.appWorkspace {
+  height: 100dvh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.roomShell {
+  width: min(1160px, 100%);
+  max-width: 1160px;
+  height: 100%;
+  min-height: 0;
+  padding: 0.65rem 1.25rem;
+  overflow: hidden;
+}
+.roomRoute {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.roomFooter {
+  display: none;
+}
+.roomShell .roomCard {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.roomShell .roomCard > .sectionHeading,
+.roomShell .roomCard > .notice,
+.roomShell .roomCard > .recoveryActions {
+  flex: 0 0 auto;
+}
+.roomShell .roomCard > p {
+  flex: 0 0 auto;
+  margin: 0.2rem 0 0.35rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+.roomShell .roomCard > p[id="room-leave-impact"] {
+  max-height: 3.2rem;
+  overflow: auto;
+}
+.roomShell .roomCard > section[aria-label] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 700px) {
+  .appWorkspace .header {
+    padding-inline: 0.55rem;
+  }
+  .appWorkspace .headerInner {
+    padding: 0.3rem 0;
+    gap: 0.25rem;
+  }
+  .appWorkspace .brand {
+    min-height: 32px;
+    font-size: 0.98rem;
+  }
+  .appWorkspace .headerControls {
+    gap: 0.25rem;
+  }
+  .appWorkspace .primaryNav a,
+  .appWorkspace .utilityGroup > button,
+  .appWorkspace .accountGroup button,
+  .appWorkspace .memberUpgrade {
+    min-height: 32px;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.76rem;
+  }
+  .roomShell {
+    padding: 0.35rem 0.45rem;
+  }
+  .roomShell .roomCard {
+    padding: 0.5rem;
+    border-radius: 0.7rem;
+  }
+  .roomShell .sectionHeading {
+    gap: 0.25rem;
+  }
+  .roomShell .sectionHeading h1 {
+    margin-bottom: 0;
+    font-size: 1rem;
+  }
+  .roomShell .sectionHeading .secondaryButton {
+    min-height: 32px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.76rem;
+  }
+  .roomShell .roomCard > p {
+    font-size: 0.68rem;
+    margin: 0.08rem 0 0.2rem;
+  }
+}
