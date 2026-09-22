@@ -760,7 +760,7 @@ for (const width of [1280, 390])
       .boundingBox();
     if (!waitingControls) throw new Error("WAITING_CONTROLS_BOUNDS_MISSING");
 
-    if (width > 1050) expect(waitingControls.x).toBeLessThan(waitingBoard.x);
+    if (width > 760) expect(waitingBoard.x).toBeLessThan(waitingControls.x);
     else expect(waitingBoard.y).toBeLessThan(waitingControls.y);
     finish();
     await expect(page.getByRole("heading", { name: "● 흑팀 차례" })).toBeVisible();
@@ -788,8 +788,22 @@ for (const width of [1280, 390])
     expect(playingBoard.y).toBeGreaterThanOrEqual(0);
     expect(playingBoard.y + playingBoard.height).toBeLessThanOrEqual(900);
 
-    if (width > 700) expect(playingBoard.x).toBeLessThan(voteInfo.x);
+    if (width > 760) expect(playingBoard.x).toBeLessThan(voteInfo.x);
     else expect(playingBoard.y).toBeLessThan(voteInfo.y);
+
+    if (width > 760) {
+      const chatPanel = page.getByRole("region", { name: "방 채팅", exact: true });
+      const chatBox = await chatPanel.boundingBox();
+      const chatInput = chatPanel.getByLabel("방 채팅 메시지 입력");
+      const chatInputBox = await chatInput.boundingBox();
+      const chatLog = chatPanel.getByRole("log");
+      const chatLogBox = await chatLog.boundingBox();
+      if (!chatBox || !chatInputBox || !chatLogBox) throw new Error("CHAT_BOUNDS_MISSING");
+      expect(chatBox.x).toBeGreaterThan(playingBoard.x);
+      expect(chatLogBox.height).toBeGreaterThanOrEqual(100);
+      expect(chatInputBox.height).toBeGreaterThanOrEqual(48);
+      expect(chatInputBox.height).toBeLessThanOrEqual(80);
+    }
 
     await expect(board).toBeInViewport({ ratio: 0.25 });
     await expect(page.getByRole("button", { name: "H8 빈 자리", exact: true })).toHaveAttribute(
@@ -1120,7 +1134,7 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   await expect(preparation.getByRole("button", { name: "게임 시작", exact: true })).toBeDisabled();
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
-  expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
+  expect(waitingBounds!.x + waitingBounds!.width).toBeLessThan(controlsBounds!.x);
   expect(waitingBounds!.y).toBeGreaterThanOrEqual(0);
   expect(waitingBounds!.y + waitingBounds!.height).toBeLessThanOrEqual(900);
   expect(
@@ -1280,8 +1294,9 @@ for (const width of [1280, 390])
           const desktopChat = page.getByRole("region", { name: "방 채팅", exact: true });
           const desktopChatBounds = await desktopChat.boundingBox();
           if (!desktopChatBounds) throw new Error("WAITING_ROOM_CHAT_BOUNDS_MISSING");
-          expect(desktopChatBounds.x).toBeGreaterThan(preparation.x);
-          expect(desktopChatBounds.y).toBeGreaterThan(boardBounds.y);
+          expect(boardBounds.x + boardBounds.width).toBeLessThan(preparation.x);
+          expect(Math.abs(desktopChatBounds.x - preparation.x)).toBeLessThanOrEqual(1);
+          expect(desktopChatBounds.y).toBeGreaterThan(preparation.y);
           expect(desktopChatBounds.width).toBeGreaterThan(200);
         } else {
           expect(boardBounds.y).toBeLessThan(preparation.y);

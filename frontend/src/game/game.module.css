@@ -318,7 +318,10 @@
   margin: 0;
   height: 100%;
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+.tally::-webkit-scrollbar {
+  display: none;
 }
 .tally li {
   padding: 0.8rem;
@@ -410,7 +413,7 @@
   font-weight: 800;
   white-space: nowrap;
 }
-@media (max-width: 1050px) {
+@media (max-width: 760px) {
   .layout,
   .waitingLayout {
     grid-template-columns: 1fr;
@@ -421,7 +424,7 @@
     margin: auto;
   }
 }
-@media (max-width: 700px) {
+@media (max-width: 760px) {
   .analysisGrid {
     grid-template-columns: 1fr;
   }
@@ -436,7 +439,7 @@
   }
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 760px) {
   .infoStack {
     width: 100%;
     max-width: 680px;
@@ -457,7 +460,7 @@
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 760px) {
   .turnStatus {
     gap: 0.35rem 0.75rem;
     padding: 0.65rem 0.75rem;
@@ -528,22 +531,6 @@
   border-color: #b8c2d1;
 }
 
-@media (max-width: 1050px) {
-  .waitingLayout {
-    grid-template-areas:
-      "controls"
-      "chat"
-      "board";
-  }
-  .waitingControls,
-  .waitingChat,
-  .waitingBoard {
-    width: 100%;
-    max-width: 680px;
-    margin-inline: auto;
-  }
-}
-
 /* Final game workspace: page stays fixed; panels own their overflow. */
 .stage {
   flex: 1 1 auto;
@@ -579,11 +566,16 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  place-items: center;
-  overflow: hidden;
+  place-items: start center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.boardRegion::-webkit-scrollbar {
+  display: none;
 }
 .boardRegion .boardFrame {
-  width: min(100%, clamp(320px, 54dvh, 560px));
+  width: min(100%, 500px);
   max-width: 100%;
 }
 .boardRegion .boardScroll {
@@ -601,7 +593,7 @@
   height: 100%;
   overflow: hidden;
   display: grid;
-  grid-template-rows: minmax(6.5rem, 0.85fr) minmax(8.5rem, 1.15fr) minmax(4.75rem, 0.55fr);
+  grid-template-rows: minmax(8rem, 0.8fr) minmax(15rem, 1.3fr) minmax(7rem, 0.6fr);
   gap: 0.55rem;
 }
 .playingStage .infoPanel,
@@ -635,7 +627,7 @@
 .sidebarChat [role="log"],
 .waitingChat [role="log"] {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 7rem;
   height: auto;
   overflow-y: auto;
 }
@@ -655,11 +647,11 @@
   margin-top: 0.45rem;
 }
 .waitingLayout {
-  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(12rem, 0.6fr);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-rows: minmax(0, 1fr) minmax(15rem, 0.78fr);
   grid-template-areas:
-    "controls board"
-    "controls chat";
+    "board controls"
+    "board chat";
 }
 .waitingControls {
   grid-area: controls;
@@ -672,21 +664,43 @@
   grid-area: board;
 }
 .waitingBoard .boardFrame {
-  width: min(100%, clamp(260px, 44dvh, 420px));
+  width: min(100%, 500px);
 }
 .waitingChat {
   grid-area: chat;
   min-height: 0;
   overflow: hidden;
 }
+
+.playingStage .infoPanel,
+.resultStage .infoPanel,
+.analysisPanel,
+.waitingControls,
+.sidebarChat > section,
+.waitingChat > section,
+.sidebarChat [role="log"],
+.waitingChat [role="log"] {
+  scrollbar-width: none;
+}
+.playingStage .infoPanel::-webkit-scrollbar,
+.resultStage .infoPanel::-webkit-scrollbar,
+.analysisPanel::-webkit-scrollbar,
+.waitingControls::-webkit-scrollbar,
+.sidebarChat > section::-webkit-scrollbar,
+.waitingChat > section::-webkit-scrollbar,
+.sidebarChat [role="log"]::-webkit-scrollbar,
+.waitingChat [role="log"]::-webkit-scrollbar {
+  display: none;
+}
+
 .mobileTabs {
   display: none;
 }
 
-@media (min-width: 701px) and (max-width: 1050px) {
+@media (min-width: 761px) and (max-width: 1050px) {
   .stage .layout,
   .stage .waitingLayout {
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 285px);
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   }
   .stage .infoStack,
   .stage .turnStatus,
@@ -699,31 +713,27 @@
   }
   .waitingLayout {
     grid-template-areas:
-      "controls board"
-      "controls chat";
+      "board controls"
+      "board chat";
   }
-  .boardRegion .boardFrame {
-    width: min(100%, clamp(300px, 52dvh, 500px));
-  }
+  .boardRegion .boardFrame,
   .waitingBoard .boardFrame {
-    width: min(100%, clamp(250px, 40dvh, 360px));
+    width: min(100%, 460px);
   }
 }
 
-@media (max-height: 760px) and (min-width: 701px) {
-  .boardRegion .boardFrame {
-    width: min(100%, clamp(280px, 52dvh, 480px));
-  }
+@media (max-height: 760px) and (min-width: 761px) {
+  .boardRegion .boardFrame,
   .waitingBoard .boardFrame {
-    width: min(100%, clamp(240px, 38dvh, 340px));
+    width: min(100%, 460px);
   }
   .playingStage .infoStack,
   .resultStage .infoStack {
-    grid-template-rows: minmax(5.5rem, 0.8fr) minmax(7.5rem, 1.2fr) minmax(4.25rem, 0.5fr);
+    grid-template-rows: minmax(7rem, 0.75fr) minmax(13rem, 1.25fr) minmax(6rem, 0.6fr);
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 760px) {
   .stage .gameHeader {
     flex-direction: row;
     align-items: center;
