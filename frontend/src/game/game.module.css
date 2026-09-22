@@ -630,7 +630,8 @@
   display: flex;
   flex-direction: column;
   padding: 0.7rem;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .sidebarChat [role="log"],
 .waitingChat [role="log"] {
@@ -642,6 +643,11 @@
 .sidebarChat form,
 .waitingChat form {
   flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding-top: 0.2rem;
+  background: white;
 }
 .analysisPanel {
   padding: 0.65rem 0.75rem;
@@ -654,7 +660,7 @@
 }
 .waitingLayout {
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(9rem, 0.42fr);
+  grid-template-rows: minmax(0, 1fr) minmax(12rem, 0.55fr);
   grid-template-areas:
     "controls board"
     "controls chat";
@@ -669,7 +675,7 @@
   grid-area: board;
 }
 .waitingBoard .boardFrame {
-  width: min(100%, 430px, calc(100dvh - 27rem));
+  width: min(100%, 350px, calc(100dvh - 34rem));
 }
 .waitingChat {
   grid-area: chat;
@@ -703,7 +709,7 @@
     width: min(100%, 520px, calc(100dvh - 18rem));
   }
   .waitingBoard .boardFrame {
-    width: min(100%, 390px, calc(100dvh - 28rem));
+    width: min(100%, 340px, calc(100dvh - 34rem));
   }
 }
 
@@ -758,7 +764,7 @@
     min-width: 220px;
   }
   .waitingBoard .boardFrame {
-    width: min(100%, 340px, calc(100dvh - 25rem));
+    width: min(100%, 280px, calc(100dvh - 35rem));
     min-width: 220px;
   }
   .boardRegion .legend {
