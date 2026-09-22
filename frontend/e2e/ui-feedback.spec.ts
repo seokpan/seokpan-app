@@ -1121,6 +1121,8 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   const waitingBounds = await board.boundingBox(),
     controlsBounds = await preparation.boundingBox();
   expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
+  expect(waitingBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(waitingBounds!.y + waitingBounds!.height).toBeLessThanOrEqual(900);
   expect(
     await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
   ).toBe(true);
@@ -1134,6 +1136,9 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
   expect(
     await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
   ).toBe(true);
+  const waitingMobileBounds = await board.boundingBox();
+  expect(waitingMobileBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(waitingMobileBounds!.y + waitingMobileBounds!.height).toBeLessThanOrEqual(844);
   await page.screenshot({ path: info.outputPath("waiting-mobile.png"), fullPage: true });
 });
 // These tests use synthetic messages only, independent of the user's trial server.
@@ -1298,14 +1303,19 @@ for (const width of [1280, 390])
       });
       const panelBefore = await panel.boundingBox();
       if (!panelBefore) throw new Error("CHAT_PANEL_BOUNDS_MISSING");
+      await input.scrollIntoViewIfNeeded();
       const inputBounds = await input.boundingBox();
       expect(inputBounds!.width).toBeGreaterThan(100);
-      const sendBounds = await panel
-        .getByRole("button", { name: "전송", exact: true })
-        .boundingBox();
+      expect(inputBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(inputBounds!.y + inputBounds!.height).toBeLessThanOrEqual(900);
+      const sendButton = panel.getByRole("button", { name: "전송", exact: true });
+      await sendButton.scrollIntoViewIfNeeded();
+      const sendBounds = await sendButton.boundingBox();
       expect(sendBounds!.x + sendBounds!.width).toBeLessThanOrEqual(
         panelBefore!.x + panelBefore!.width,
       );
+      expect(sendBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(sendBounds!.y + sendBounds!.height).toBeLessThanOrEqual(900);
       await input.fill("함께 즐겨요 😀");
       await input.press("Enter");
       await expect(input).toHaveValue("");
