@@ -110,6 +110,7 @@ function Shell() {
   const inRoom = !!readyIdentity?.room_id;
   const roomOrLobbyCurrent =
     location.pathname === "/" || location.pathname === "/lobby" ? "page" : undefined;
+  const roomWorkspace = inRoom && location.pathname !== "/rankings";
   const previousPath = useRef(location.pathname);
   useEffect(() => {
     if (previousPath.current === location.pathname) return;
@@ -168,7 +169,8 @@ function Shell() {
       </header>
       <main
         id="main-content"
-        className={styles.shell}
+        className={`${styles.shell} ${roomWorkspace ? styles.roomShell : ""}`}
+        data-room-workspace={roomWorkspace ? "true" : undefined}
         aria-busy={view.phase === "ready" && !!view.checking}
       >
         {notice && (
@@ -203,7 +205,9 @@ function Shell() {
           />
         </Routes>
       </main>
-      <footer className={styles.footer}>SEOKPAN · 함께 투표하고, 하나의 수를 결정합니다.</footer>
+      <footer className={`${styles.footer} ${roomWorkspace ? styles.roomFooter : ""}`}>
+        SEOKPAN · 함께 투표하고, 하나의 수를 결정합니다.
+      </footer>
     </>
   );
 }
