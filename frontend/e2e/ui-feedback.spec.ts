@@ -1118,9 +1118,7 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     controlsBounds = await preparation.boundingBox();
   expect(controlsBounds!.x + controlsBounds!.width).toBeLessThan(waitingBounds!.x);
   expect(
-    await page.evaluate<boolean>(
-      "document.documentElement.scrollHeight <= window.innerHeight + 1",
-    ),
+    await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
   ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1130,9 +1128,7 @@ test("보드·사이드 집계 일치, 투표 중 DOM 유지 및 입력 잠금",
     390,
   );
   expect(
-    await page.evaluate<boolean>(
-      "document.documentElement.scrollHeight <= window.innerHeight + 1",
-    ),
+    await page.evaluate<boolean>("document.documentElement.scrollHeight <= window.innerHeight + 1"),
   ).toBe(true);
   await page.screenshot({ path: info.outputPath("waiting-mobile.png"), fullPage: true });
 });
