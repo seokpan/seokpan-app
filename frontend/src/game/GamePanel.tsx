@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSession } from "../session/context";
 import { Board } from "./Board";
@@ -34,25 +34,14 @@ export function GamePanel({
   const waiting = waitingControls !== undefined;
   const boardRegion = useRef<HTMLDivElement>(null);
   const turnStatus = useRef<HTMLElement>(null);
-  const previousWaiting = useRef(waiting);
-
-  useLayoutEffect(() => {
-    const wasWaiting = previousWaiting.current;
-    previousWaiting.current = waiting;
-
-    if (!wasWaiting || waiting || window.innerWidth > 1050) return;
-
-    const target =
-      turnStatus.current ?? boardRegion.current?.querySelector<HTMLElement>('[role="grid"]');
-
-    if (typeof target?.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "start", inline: "nearest" });
-    }
-  }, [waiting]);
+  const [mobilePanel, setMobilePanel] = useState<"primary" | "chat" | "analysis">("primary");
   const [cachedGame, setCachedGame] = useState(game);
   if (game && game !== cachedGame) setCachedGame(game);
   const lastGame = cachedGame?.game_id === gameId ? cachedGame : null;
   const finished = !waiting && game === null;
+  useEffect(() => {
+    setMobilePanel("primary");
+  }, [waiting, game?.game_id, finished]);
   const { result, error, retry } = useGameResult(gameId, roomId, finished);
   const [now, setNow] = useState(() => performance.now());
   const requested = useRef("");
@@ -103,7 +92,9 @@ export function GamePanel({
   }
   return (
     <section
-      className={styles.stage}
+      className={`${styles.stage} ${
+        waiting ? styles.waitingStage : finished ? styles.resultStage : styles.playingStage
+      }`}
       aria-label={waiting ? "게임 준비" : finished ? "게임 결과" : "진행 중인 게임"}
     >
       <div
@@ -157,8 +148,18 @@ export function GamePanel({
         </section>
       )}
       <div className={`${styles.layout} ${waiting ? styles.waitingLayout : ""}`}>
-        {waiting && <div className={styles.waitingControls}>{waitingControls}</div>}
-        <div ref={boardRegion} className={waiting ? styles.waitingBoard : undefined}>
+        {waiting && (
+          <div
+            className={styles.waitingControls}
+            data-mobile-active={mobilePanel === "primary" ? "true" : "false"}
+          >
+            {waitingControls}
+          </div>
+        )}
+        <div
+          ref={boardRegion}
+          className={`${styles.boardRegion} ${waiting ? styles.waitingBoard : ""}`}
+        >
           <Board
             cells={waiting ? [] : (result?.board ?? game?.board ?? lastGame?.board ?? [])}
             winning={result?.winning_line ?? []}
@@ -185,9 +186,16 @@ export function GamePanel({
                 : "숫자는 후보의 득표율 · 초록색 ‘나’ 표시는 내 표 · 진한 남색은 최다 득표 후보입니다. 후보는 아직 확정된 돌이 아닙니다."}
           </p>
         </div>
-        {waiting && <div className={styles.waitingChat}>{chat}</div>}
+        {waiting && (
+          <div
+            className={styles.waitingChat}
+            data-mobile-active={mobilePanel === "chat" ? "true" : "false"}
+          >
+            {chat}
+          </div>
+        )}
         {!waiting && (
-          <div className={styles.infoStack}>
+          <div className={styles.infoStack} data-mobile-panel={mobilePanel}>
             <>
               {game ? (
                 <aside className={styles.infoPanel} aria-label="투표 정보">
@@ -292,7 +300,7 @@ export function GamePanel({
                   </button>
                 </aside>
               )}
-              {chat}
+              <div className={styles.sidebarChat}>{chat}</div>
               <aside className={styles.analysisPanel} aria-label="AI 판세 분석">
                 <div className={styles.analysisHeader}>
                   <h3>AI 판세 분석</h3>
@@ -331,6 +339,34 @@ export function GamePanel({
             </>
           </div>
         )}
+        <nav className={styles.mobileTabs} aria-label="게임 보조 패널">
+          <button
+            type="button"
+            aria-pressed={mobilePanel === "primary"}
+            aria-label={waiting ? "준비 보기" : finished ? "결과 보기" : "투표 보기"}
+            onClick={() => setMobilePanel("primary")}
+          >
+            {waiting ? "준비" : finished ? "결과" : "투표"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={mobilePanel === "chat"}
+            aria-label="채팅 보기"
+            onClick={() => setMobilePanel("chat")}
+          >
+            채팅
+          </button>
+          {!waiting && (
+            <button
+              type="button"
+              aria-pressed={mobilePanel === "analysis"}
+              aria-label="AI 보기"
+              onClick={() => setMobilePanel("analysis")}
+            >
+              AI
+            </button>
+          )}
+        </nav>
       </div>
     </section>
   );
