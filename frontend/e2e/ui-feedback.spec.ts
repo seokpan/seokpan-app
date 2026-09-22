@@ -792,7 +792,7 @@ for (const width of [1280, 390])
     else expect(playingBoard.y).toBeLessThan(voteInfo.y);
 
     if (width > 760) {
-      const chatPanel = page.getByLabel("방 채팅");
+      const chatPanel = page.getByRole("region", { name: "방 채팅", exact: true });
       const chatBox = await chatPanel.boundingBox();
       const chatInput = chatPanel.getByLabel("방 채팅 메시지 입력");
       const chatInputBox = await chatInput.boundingBox();
