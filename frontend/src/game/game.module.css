@@ -528,22 +528,6 @@
   border-color: #b8c2d1;
 }
 
-@media (max-width: 1050px) {
-  .waitingLayout {
-    grid-template-areas:
-      "controls"
-      "chat"
-      "board";
-  }
-  .waitingControls,
-  .waitingChat,
-  .waitingBoard {
-    width: 100%;
-    max-width: 680px;
-    margin-inline: auto;
-  }
-}
-
 /* Final game workspace: page stays fixed; panels own their overflow. */
 .stage {
   flex: 1 1 auto;
