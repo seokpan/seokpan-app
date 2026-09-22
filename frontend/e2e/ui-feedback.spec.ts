@@ -1131,6 +1131,9 @@ for (const width of [1280, 390])
         password_required: index % 3 === 0,
         participant_count: (index % 4) + 1,
         max_participants: 8,
+        minimum_ready: 2,
+        vote_seconds: 15,
+        state_version: index + 1,
         status: index % 5 === 0 ? "PLAYING" : "WAITING",
       }));
       let sendChat!: (text: string) => void,
