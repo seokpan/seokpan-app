@@ -643,9 +643,6 @@
 .sidebarChat form,
 .waitingChat form {
   flex: 0 0 auto;
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
   padding-top: 0.2rem;
   background: white;
 }
