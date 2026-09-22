@@ -583,7 +583,7 @@
   overflow: hidden;
 }
 .boardRegion .boardFrame {
-  width: min(100%, clamp(320px, 58dvh, 560px));
+  width: min(100%, clamp(320px, 54dvh, 560px));
   max-width: 100%;
 }
 .boardRegion .boardScroll {
