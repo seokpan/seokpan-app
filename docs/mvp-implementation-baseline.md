@@ -13,11 +13,11 @@
 5. [`MVP_IMPLEMENTATION_BASELINE.md`](https://github.com/seokpan/seokpan-docs/blob/ed33648/MVP_IMPLEMENTATION_BASELINE.md)의 공용 구현 기준
 6. 이 문서의 Application 상세
 
-`PROJECT_CHANGES.md`의 확정 변경은 지정된 항목에 한해서 해당 PDF 원문보다 우선한다. 예를 들어 방장 연결 단절은 D01의 30초 후 승계가 아니라 PDF 이후 확정된 즉시 승계를 적용한다.
+`PROJECT_CHANGES.md`의 확정 변경은 지정된 항목에 한해서 해당 PDF 원문보다 우선한다. 예를 들어 명시적 Leave/Logout은 즉시 이탈로 확정하고, 일시 연결 단절에는 PDF 이후 확정된 10초 reconnect grace를 적용한다.
 
 기준 문서와 코드가 다르면 코드를 수정한다. Issue, PR, README 또는 Runtime 상태만으로 요구사항을 변경하지 않는다. 공용 기준의 확정값을 바꾸어야 하면 먼저 `seokpan-docs`의 변경 이력을 갱신한다.
 
-현재 기준점은 `seokpan-docs` main `ed33648`이다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
+현재 기준점은 `seokpan-docs` main `f77a006900d973a1d75ff465dbd4491354f086c3`이다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
 
 ## 2. MVP와 First Success 범위
 
@@ -215,11 +215,12 @@ Envelope의 `state_version`은 Lobby 또는 Room별 WebSocket Stream 순서다. 
 
 ### 연결 단절과 방장 승계
 
-- 일반 단절은 30초 Disconnect Lease를 시작한다. 유예 안의 새 Generation은 참가자·팀·진행 중 Game 상태를 복원하지만 이전 Vote는 복원하지 않는다.
-- 방장이 명시적으로 퇴장하거나 연결 단절이 감지되면 접속 중인 가장 이른 Member에게 즉시 승계한다.
-- 방장 변경, 모든 Ready 해제와 `state_version` 1회 증가는 하나의 Redis 원자 처리다.
-- 이전 방장이 재접속해도 방장 권한은 자동 복귀하지 않는다.
+- 명시적 Leave/Logout처럼 이탈이 확정된 경우에는 유예 없이 즉시 이탈 규칙을 적용한다.
+- 일시 연결 단절은 Redis `TIME` 기준 10초 Disconnect Lease를 시작한다. 유예 안의 같은 사용자 새 Generation은 참가자·팀·진행 중 Game 상태와 방장/Ready 의도를 유지하지만 이전 Vote는 복원하지 않는다.
+- `connected=false` 참가자는 유예 중에도 최소 Ready·양 팀 Ready·Game Start PLAYER 자격에 포함하지 않으며 disconnected 방장은 Game을 시작할 수 없다.
+- 10초 Lease가 만료되면 접속 중인 가장 이른 Member에게 단 한 번 방장을 승계하고 모든 Ready를 해제한다. 방장 변경, Ready reset과 `state_version` 증가는 하나의 Redis 원자 처리로 수렴한다.
 - 승계 가능한 Member가 없으면 Room을 종료하고 Guest에게 Room 종료와 Lobby 이동을 안내한다.
+- 유예 만료 뒤 이미 승계가 끝난 이전 방장이 재접속해도 방장 권한은 자동 복귀하지 않는다.
 - `WAITING` Room 종료에는 Game·Result·Rating을 만들지 않는다.
 - `PLAYING`에서 Room이 유지되면 단절 참가자의 Vote만 제거한다. Room 종료로 Game을 계속할 수 없을 때만 `SYSTEM_INVALID`로 종결하고 개인 전적·Rating을 반영하지 않는다.
 - Backend, Redis 또는 플랫폼 장애를 개인 이탈로 오판해 승계·몰수패·공동 패배를 확정하지 않는다.
