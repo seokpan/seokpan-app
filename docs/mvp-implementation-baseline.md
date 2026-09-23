@@ -17,7 +17,7 @@
 
 기준 문서와 코드가 다르면 코드를 수정한다. Issue, PR, README 또는 Runtime 상태만으로 요구사항을 변경하지 않는다. 공용 기준의 확정값을 바꾸어야 하면 먼저 `seokpan-docs`의 변경 이력을 갱신한다.
 
-현재 기준점은 `seokpan-docs` main `f77a006900d973a1d75ff465dbd4491354f086c3`이다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
+현재 기준점은 `seokpan-docs` main `1039bfa3722d591d26917ff81879412fb4ca3695`이다. 이 문서의 상세 Schema는 이후 Source·Test와 함께 발전시키되 위 우선순위를 조용히 뒤집지 않는다.
 
 ## 2. MVP와 First Success 범위
 
