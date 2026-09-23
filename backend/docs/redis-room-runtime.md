@@ -33,11 +33,11 @@ Snapshot에는 Encoded Hash와 Session Digest, Connection Generation을 포함�
 - 이미 `connected`인 참가자가 새 Generation으로 연결을 대체하면 공개 Snapshot은 그대로이므로 `state_version`을 유지한다. 단절 상태의 참가자가 재접속해 공개 `connected` 값이 바뀌면 한 번 증가한다.
 - Session·Room별 새 연결은 Generation을 증가시키고 이전 연결을 대체한다.
 - 이전 Generation에서 늦게 도착한 Disconnect는 Room 상태를 변경하지 않는다.
-- 일반 참가자의 Disconnect Lease는 Redis `TIME` 기준 30초다.
-- 방장 Disconnect는 30초를 기다리지 않고 접속 중인 Member 중 입장 순서가 가장 빠른 참가자에게 즉시 승계한다.
-- 방장 승계, 모든 Ready 해제와 `state_version` 1회 증가는 같은 Lua 실행에 포함한다.
-- 이전 방장이 재접속해도 방장으로 자동 복귀하지 않는다.
-- 승계할 Member가 없으면 Room Runtime Key를 제거하고 10분 Tombstone을 남긴다.
+- 일시적인 연결 단절은 모든 참가자에게 Redis `TIME` 기준 10초 Disconnect Lease를 시작한다. 명시적 Leave/Logout처럼 이탈이 확정된 경우에는 유예 없이 즉시 기존 이탈 규칙을 적용한다.
+- 방장도 10초 유예 동안 기존 방장 권한과 Ready 의도를 보존한다. 단, `connected=false`인 참가자는 최소 Ready·양 팀 Ready·Game Start PLAYER 자격에 포함하지 않으며 disconnected 방장은 Game을 시작할 수 없다.
+- 10초 Lease가 만료되면 접속 중인 Member 중 입장 순서가 가장 빠른 참가자에게 단 한 번 승계하고 모든 Ready를 해제한다. 방장 승계, Ready reset과 `state_version` 증가는 같은 Lua 실행에서 수렴한다.
+- 같은 사용자가 유예 안에 재접속하면 기존 방장 권한과 Ready 의도를 유지한다. 유예 만료 후 이미 승계가 끝난 이전 방장이 재접속해도 방장으로 자동 복귀하지 않는다.
+- Lease 만료 시 승계할 Member가 없으면 Room Runtime Key를 제거하고 10분 Tombstone을 남긴다.
 - WAITING 종료는 Game 기록을 만들지 않고, PLAYING 종료만 후속 흐름에 `SYSTEM_INVALID`를 전달한다.
 - Game Result 저장과 종료 Vote Runtime 반영 뒤에는 Room Mutation Script v8의 완료 명령이 `PLAYING → WAITING`, `game_id` 제거, `last_game_id`·`last_game_turn_no` 보관과 모든 Ready 해제를 한 번에 반영한다.
 - Room 종료에는 뒤따를 공개 Snapshot이 없으므로 삭제 직전 `state_version`을 따로 증가시키지 않는다. Key 삭제·Tombstone 생성·`room_closed` 종료 결과를 한 원자 처리로 반환하며, 후속 HTTP/WebSocket 계층은 이 종료 결과로 Room 종료와 Lobby 이동을 알린다.
