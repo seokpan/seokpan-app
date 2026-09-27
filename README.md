@@ -21,6 +21,15 @@ MariaDB를 **영속 데이터의 권위 저장소**로, Redis를 **Runtime State
 | Room Runtime | Redis | [redis-room-runtime.md](backend/docs/redis-room-runtime.md) |
 | Current Vote / Resolver | Redis | [redis-vote-runtime.md](backend/docs/redis-vote-runtime.md) |
 
+## 핵심 기술과 적용
+
+| 영역 | 기술 | 이 저장소에서의 적용 |
+|---|---|---|
+| 화면 | React · TypeScript · Vite | [로비·방·게임 화면](frontend/src)과 실시간 상태 표시 |
+| API·도메인 | Python · FastAPI | [HTTP/WebSocket API](backend/src/seokpan/api) 및 게임·투표 처리 |
+| 데이터 | SQLAlchemy · Alembic · MariaDB · Redis | [영속 데이터](backend/src/seokpan/persistence/mariadb)와 [공유 실행 상태](backend/src/seokpan/persistence/redis)를 분리 |
+| 이미지 검증 | Jenkins · Harbor | [테스트·빌드·스캔과 이미지 Digest 확정](Jenkinsfile.image-pipeline) |
+
 ## 저장소 구조
 
 ```text
