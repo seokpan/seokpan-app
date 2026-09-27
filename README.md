@@ -4,6 +4,23 @@
 
 Kubernetes 배포 상태는 [`seokpan-gitops`](https://github.com/seokpan/seokpan-gitops), 서버/네트워크/K8s 부트스트랩은 [`seokpan-infra`](https://github.com/seokpan/seokpan-infra), 설계 문서는 [`seokpan-docs`](https://github.com/seokpan/seokpan-docs)에서 관리합니다.
 
+## 애플리케이션 개요
+
+MariaDB를 **영속 데이터의 권위 저장소**로, Redis를 **Runtime State 저장소**로 분리해서 사용합니다.
+
+![HTTP·WebSocket 경계와 MariaDB·Redis의 상태 저장 책임](docs/images/application-state.svg)
+
+브라우저의 상태 변경은 HTTP API로 처리하고, WebSocket은 Snapshot과 Event 전달에 사용합니다. Backend Replica는 공통 MariaDB·Redis Provider를 사용합니다. [Provider 조립 코드](backend/src/seokpan/production.py)와 아래 API·상태별 문서에서 세부 계약을 확인할 수 있습니다.
+
+| State | Owner | 관련 문서 |
+|---|---|---|
+| Member Identity | MariaDB | [member-identity.md](backend/docs/member-identity.md) |
+| Game / Move / Result | MariaDB | [game-persistence.md](backend/docs/game-persistence.md) |
+| Schema / Migration | MariaDB (Alembic) | [mariadb-baseline.md](backend/docs/mariadb-baseline.md) |
+| Session | Redis | [redis-session.md](backend/docs/redis-session.md) |
+| Room Runtime | Redis | [redis-room-runtime.md](backend/docs/redis-room-runtime.md) |
+| Current Vote / Resolver | Redis | [redis-vote-runtime.md](backend/docs/redis-vote-runtime.md) |
+
 ## 저장소 구조
 
 ```text
@@ -25,23 +42,6 @@ seokpan-app/
 ```
 
 실행·개발 환경 설정은 각 하위 [`backend/README.md`](backend/README.md), [`frontend/README.md`](frontend/README.md)를 그대로 따릅니다.
-
-## 애플리케이션 개요
-
-MariaDB를 **영속 데이터의 권위 저장소**로, Redis를 **Runtime State 저장소**로 분리해서 사용합니다.
-
-![HTTP·WebSocket 경계와 MariaDB·Redis의 상태 저장 책임](docs/images/application-state.svg)
-
-브라우저의 상태 변경은 HTTP API로 처리하고, WebSocket은 Snapshot과 Event 전달에 사용합니다. Backend Replica는 공통 MariaDB·Redis Provider를 사용합니다. [Provider 조립 코드](backend/src/seokpan/production.py)와 아래 API·상태별 문서에서 세부 계약을 확인할 수 있습니다.
-
-| State | Owner | 관련 문서 |
-|---|---|---|
-| Member Identity | MariaDB | [member-identity.md](backend/docs/member-identity.md) |
-| Game / Move / Result | MariaDB | [game-persistence.md](backend/docs/game-persistence.md) |
-| Schema / Migration | MariaDB (Alembic) | [mariadb-baseline.md](backend/docs/mariadb-baseline.md) |
-| Session | Redis | [redis-session.md](backend/docs/redis-session.md) |
-| Room Runtime | Redis | [redis-room-runtime.md](backend/docs/redis-room-runtime.md) |
-| Current Vote / Resolver | Redis | [redis-vote-runtime.md](backend/docs/redis-vote-runtime.md) |
 
 ## API 경계
 
