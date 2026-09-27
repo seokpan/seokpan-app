@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="680" viewBox="0 0 1000 680" role="img" aria-labelledby="title desc"><title id="title">Application: requests and shared state</title><desc id="desc">SeokPan / React + TypeScript · FastAPI · MariaDB · Redis</desc><rect width="1000" height="680" rx="20" fill="#f6f8fc"/>
+<text x="32" y="44" font-family="Arial,Helvetica,sans-serif" font-size="26" font-weight="700" fill="#12253f">Application: requests and shared state</text>
+<text x="32" y="74" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="400" fill="#42526b">SeokPan / React + TypeScript · FastAPI · MariaDB · Redis</text>
+<rect x="32" y="100" width="936" height="104" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="32" y="114" width="4" height="26" rx="2" fill="#2563eb"/>
+<text x="52" y="136" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#2563eb">Browser / React</text>
+<text x="52" y="166" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Room · Board · Vote · Chat · Rankings</text>
+<text x="32" y="237" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700" fill="#52647d">TRANSPORT BOUNDARY</text>
+<rect x="32" y="254" width="456" height="130" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="32" y="268" width="4" height="26" rx="2" fill="#2563eb"/>
+<text x="52" y="290" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#2563eb">HTTP  /api/v1</text>
+<text x="52" y="320" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Commands and queries</text>
+<text x="52" y="345" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Session · CSRF · request/state version</text>
+<rect x="512" y="254" width="456" height="130" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="512" y="268" width="4" height="26" rx="2" fill="#2563eb"/>
+<text x="532" y="290" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#2563eb">WebSocket  /ws/v1</text>
+<text x="532" y="320" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Snapshots and realtime events</text>
+<text x="532" y="345" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Read / notification channel</text>
+<rect x="32" y="408" width="936" height="94" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="32" y="422" width="4" height="26" rx="2" fill="#2563eb"/>
+<text x="52" y="444" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#2563eb">FastAPI backend replicas</text>
+<text x="52" y="474" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Shared providers keep session and game state outside each process</text>
+<rect x="32" y="526" width="456" height="124" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="32" y="540" width="4" height="26" rx="2" fill="#0f766e"/>
+<text x="52" y="562" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#0f766e">MariaDB / persistent state</text>
+<text x="52" y="592" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Member · Move · Result · Rating</text>
+<text x="52" y="617" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Access through MaxScale + TLS</text>
+<rect x="512" y="526" width="456" height="124" rx="12" fill="#fff" stroke="#ccd7e6"/><rect x="512" y="540" width="4" height="26" rx="2" fill="#9a4b0a"/>
+<text x="532" y="562" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" fill="#9a4b0a">Redis / runtime state</text>
+<text x="532" y="592" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Session · Room · Vote · Presence</text>
+<text x="532" y="617" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="400" fill="#42526b">Shared realtime state across replicas</text>
+</svg>

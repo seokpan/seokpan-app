@@ -30,6 +30,10 @@ seokpan-app/
 
 MariaDB를 **영속 데이터의 권위 저장소**로, Redis를 **Runtime State 저장소**로 분리해서 사용합니다.
 
+![HTTP·WebSocket 경계와 MariaDB·Redis의 상태 저장 책임](docs/images/application-state.svg)
+
+브라우저의 상태 변경은 HTTP API로 처리하고, WebSocket은 Snapshot과 Event 전달에 사용합니다. Backend Replica는 공통 MariaDB·Redis Provider를 사용합니다. [Provider 조립 코드](backend/src/seokpan/production.py)와 아래 API·상태별 문서에서 세부 계약을 확인할 수 있습니다.
+
 | State | Owner | 관련 문서 |
 |---|---|---|
 | Member Identity | MariaDB | [member-identity.md](backend/docs/member-identity.md) |
@@ -57,15 +61,16 @@ A-01 MVP Baseline → A-02 Scaffold → A-03 Pure Domain → A-04 MariaDB
 → A-08 Frontend First Success → A-09 Container/Jenkins → A-10 Provider/GitOps Integration
 ```
 
-현재 `main`은 **A-10(Provider/GitOps Integration)까지 반영**된 상태이며, `Headless First Success`(A-07)는 최종 상태가 아니라 초기 내부 흐름 검증 단계입니다. 남은 범위는 `#76`(서비스 안정화), `#22`(신규 빈 DB 환경 Migration 재현 검증)입니다. 단계별 상세 근거는 [headless-first-success.md](backend/docs/headless-first-success.md), [mvp-implementation-baseline.md](docs/mvp-implementation-baseline.md) 참고.
+현재 `main`은 **A-10(Provider/GitOps Integration)까지 반영**된 상태이며, `Headless First Success`(A-07)는 최종 상태가 아니라 초기 내부 흐름 검증 단계입니다. 1차 프로젝트의 구현·통합 상태와 남은 강화 검증은 [종료 시점 기록](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)과 [검증 후속 Issue #112](https://github.com/seokpan/seokpan-app/issues/112)에서 구분해 관리합니다. 단계별 상세 근거는 [headless-first-success.md](backend/docs/headless-first-success.md), [mvp-implementation-baseline.md](docs/mvp-implementation-baseline.md) 참고.
 
 ## CI/CD 경계
 
 ```text
-Git Commit → Jenkins(Test/Build/Scan/Digest) → Harbor → seokpan-gitops(승인된 변경) → Argo CD → Kubernetes
+App main → Jenkins(Test/Build/Scan/Digest) → Harbor
+→ GitOps Promotion PR 자동 생성 → 팀원 리뷰·승인·Merge → Argo CD → Kubernetes
 ```
 
-이 저장소의 Jenkins 파이프라인은 **테스트·이미지 빌드·스캔·Digest 증적 생성까지만** 담당하며, GitOps 저장소의 브랜치/매니페스트/PR을 직접 생성하거나 클러스터를 변경하지 않습니다. 이미지/Digest 검증 근거는 [ci-verification.md](docs/ci-verification.md), [a09-image-acceptance.md](docs/a09-image-acceptance.md) 참고.
+[이미지 파이프라인](Jenkinsfile.image-pipeline)은 검증된 이미지의 Digest를 확정한 뒤 [Promotion 스크립트](scripts/promote_gitops.py)로 GitOps 브랜치·커밋·PR을 생성합니다. **배포 반영에는 팀원의 리뷰·승인·Merge가 필요**하며, 파이프라인이 GitOps `main`에 직접 push하거나 PR을 자동 병합하지 않습니다. 이미지/Digest 검증 근거는 [ci-verification.md](docs/ci-verification.md), [a09-image-acceptance.md](docs/a09-image-acceptance.md) 참고.
 
 ## 보안
 
