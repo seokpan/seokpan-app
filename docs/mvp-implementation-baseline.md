@@ -71,7 +71,7 @@ Windows Host에서 작성하되 실행 자산은 UTF-8·LF와 Linux Container를
 - 인증 권위는 Redis 서버측 Session이다. JWT Access/Refresh 구조를 추가하지 않는다.
 - Cookie 이름은 `seokpan_session`이다. `HttpOnly`, Production `Secure`, `SameSite=Lax`, `Path=/`, `Domain` 미지정을 적용한다.
 - Guest 발급, Member 로그인, Guest에서 Member로의 권한 상승 때 Session ID를 회전한다.
-- Session 초기 수명은 Idle 2시간, Absolute 24시간이다. 30초 재접속 유예와 별개다.
+- Session 초기 수명은 Idle 2시간, Absolute 24시간이다. 10초 재접속 유예와 별개다.
 - 상태 변경 HTTP는 허용 Origin·Referer와 `X-CSRF-Token`을 검사한다.
 - WebSocket Upgrade는 Cookie와 Origin을 검사하고 URL Query에 인증 Token을 넣지 않는다.
 - 비밀번호는 Argon2id로 저장한다. 비용 Parameter는 Linux Application Container 측정 후 고정한다.
@@ -129,8 +129,7 @@ Room/Game Snapshot·state_version 복구 대상으로 취급하지 않는다. �
 `/ws/v1/presence`에서 사용자별 중복을 제거해 전달한다. 이 전용 연결의 접속 확인 ping/pong은
 기존 Lobby/Room 수신 전용 상태 WS와 별개이며 인증 idle TTL·Ready·투표·게임 결과를 바꾸지 않는다.
 상세 권한/실패 처리는 [채팅](../backend/docs/chat-delivery.md), [접속자](../backend/docs/presence.md),
-[랭킹](../backend/docs/member-statistics.md)을 따른다. 채팅·접속자의 실제 Redis 구현·다중 Replica 연결과
-랭킹 MariaDB 실제 실행은 A-10 후속이며 현재 Memory 시험 성공으로 대체하지 않는다.
+[랭킹](../backend/docs/member-statistics.md)을 따른다. 현재 [Production 조립](../backend/src/seokpan/production.py)에는 Redis 채팅·접속자 Adapter와 MariaDB 랭킹 Adapter가 연결되어 있다. Memory 시험 성공은 실제 Provider·다중 Replica 실행 결과를 대신하지 않으며, 기존 통합과 추가 검증의 범위는 [1차 종료 시점 상태](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md) 및 원본 실행 기록에서 확인한다.
 
 CSRF 복구는 정확한 허용 Origin, `X-CSRF-Bootstrap: 1`, JSON 요청을 요구하며 Referer만으로 허용하지 않는다. 같은 세션의 CSRF를 반환할 뿐 Session ID·Idle/Absolute 만료·참가 상태를 바꾸지 않는다. 응답은 `Cache-Control: no-store`이고 일반 변경 API의 CSRF 검사는 유지한다. Frontend는 Token을 메모리에만 두고 실패한 명령을 자동 재전송하지 않는다. 구형 Session 자료 전환은 실제 배포 전 별도로 검토하며 자동 변환·삭제하지 않는다.
 
@@ -245,11 +244,11 @@ stone:v1:room:{room_id}:resolver:{turn_no}
 stone:v1:room:{room_id}:requests
 ```
 
-| Lifecycle | 초기값 |
+| Lifecycle | 기준값 |
 | --- | ---: |
 | Session Idle | 2시간 |
 | Session Absolute | 24시간 |
-| Disconnect Lease | 30초 |
+| Disconnect Lease | 10초 |
 | Resolver Lease | 5초 |
 | Command 결과 Dedupe | 24시간 |
 | Closed Room Tombstone | 10분 |
