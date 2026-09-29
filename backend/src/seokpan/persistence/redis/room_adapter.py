@@ -143,7 +143,9 @@ class RedisRoomRuntimeAdapter:
                     generation = _integer(connection, "generation")
                     if not connected and expires is not None and expires <= now_ms:
                         due.append(DueRoomDisconnect(room_id, participant, generation, expires))
-        except (RedisError, UnicodeDecodeError, RoomRuleViolation) as error:
+        except RedisError as error:
+            raise RedisProviderError() from error
+        except (UnicodeDecodeError, RoomRuleViolation) as error:
             raise RedisProviderError("REDIS_RESPONSE_INVALID") from error
         return tuple(
             sorted(

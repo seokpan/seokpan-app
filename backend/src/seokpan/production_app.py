@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from seokpan.health import RuntimeReadiness
-from seokpan.production import build_production_providers, production_resources
+from seokpan.persistence.redis.common import RedisProviderError
+from seokpan.production import (
+    ProductionProviderUnavailable,
+    _probe_database,
+    _probe_redis,
+    build_production_providers,
+    production_resources,
+)
 from seokpan.settings import Settings
 
 if TYPE_CHECKING:
@@ -28,29 +37,67 @@ def _is_transient_turn_error(error: Exception) -> bool:
 
 
 async def _run_background_services(
-    services: ApplicationServices, readiness: RuntimeReadiness
+    services: ApplicationServices,
+    readiness: RuntimeReadiness,
+    *,
+    recovery_probe: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     disconnects = services.disconnect_expiry
     turns = services.turn_resolution
     if disconnects is None or turns is None:
         readiness.mark_not_ready()
         raise RuntimeError("PRODUCTION_RUNNERS_REQUIRED")
+    retry_delay = 0.1
+    provider_unavailable = False
     try:
         while True:
-            await disconnects.run_once()
-            await turns.reconcile_game_invalidations()
             try:
-                await turns.run_once()
-            except Exception as error:
-                if not _is_transient_turn_error(error):
+                await disconnects.run_once()
+                await turns.reconcile_game_invalidations()
+                try:
+                    await turns.run_once()
+                except Exception as error:
+                    if not _is_transient_turn_error(error):
+                        raise
+                    _LOGGER.warning(
+                        "Transient turn snapshot race; retrying",
+                        extra={
+                            "event": "turn_resolution.snapshot_changed",
+                            "error_code": getattr(error, "code", None),
+                        },
+                    )
+                if provider_unavailable and recovery_probe is not None:
+                    try:
+                        await recovery_probe()
+                    except (
+                        OSError,
+                        TimeoutError,
+                        RedisError,
+                        SQLAlchemyError,
+                        ProductionProviderUnavailable,
+                    ):
+                        raise RedisProviderError() from None
+            except RedisProviderError as error:
+                if error.code != "REDIS_PROVIDER_UNAVAILABLE":
                     raise
-                _LOGGER.warning(
-                    "Transient turn snapshot race; retrying",
-                    extra={
-                        "event": "turn_resolution.snapshot_changed",
-                        "error_code": getattr(error, "code", None),
-                    },
+                readiness.mark_not_ready()
+                if not provider_unavailable:
+                    _LOGGER.warning(
+                        "Production background runner provider unavailable; retrying",
+                        extra={"event": "production.runner.provider_unavailable"},
+                    )
+                    provider_unavailable = True
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 2.0)
+                continue
+            if provider_unavailable:
+                _LOGGER.info(
+                    "Production background runner provider recovered",
+                    extra={"event": "production.runner.provider_recovered"},
                 )
+                provider_unavailable = False
+            retry_delay = 0.1
+            readiness.mark_ready()
             await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         raise
@@ -100,15 +147,19 @@ def create_production_app(settings: Settings) -> FastAPI:
             services = build_production_services(settings, build_production_providers(resources))
             runtime = create_app(settings=settings, services=services, readiness=readiness)
             async with runtime.router.lifespan_context(runtime):
+
+                async def probe_recovery() -> None:
+                    await _probe_database(resources.databases)
+                    await _probe_redis(resources.redis)
+
                 runner = asyncio.create_task(
-                    _run_background_services(services, readiness),
+                    _run_background_services(services, readiness, recovery_probe=probe_recovery),
                     name="seokpan-production-runner",
                 )
                 await asyncio.sleep(0)
                 if runner.done():
                     await runner
                 shell.state.runtime_application = runtime
-                readiness.mark_ready()
                 try:
                     yield
                 finally:
