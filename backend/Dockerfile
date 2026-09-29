@@ -2,7 +2,7 @@
 # 작성자: 최유준
 # 작성 날짜: 2026-09-04 (v2 - PR #48 팀 확정 스펙 반영, 2026-09-04 재작성)
 #
-# [확정 스펙 출처] 팀원 메시지(PR #48 적용 값, 2026-09-04)
+# [확정 스펙 출처] PR #48 적용 Baseline (2026-09-04)
 # - Base Image: python:3.13.15-slim-trixie
 # - uv: 0.12.5
 # - 실행 명령: uvicorn seokpan.app:app --app-dir src --host 0.0.0.0 --port 8000
