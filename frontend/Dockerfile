@@ -6,7 +6,7 @@
 # 제거함. backend/Dockerfile과 동일 원인(외부 frontend nested 실행 실패) —
 # 상세 근거는 backend/Dockerfile 주석 참고.
 #
-# [확정 스펙 출처] 팀원 메시지(PR #48 적용 값, 2026-09-04)
+# [확정 스펙 출처] PR #48에서 적용한 Container Runtime 기준 (2026-09-04)
 # - Build: Node.js 24.19.0, npm 12.0.2, npm ci && npm run build
 # - Runtime Image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24
 # - Container Port: 8080
