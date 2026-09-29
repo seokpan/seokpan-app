@@ -1,6 +1,6 @@
 # 브라우저 개발 실행과 직접 확인
 
-[App #56](https://github.com/seokpan/seokpan-app/issues/56), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-08 개발 실행 구성이다. 실제 DB·Redis 없이 서비스 흐름을 브라우저에 연결한다. 인증·실시간 로비·대기방에 이어 오목판·투표·결과·다음 판 화면까지 연결했다. 2026-09-08 독립 Chrome·Edge·Guest 실제 조작 이후 고정 Chromium의 자동 E2E도 2회 통과했다. [자동 시험 실행법](../../frontend/docs/browser-e2e.md)은 서버 시작/종료를 포함한다. Linux·CI·Provider 통합과 PR 직전 사용자 검토는 별도다.
+[App #56](https://github.com/seokpan/seokpan-app/issues/56), [Roadmap #3](https://github.com/seokpan/seokpan-app/issues/3)의 A-08 개발 실행 구성이다. 실제 DB·Redis 없이 서비스 흐름을 브라우저에 연결한다. 인증·실시간 로비·대기방에 이어 오목판·투표·결과·다음 판 화면까지 연결했다. 2026-09-08 독립 Chrome·Edge·Guest 실제 조작 이후 고정 Chromium의 자동 E2E도 2회 통과했다. [자동 시험 실행법](../../frontend/docs/browser-e2e.md)은 서버 시작/종료를 포함한다. Linux·CI·Provider 통합과 PR 직전 수동 수용 검토는 별도다.
 
 ## 실행 방법
 
@@ -64,7 +64,7 @@ Python 3.13 지원은 [websockets 17.1 배포 정보](https://pypi.org/project/w
 - Guest 로그인 실패 시 상태 유지, 게임 중 정상 로그인 시 같은 참가·팀·연결 유지. Guest로 시작한 판은 로그인 후에도 개인 Rating을 반영하지 않음.
 - 마지막 Member 연결 종료 때 Guest에게 일반적인 방 종료 안내 후 로비 복귀.
 
-후속 실행에서 Browser 방향키/Enter 투표·표 교체/취소와 320/390/1280px 화면 폭을 확인했다. 긴 방 이름 넘침은 수정했다. 독립 Browser 동시 조작·전체 키보드·정상 5목·자동 반복 E2E·사용자 검토는 남아 있다. 실제 Provider/배포 검증이 아니며 A-08 전체 완료로 표시하지 않는다. 시험 후 임시 탭·서버와 화면 크기 설정을 정리했다. 자세한 화면 규격과 검증 구분은 [Frontend 기록](../../frontend/docs/api-and-session.md)을 따른다.
+후속 실행에서 Browser 방향키/Enter 투표·표 교체/취소와 320/390/1280px 화면 폭을 확인했다. 긴 방 이름 넘침은 수정했다. 독립 Browser 동시 조작·전체 키보드·정상 5목·자동 반복 E2E·수동 수용 검토는 남아 있다. 실제 Provider/배포 검증이 아니며 A-08 전체 완료로 표시하지 않는다. 시험 후 임시 탭·서버와 화면 크기 설정을 정리했다. 자세한 화면 규격과 검증 구분은 [Frontend 기록](../../frontend/docs/api-and-session.md)을 따른다.
 
 2026-09-07 추가 실행에서 실제 Browser 흑팀의 A1~E1 정상 5목·승리선·본인 Rating 1000→1016을 확인했다. 상대는 별도 Cookie HTTP/WS 백팀이며 5초 턴을 사용했다. 무투표 Pass를 포함한 실제 종료 값은 Turn 49/Move 29였다. 결과 닫기 후 Ready 초기화와 지난 결과 재조회, 읽기 전용 보드의 Tab/Home/End/방향키/입력 무효도 확인했다. 제품 소스·Lock은 바꾸지 않았다. 독립 두 Browser와 버전 고정 반복 E2E는 여전히 별도 검증 대상이다.
 
@@ -75,7 +75,7 @@ Python 3.13 지원은 [websockets 17.1 배포 정보](https://pypi.org/project/w
 | 단계 | 누가·어디서 | 확인할 것 |
 | --- | --- | --- |
 | A-08 PR 작성 직전 | 정태훈, 작업 PC의 localhost | 가입/로그인·방 생성/입장·팀/Ready·투표·결과·같은 방 다음 판 |
-| A-08 사용자 검토 — PR 작성 직전 | 팀원과 같은 PC 또는 화면 공유. 각자 로컬 실행 시 서로 다른 시험 서버임 | 목업 방향·설명·버튼·오류·관전자 구분·가독성. 자동 시험 결과와 별도 기록 |
+| A-08 수동 수용 검토 — PR 작성 직전 | 동일 시험 서버 또는 화면 공유 환경. 각자 로컬 실행 시 서로 다른 시험 서버임 | 목업 방향·설명·버튼·오류·관전자 구분·가독성. 자동 시험 결과와 별도 기록 |
 | A-09/A-10 통합 준비 후 | 승인된 팀 공용 접근 경로 | 같은 서버에 여러 PC가 접속, 실제 DB/Redis·HTTPS/WSS·재접속·배포 경로 |
 
 처음부터 Production 통합 완료를 기다려 화면 검토를 미루지 않는다. 다만 localhost는 다른 팀원의 PC에서 같은 서버로 접속하는 주소가 아니다. 공용 접속은 배포 버전·접근 범위·CA 신뢰·시험 데이터·담당자 준비를 확인하고 승인받은 뒤 제공한다. 공식 외부 hostname이 정해져 있다는 사실만으로 현재 접속 가능한 서비스가 있다고 안내하지 않는다.
