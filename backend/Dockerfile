@@ -1,8 +1,8 @@
 #
 # 작성자: 최유준
-# 작성 날짜: 2026-09-04 (v2 - PR #48 팀 확정 스펙 반영, 2026-09-04 재작성)
+# 작성 날짜: 2026-09-04 (v2 - PR #48 적용 기준 반영, 2026-09-04 재작성)
 #
-# [확정 스펙 출처] 팀원 메시지(PR #48 적용 값, 2026-09-04)
+# [확정 스펙 출처] PR #48에서 적용한 Container Runtime 기준 (2026-09-04)
 # - Base Image: python:3.13.15-slim-trixie
 # - uv: 0.12.5
 # - 실행 명령: uvicorn seokpan.app:app --app-dir src --host 0.0.0.0 --port 8000
@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 # 실제 소스·Alembic 자산 복사 후 프로젝트 자체 설치
-# (migrations/audit/ 포함 — 팀 확정 스펙에 따라 제외하지 않음)
+# (migrations/audit/ 포함 — PR #48의 Runtime Image 자산 범위에 따라 제외하지 않음)
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
@@ -116,7 +116,7 @@ USER seokpan
 EXPOSE 8000
 
 # curl 미설치(slim 이미지) 전제 — Python 표준 라이브러리로 헬스체크
-# 경로는 /health/live (health.py 실제 라우트, 팀 확정 스펙과 일치)
+# 경로는 /health/live (health.py 실제 라우트 및 PR #48 적용 기준과 일치)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')" || exit 1
 
