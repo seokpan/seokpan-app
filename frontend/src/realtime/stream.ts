@@ -94,6 +94,7 @@ export class SnapshotStream<T extends { stream_version: number }> {
   }
   constructor(private readonly options: StreamOptions<T>) {}
   getSnapshot = () => this.#view;
+  canRefresh = () => this.#initial && this.#socket?.readyState === 1;
   subscribe = (listener: () => void) => {
     this.#listeners.add(listener);
     return () => {
@@ -197,7 +198,11 @@ export class SnapshotStream<T extends { stream_version: number }> {
         this.options.accessLost?.();
         return;
       }
-      if (this.#view.phase === "blocked") return;
+      if (this.#view.phase === "blocked") {
+        // The recovery view must update when its old socket is no longer refreshable.
+        this.#publish("blocked", this.#view.snapshot, this.#view.message, this.#view.blockReason);
+        return;
+      }
       if (event.code === 1000) {
         this.#publish("ended", null, "방 참여 상태를 확인하고 있습니다.");
         this.options.ended?.("access-ended");

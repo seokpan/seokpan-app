@@ -136,6 +136,7 @@ function ConnectedRoom({ stream, active }: { stream: SnapshotStream<RoomView>; a
         <div className={styles.recoveryActions} aria-label="연결 복구">
           {view.snapshot &&
             view.phase === "blocked" &&
+            stream.canRefresh() &&
             view.blockReason !== "connection-replaced" && (
               <button className={styles.secondaryButton} onClick={() => void stream.refresh()}>
                 상태 다시 확인

@@ -54,6 +54,18 @@ function setup(
   return { stream, socket, sockets, factory, read, ended, accessLost };
 }
 describe("receive-only snapshot stream", () => {
+  it("does not offer snapshot refresh after a reconnect factory failure", () => {
+    const { stream, factory } = setup();
+    factory.mockImplementationOnce(() => {
+      throw new Error("browser-only socket failure");
+    });
+    stream.reconnect();
+    vi.advanceTimersByTime(0);
+    expect(stream.getSnapshot()).toMatchObject({ phase: "blocked" });
+    expect(stream.getSnapshot().snapshot).not.toBeNull();
+    expect(stream.canRefresh()).toBe(false);
+  });
+
   it("discards an in-flight snapshot after the participant is kicked", async () => {
     let resolve!: (v: unknown) => void;
     const read = vi.fn<(_signal: AbortSignal) => Promise<unknown>>().mockImplementation(
