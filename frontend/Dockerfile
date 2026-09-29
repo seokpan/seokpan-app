@@ -65,10 +65,12 @@ FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:9b87ad3dd9f431c733f19d
 # 실제 Pod의 volumeMounts에 /tmp를 emptyDir로 마운트하는 건 GitOps Deployment 쪽 책임)
 
 # [추가, 2026-09-11] libuuid Trivy HIGH 7건(전부 Fixed Version 있음) 패치.
+# [추가, 2026-09-29] main Build #26/#27에서 검출된 libexpat HIGH
+# CVE-2026-93990(fixed=2.8.5-r0)도 같은 Alpine v3.24 Repository에서 패치.
 # apk 명령 실행을 위해 잠깐 root로 전환 후 즉시 원래 non-root(101)로 복귀.
 USER root
 RUN apk update && \
-    apk upgrade --no-cache libuuid && \
+    apk upgrade --no-cache libuuid libexpat && \
     rm -rf /var/cache/apk/*
 USER 101
 
