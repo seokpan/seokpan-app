@@ -15,7 +15,7 @@ Browser 문맥 실행을 명시하는 방식으로 보완하고 다시 검증했
 서버 연결 종료 중 기존 Vite ECONNABORTED·출력 색상 환경 경고는 기록하며 숨기지 않는다.
 사용자 5173/8000은 재시작/초기화하지 않았다. 별도 5174/5175/8001은 종료 확인했다.
 Backend 소스·API·실제 Provider는 이번 변경하지 않았다. [처리 경계](api-and-session.md).
-나머지 UX/UI 교정은 사용자 요청에 따라 추후 팀원 전원 테스트에서 진행한다. A-08 전체 승인·PR 완료는 아니다.
+나머지 UX/UI 교정은 후속 종합 수용 검증에서 진행한다. 이 실행만으로 A-08 전체 승인·PR 완료를 의미하지 않는다.
 
 ## 이전 전체 연결 검증 — 방 생성·입장 모달, 2026-09-08
 
@@ -29,7 +29,7 @@ Frontend **249 PASS/18 files/36.15초**, TypeScript/OpenAPI/Build PASS.
 초점·정원/방 종료·목록 유지와 기존 화면을 함께 검증했다. [모달 구현·검증](room-entry.md).
 Backend 코드는 이번에 변경하지 않았고 이전 818 PASS를 이번 재실행으로 표시하지 않는다.
 Vite의 연결 종료 ECONNABORTED 및 출력 색상 경고는 남았지만 이후 기능 시험과 대상 화면 pageerror 0을 확인했다.
-사용자 직접 확인·A-08 종합 검토와 Linux/실제 Provider 통합은 별도다.
+수동 수용 검토·A-08 종합 검토와 Linux/실제 Provider 통합은 별도다.
 
 ## 이전 전체 연결 검증 — 목업 기능 연결, 2026-09-08
 
@@ -49,7 +49,7 @@ Vite의 연결 종료 ECONNABORTED 및 출력 색상 경고는 남았지만 이�
   연결 종료 로그를 숨기거나 운영 네트워크 정상 검증으로 확대하지 않는다.
   `NO_COLOR`/`FORCE_COLOR` 출력 환경 경고도 남았다.
 - 자동 시험은 아래 전용 5175/8001을 사용하고 종료 후 두 포트의 Listen이 없음을 확인했다.
-  사용자 5173/8000 서버를 재사용·중단하지 않았다.
+  기존 수동 시험용 5173/8000 서버를 재사용·중단하지 않았다.
 
 이 시점에는 방 생성·비공개 입장의 모달 전환이 남아 있었다. 후속 결과는 상단 기록을 따른다.
 아래 개별 기능의 합성 시험은 이전 실행 기록이며 이번 전체 연결 시험과 구분한다.
@@ -69,13 +69,13 @@ Frontend Unit 최종 **208 PASS/25.68초**, TypeScript/OpenAPI/Build PASS.
 ## 강퇴 화면 합성 검증 — 2026-09-08
 
 `node scripts/browser-e2e.mjs test --config playwright.ui.config.ts --repeat-each=2`:
-6개 시나리오 × 2회, **12 PASS / 10.6초**, 재시도 0. 기존 사용자 시험 서버와 분리한
+6개 시나리오 × 2회, **12 PASS / 10.6초**, 재시도 0. 기존 수동 시험 서버와 분리한
 5174 Vite를 사용하고 HTTP/WebSocket은 시험 자료로 대체한다. 실제 Backend/DB/Redis E2E 결과가 아니다.
 
 - 1280/390px 강퇴 버튼→대상 확인, 취소 기본 초점, Escape→원래 버튼 복귀, 확인창의 화면 폭,
   단일 POST·선택 당시 방 버전·대상 제거, 방장 Board/Socket 유지.
 - 기존 대기→게임 보드 유지, 가입 모달, 투표/결과 전환 검증도 함께 반복했다.
-- 390px 강퇴 확인창 Screenshot을 직접 확인했다. 사용자 수용 확인을 대신하지 않는다.
+- 390px 강퇴 확인창 Screenshot을 직접 확인했다. 이 자동 시험은 별도의 수동 수용 검토를 대신하지 않는다.
 - Frontend Unit **185 PASS / 25.20초**, TypeScript/OpenAPI 일치/Vite Build PASS.
 - Backend Headless HTTP/WS는 별도 pytest에서 로그인 유지·대상 Socket 종료·게임 중 거절,
   Guest 로그인 전환 경합을 검증한다. 새 기능의 실제 Browser↔Backend 전체 흐름은 후속 재검증 대상이다.
