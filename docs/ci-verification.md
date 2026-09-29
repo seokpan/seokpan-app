@@ -220,16 +220,16 @@ GitHub의 `This commit cannot be built`는 이 결과에 대한 포괄적 표시
 - 합성 상태별 판정, 괄호/공백이 포함된 프로세스 이름, 읽기 실패, 종료 지연과 미종료 거부를 회귀 시험으로 추가했다. 기존 실제 부모/자식 종료와 무관한 프로세스 보존 검사를 유지한다.
 - 실행 함수 `backend/scripts/verify_ci.py`와 `frontend/scripts/ci-process.mjs`의 종료 로직은 변경하지 않았다. 서비스 코드·Lock·Jenkinsfile·Dockerfile·Infra/GitOps 변경도 없다. 실제 Linux 재현에서 종료 로직 결함이 확인되면 별도로 보완한다.
 
-### Linux Python·Node 원인 재현 — 사용자 실행 결과
+### Linux Python·Node 원인 재현 — cp-01 실행 결과
 
-2026-09-09 사용자가 cp-01에서 일회성 Pod를 각각 실행하고 출력을 전달했다. 두 Pod 모두 UID 1000, ServiceAccount Token 자동 Mount 없음, 읽기 전용 Root Filesystem과 임시 `/tmp`로 구성한 별도 진단이다. Jenkins 설정·실제 DB/Redis·서비스 배포는 변경하지 않았다.
+2026-09-09 cp-01에서 일회성 Pod를 각각 실행해 확보한 터미널 출력을 기준으로 정리했다. 두 Pod 모두 UID 1000, ServiceAccount Token 자동 Mount 없음, 읽기 전용 Root Filesystem과 임시 `/tmp`로 구성한 별도 진단이다. Jenkins 설정·실제 DB/Redis·서비스 배포는 변경하지 않았다.
 
 | 구분 | Pod (`cicd`) | Jenkins와 같은 고정 이미지 |
 | --- | --- | --- |
 | Python 3.13.15 | `app-pr61-python-exit-check` | `harbor.seokpan.soldesk.store/seokpan/ci-python@sha256:8baf6c1f6910e2909c9b1ac38b93f782ca79d5859daf1f35ae6a085e1dd37bad` |
 | Node 24.19.0 | `app-pr61-node-exit-check` | `node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43` |
 
-| 시나리오 | 사용자 출력에서 확인한 결과 |
+| 시나리오 | 터미널 출력에서 확인한 결과 |
 | --- | --- |
 | 그룹 종료 | Python·Node 각각 3회 모두 부모 PID 소멸, 자식 상태 `Z`, 자식 PID 조회 성공. 기존 PID 소멸 판정은 각각 3회 모두 false |
 | 부모만 종료하는 결함 모사 | Python·Node 각각 1회 자식 상태 `S`가 남았고 실행 종료로 인정하지 않음 |
@@ -255,7 +255,7 @@ Backend 테스트 파일은 첫 Run부터 동일하며, Frontend의 같은 문�
 
 ### 실제 Node 원본 파일 Linux 시험 — 2026-09-09
 
-다음은 cp-01에서 `cicd/app-pr61-node-source-check` 일회성 Pod를 실행한 담당자가 제공한 터미널 출력의 요약이다. 앞선 독립 진단과 달리 GitHub의 아래 Commit에서 원본 두 파일을 내려받아 SHA-256 일치 후 그대로 실행한 결과다.
+다음은 cp-01에서 실행한 `cicd/app-pr61-node-source-check` 일회성 Pod의 터미널 출력 요약이다. 앞선 독립 진단과 달리 GitHub의 아래 Commit에서 원본 두 파일을 내려받아 SHA-256 일치 후 그대로 실행한 결과다.
 
 | 항목 | 결과 |
 | --- | --- |
@@ -274,7 +274,7 @@ Backend 테스트 파일은 첫 Run부터 동일하며, Frontend의 같은 문�
 
 실제 다섯 시험은 상태·조회 오류 구분, 종료 지연·미종료 거부, 명령 성공/실패/시작 실패, timeout 시 부모·자식 종료와 무관한 프로세스 보존, 잘못된 timeout 거부다. 모두 `ok`였으며 원본 테스트 코드나 실행 함수를 수정하지 않았다. 표준 Node 모듈만 사용했고 npm 설치·Python·실제 Provider는 필요하지 않았다. 이 결과는 Frontend 도구 전체 81개나 전체 Linux CI 실행 결과가 아니다.
 
-동일 Commit의 [Jenkins GitHub status](https://api.github.com/repos/seokpan/seokpan-app/commits/230a1ba5817f1074c873a34b2cdbb022bf117bcf/status)는 `continuous-integration/jenkins/pr-head=success`, Build #3을 가리킨다. 이는 API로 직접 확인한 상태이며 이번 기록에서 Build #3 Console의 개별 시험 수를 새로 집계한 것은 아니다. 별도 Node 시험의 근거는 위 담당자 제공 출력이며 Jenkins 결과와 구분한다.
+동일 Commit의 [Jenkins GitHub status](https://api.github.com/repos/seokpan/seokpan-app/commits/230a1ba5817f1074c873a34b2cdbb022bf117bcf/status)는 `continuous-integration/jenkins/pr-head=success`, Build #3을 가리킨다. 이는 API로 직접 확인한 상태이며 이번 기록에서 Build #3 Console의 개별 시험 수를 새로 집계한 것은 아니다. 별도 Node 시험의 근거는 위 cp-01 일회성 Pod 실행 출력이며 Jenkins 결과와 구분한다.
 
 이 결과를 추가하는 문서 전용 Commit은 검증 대상 Commit `230a1ba`와 구분한다. 코드·테스트·Lock·실행 설정이 바뀌면 해당 검증을 다시 수행하며, 문서만 바뀌어도 새 Head의 Jenkins 결과와 재리뷰를 확인한 뒤 병합한다. 기존 Windows 전체 Run도 새 Commit의 실행 결과로 다시 표시하지 않는다.
 
