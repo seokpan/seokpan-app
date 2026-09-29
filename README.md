@@ -6,11 +6,11 @@ Kubernetes 배포 상태는 [`seokpan-gitops`](https://github.com/seokpan/seokpa
 
 ## 애플리케이션 개요
 
-MariaDB를 **영속 데이터의 권위 저장소**로, Redis를 **Runtime State 저장소**로 분리해서 사용합니다.
+MariaDB를 **영속 데이터의 기준 저장소**로, Redis를 **Runtime State 저장소**로 분리해서 사용합니다.
 
 ![HTTP·WebSocket 경계와 MariaDB·Redis의 상태 저장 책임](docs/images/application-state.svg)
 
-브라우저의 상태 변경은 HTTP API로 처리하고, WebSocket은 Snapshot과 Event 전달에 사용합니다. Backend Replica는 공통 MariaDB·Redis Provider를 사용합니다. [Provider 조립 코드](backend/src/seokpan/production.py)와 아래 API·상태별 문서에서 세부 계약을 확인할 수 있습니다.
+브라우저의 상태 변경은 HTTP API로 처리하고, WebSocket은 Snapshot과 Event 전달에 사용합니다. Backend Replica는 공통 MariaDB·Redis Provider를 사용합니다. [Provider 조립 코드](backend/src/seokpan/production.py)와 아래 API·상태별 문서에서 세부 처리 규칙을 확인할 수 있습니다.
 
 | State | Owner | 관련 문서 |
 |---|---|---|
