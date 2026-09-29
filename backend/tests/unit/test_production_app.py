@@ -136,7 +136,7 @@ def test_non_transient_provider_failure_still_fails_production_runner(
         disconnect_expiry=SimpleNamespace(run_once=AsyncMock()),
         turn_resolution=SimpleNamespace(
             reconcile_game_invalidations=AsyncMock(return_value=0),
-            run_once=AsyncMock(side_effect=RedisProviderError("REDIS_PROVIDER_UNAVAILABLE")),
+            run_once=AsyncMock(side_effect=RedisProviderError("REDIS_RESPONSE_INVALID")),
         ),
         realtime_api=SimpleNamespace(registry=SimpleNamespace(end_runtime=Mock())),
     )
@@ -144,12 +144,126 @@ def test_non_transient_provider_failure_still_fails_production_runner(
 
     shell = create_production_app(Settings(environment="production"))
     with (
-        pytest.raises(RedisProviderError, match="REDIS_PROVIDER_UNAVAILABLE"),
+        pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"),
         TestClient(shell),
     ):
         raise AssertionError("non-transient provider failure must fail startup")
     services.turn_resolution.reconcile_game_invalidations.assert_awaited_once()
     services.turn_resolution.run_once.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_provider_outage_recovers_without_ending_registry() -> None:
+    failure_seen = asyncio.Event()
+    recovery_seen = asyncio.Event()
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            failure_seen.set()
+            raise RedisProviderError()
+        recovery_seen.set()
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    readiness = RuntimeReadiness(ready=True)
+    task = asyncio.create_task(production_app_module._run_background_services(services, readiness))
+    try:
+        await asyncio.wait_for(failure_seen.wait(), timeout=1)
+        assert readiness.ready is False
+        await asyncio.wait_for(recovery_seen.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert readiness.ready is True
+        assert calls >= 2
+        registry.end_runtime.assert_not_called()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_runtime_recovery_waits_for_provider_probes() -> None:
+    failure_seen = asyncio.Event()
+    probe_recovered = asyncio.Event()
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            failure_seen.set()
+            raise RedisProviderError()
+
+    async def probe() -> None:
+        if not probe_recovered.is_set():
+            raise ConnectionError("database temporarily unavailable")
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    readiness = RuntimeReadiness(ready=True)
+    task = asyncio.create_task(
+        production_app_module._run_background_services(services, readiness, recovery_probe=probe)
+    )
+    try:
+        await asyncio.wait_for(failure_seen.wait(), timeout=1)
+        assert readiness.ready is False
+        await asyncio.sleep(0.15)
+        assert calls >= 2
+        assert readiness.ready is False
+        registry.end_runtime.assert_not_called()
+        probe_recovered.set()
+        async with asyncio.timeout(2):
+            while not readiness.ready:
+                await asyncio.sleep(0.01)
+        registry.end_runtime.assert_not_called()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_runtime_invalid_response_still_ends_registry_after_success() -> None:
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    readiness = RuntimeReadiness()
+
+    with pytest.raises(RedisProviderError, match="REDIS_RESPONSE_INVALID"):
+        await production_app_module._run_background_services(services, readiness)
+
+    assert calls == 2
+    assert readiness.ready is False
+    registry.end_runtime.assert_called_once()
 
 
 def test_production_shell_rejects_missing_mandatory_runner(
@@ -184,7 +298,7 @@ def test_production_shell_rejects_missing_mandatory_runner(
         assert str(error) == "PRODUCTION_RUNNERS_REQUIRED"
 
 
-def test_invalidation_provider_failure_is_not_masked_by_turn_processing(
+def test_invalidation_provider_outage_keeps_runner_not_ready_without_turn_processing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
@@ -203,14 +317,12 @@ def test_invalidation_provider_failure_is_not_masked_by_turn_processing(
     _patch_production_shell(monkeypatch, services, events)
 
     shell = create_production_app(Settings(environment="production"))
-    with (
-        pytest.raises(RedisProviderError, match="REDIS_PROVIDER_UNAVAILABLE"),
-        TestClient(shell),
-    ):
-        raise AssertionError("invalidation provider failure must fail startup")
-
+    with TestClient(shell) as client:
+        assert client.get("/health/ready").status_code == 503
+        turns.run_once.assert_not_awaited()
+        registry.end_runtime.assert_not_called()
     assert shell.state.runtime_application is None
-    turns.reconcile_game_invalidations.assert_awaited_once()
+    assert turns.reconcile_game_invalidations.await_count >= 1
     turns.run_once.assert_not_awaited()
     registry.end_runtime.assert_called_once()
     assert events[-1] == "resources-close"

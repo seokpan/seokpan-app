@@ -233,6 +233,21 @@ async def test_provider_error_is_sanitized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_due_disconnect_scan_transport_failure_is_unavailable_not_invalid() -> None:
+    class FailingScanClient(EmulatedRoomRedisClient):
+        async def scan_iter(self, *, match: str, count: int):
+            del match, count
+            raise RedisConnectionError("redis://user:secret@redis.platform.svc")
+            yield b""  # Keep this an async iterator.
+
+    adapter = RedisRoomRuntimeAdapter(FailingScanClient(ManualClock()))
+    with pytest.raises(RedisProviderError) as caught:
+        await adapter.due_disconnects(now_ms=1_000, limit=1)
+    assert caught.value.code == "REDIS_PROVIDER_UNAVAILABLE"
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_schema_guard_is_sent_and_precedes_any_lua_state_write() -> None:
     client = EmulatedRoomRedisClient(ManualClock(now_ms=1_000))
     adapter = RedisRoomRuntimeAdapter(client)

@@ -20,7 +20,9 @@ Production의 필수 설정 이름은 다음과 같습니다.
 
 ## 시작·준비·종료
 
-시작 순서는 역할별 MariaDB Engine → Redis Client → 두 DB의 `SELECT 1` → Redis `PING` → 전체 Service/Runner 조립입니다. 필수 Runner가 시작된 뒤에만 Runtime 요청을 전달하고 `/health/ready`를 200으로 엽니다. 설정 오류, Provider 연결 실패 또는 Runner 조기 종료는 준비 완료로 오인하지 않습니다.
+시작 순서는 역할별 MariaDB Engine → Redis Client → 두 DB의 `SELECT 1` → Redis `PING` → 전체 Service/Runner 조립입니다. 필수 Runner가 첫 반복을 정상 완료한 뒤에만 `/health/ready`를 200으로 엽니다. 설정 오류, Provider 연결 실패 또는 Runner 조기 종료는 준비 완료로 오인하지 않습니다.
+
+Runner 실행 중 Redis 연결 오류(`REDIS_PROVIDER_UNAVAILABLE`)가 발생하면 즉시 Ready를 내리고, Registry와 Runner Task를 유지한 채 0.1초부터 최대 2초까지 증가하는 간격으로 재시도합니다. 정상 반복 뒤 두 DB `SELECT 1` 및 Redis `PING`을 다시 통과해야 Ready를 복구합니다. 이 동안 `/health/live`는 Process 응답성만 확인하며 외부 Provider 장애를 Pod 재시작으로 확대하지 않습니다. Provider가 계속 불가하면 Ready는 503으로 유지되므로 운영자는 Endpoint/Argo 상태와 정제된 `production.runner.provider_unavailable`·`production.runner.provider_recovered` Event를 확인해야 합니다. 비정상 응답·Schema 불일치 같은 `REDIS_RESPONSE_INVALID`는 재시도 대상으로 뭉개지 않고 기존의 Runner 종료·NotReady 경계를 유지합니다. 이 경우 Pod 수동 교체만으로 원인이 해결됐다고 판정하지 않습니다.
 
 종료 시 readiness를 먼저 내리고 WebSocket Runtime을 종료한 뒤 Runner를 취소·회수합니다. 이후 Redis Client와 두 DB Engine을 닫습니다.
 
