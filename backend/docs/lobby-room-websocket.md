@@ -19,7 +19,7 @@ HTTP 명령 성공
 → 필요하면 HTTP Snapshot 재조회
 ```
 
-현재 구현은 In-memory Event Adapter를 사용하는 Headless 단계입니다. 실제 Redis Pub/Sub, 여러 Backend Replica 사이의 Socket 소유권, Gateway WSS 동작을 검증한 결과가 아닙니다.
+현재 [Production 조립](../src/seokpan/production.py)은 Redis 기반 Room·Realtime Adapter를 연결합니다. In-memory Event Adapter는 Headless 시험용이며 현재 구현 전체를 뜻하지 않습니다. 기존 실제 통합 결과는 [1차 종료 시점 상태](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)와 원본 실행 기록에서 추적합니다. Source 연결, 과거 Headless 시험, 실제 다중 Replica·장애 검증은 구분합니다.
 
 ### A-08 열린 연결의 인증 재검사
 
@@ -30,7 +30,7 @@ Session 재검사를 추가했습니다. 첫 Snapshot과 일반 Event 전송 전
 
 - `find/get`만 호출하므로 검사 자체는 Idle/Absolute TTL을 연장하지 않습니다.
 - 실제 Session 만료/폐기는 4401로 닫습니다. 아직 Room에 참여 중이면 기존 Participant/Generation
-  단절 처리로 이어져 Vote 제거·방장 승계·Ready·30초 유예 규칙을 적용합니다. 로그아웃/명시적
+  단절 처리로 이어지며 Vote 제거·10초 유예·방장 승계·Ready 처리는 아래 연결 단절 계약을 따릅니다. 로그아웃/명시적
   퇴장으로 이미 참여가 끝난 경우에는 일반 퇴장/방 종료 알림과 종료를 유지하며 중복 단절 처리하지 않습니다.
 - 정상 Guest→Member 전환은 서버의 Room 참가 매핑으로 새 Session을 확인합니다. Cookie가
   바뀌었다는 이유만으로 같은 참가자의 Socket을 끊거나 이전 Token을 다시 유효하게 만들지 않습니다.
@@ -39,8 +39,8 @@ Session 재검사를 추가했습니다. 첫 Snapshot과 일반 Event 전송 전
 - 수신 대기 Task는 종료 시 취소·정리합니다. Frontend도 이미 오류로 조작이 막힌 상태에서 받은
   4401을 무시하지 않고 신원을 다시 확인합니다.
 
-검증은 로컬 Headless/Fake 기준입니다. 실제 Redis의 전환 중 읽기·폐기 전달·조회 빈도/지연·
-다중 Backend·Gateway WSS·플랫폼 장애 시 게임 전체 보호는 A-10의 별도 통합 검증입니다.
+이 절의 A-08 검증은 로컬 Headless/Fake 기준입니다. 실제 Redis의 전환 중 읽기·폐기 전달·조회 빈도/지연·
+다중 Backend·Gateway WSS·플랫폼 장애 시 게임 전체 보호는 별도 실행 근거로 판단하며 이 로컬 결과로 대신하지 않습니다.
 
 ## 연결과 첫 Snapshot
 
@@ -79,7 +79,7 @@ HTTP 복구와 첫 Socket Snapshot은 같은 읽기 검사를 사용합니다. �
 `503 SNAPSHOT_CHANGED`, Socket은 1011로 종료해 복구를 재시도하게 합니다.
 메시지는 상태 저장 뒤 발행되므로 자료가 알림보다 앞설 수 있습니다. 이 번호는 별도의
 DB/Redis Transaction 완료 번호가 아니며, 이후 알림과 Resource Version을 함께 확인해야 합니다.
-실제 Redis·다중 Backend에서 같은 보장이 성립하는지는 A-10 검증 대상입니다.
+실제 Redis·다중 Backend의 보장은 해당 통합·동시성 검증 근거와 함께 확인합니다.
 
 Room은 연결 등록 후의 상태를 첫 Snapshot으로 보내므로 재접속한 참가자의 `connected`와
 `can_vote`를 이전 단절 상태로 보내지 않습니다. 첫 Snapshot을 읽는 동안 대기열에 쌓였던
@@ -97,15 +97,18 @@ Room 연결은 기존 Room Runtime의 `connection_generation`을 사용합니다
 
 참가자가 HTTP로 명시적 퇴장하면 해당 참가자의 Room Socket도 `room.participant_left`를 전달한 뒤 닫습니다. Guest→Member 전환처럼 Session 식별값이 바뀐 뒤에도 이미 인증된 Socket의 종료 처리는 연결 시 확인한 Participant ID와 Generation을 사용하므로 새 Session의 참가 상태를 놓치지 않습니다.
 
-일반 Socket 단절은 즉시 다음 처리를 수행합니다.
+일반 Socket 단절은 다음과 같이 처리합니다.
 
-- 현재 Turn의 마감 전 Vote 제거
-- 필요하면 방장 즉시 승계와 모든 Ready 해제
-- 참가자는 제거하지 않고 30초 Disconnect Lease 시작
+- 현재 Turn의 마감 전 Vote는 즉시 제거합니다.
+- 참가자를 즉시 제거하지 않고 Redis `TIME` 기준 10초 Disconnect Lease를 시작합니다.
+- 유예 동안 참가자·팀·진행 중 Game 상태와 기존 방장/Ready 의도를 보존합니다. 단절만으로 방장을 즉시 승계하거나 모든 Ready를 해제하지 않습니다.
+- `connected=false` 참가자는 유예 중에도 최소 Ready·양 팀 Ready·Game Start PLAYER 자격에서 제외하며, 연결이 끊긴 방장은 Game을 시작할 수 없습니다.
 
-유예 안에 다시 연결하면 참가자·팀·진행 중 Game 상태는 유지하지만 이전 Vote와 방장 권한은 복원하지 않습니다. `room.participant_left`는 명시적 퇴장 또는 유예 만료 뒤에만 전달합니다.
+유예 안에 같은 참가자가 새 Generation으로 연결하면 보존한 상태를 이어받지만 이전 Vote는 자동 복원하지 않습니다. 방장의 유예가 만료되면 접속 중인 가장 이른 Member에게 단 한 번 승계하고 모든 Ready를 해제하며, 승계할 Member가 없으면 Room을 종료합니다. 명시적 Leave/Logout처럼 이탈이 확정되면 유예 없이 이탈 규칙을 적용합니다. 이미 승계가 끝난 이전 방장이 나중에 재접속해도 방장 권한은 자동 복귀하지 않습니다. `room.participant_left`는 명시적 퇴장 또는 유예 만료 뒤에만 전달합니다.
 
-`DisconnectExpiryRunner`는 만료 대상을 다시 읽어 현재 Generation과 Room Version을 확인한 뒤 제거합니다. 동일 대상을 다시 처리하면 상태를 중복 변경하지 않습니다. 실제 Redis 만료 대상 자료구조와 여러 Runner의 경쟁은 Provider 통합 단계에서 검증합니다.
+계약과 시간 상수는 [Application MVP 구현 기준](../../docs/mvp-implementation-baseline.md#연결-단절과-방장-승계) 및 [`ROOM_DISCONNECT_LEASE_MS`](../src/seokpan/room/application/runtime.py)를 따릅니다. Backend·Redis·플랫폼 오류는 개인 이탈과 구분하며, 이 문서 변경으로 오류별 실행 검증 완료를 추가하지 않습니다.
+
+`DisconnectExpiryRunner`는 만료 대상을 다시 읽어 현재 Generation과 Room Version을 확인한 뒤 제거합니다. 동일 대상을 다시 처리하면 상태를 중복 변경하지 않습니다. 실제 Redis 만료 대상 자료구조와 여러 Runner의 경쟁은 별도 Provider 검증 근거로 확인합니다.
 
 ## Event와 실패 처리
 
@@ -134,9 +137,11 @@ Snapshot 구성 또는 Event 구독 준비가 실패한 연결은 참가자 퇴�
 
 ## 현재 검증과 남은 연동
 
-Headless 테스트는 Cookie·Origin·Query Token 거부, 첫 Snapshot, Room 권한, 연결 교체, 방장 승계·Ready 해제, Vote 제거, 30초 만료, Room 종료 안내, Queue 상한과 Event 실패 뒤 상태 보존을 확인합니다. 또한 Room과 Game/Vote Resource Version 분리, Room Stream 순서, Game 시작·Vote 집계·Turn 마감·Move·Pass·종료 Event의 순서와 공개 Payload를 확인합니다.
+아래는 A-07/A-08 Headless 단계의 검증 이력과 당시 후속 연결 범위입니다. 당시 유예 시간은 30초였으며, 현재 계약은 위의 10초 기준입니다. 과거 시험을 10초 정책의 신규 실행 결과로 바꾸지 않습니다.
 
-다음 항목은 후속 작업입니다.
+Headless 테스트는 Cookie·Origin·Query Token 거부, 첫 Snapshot, Room 권한, 연결 교체, 방장 승계·Ready 해제, Vote 제거, 유예 만료, Room 종료 안내, Queue 상한과 Event 실패 뒤 상태 보존을 확인했습니다. 또한 Room과 Game/Vote Resource Version 분리, Room Stream 순서, Game 시작·Vote 집계·Turn 마감·Move·Pass·종료 Event의 순서와 공개 Payload를 확인했습니다.
+
+다음은 당시 Provider·Frontend 단계로 연결했던 항목입니다. 현재 모두 미구현이라는 뜻이 아니며, 기존 완료 결과와 추가 검증은 상단의 상태 기록 및 각 원본 근거에서 구분합니다.
 
 - `PLAYING` Room 종료의 `SYSTEM_INVALID` Game 기록 연결
 - Redis Pub/Sub과 만료 대상 조회
