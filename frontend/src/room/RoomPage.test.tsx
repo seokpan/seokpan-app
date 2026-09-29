@@ -161,6 +161,24 @@ function mount(fetcher: typeof fetch) {
 }
 
 describe("room HTTP and receive-only connection integration", () => {
+  it("does not offer a no-op snapshot refresh after a blocked socket closes", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (url === "/api/v1/session/csrf")
+        return json({ ...identity, room_id: "r1", participant_id: "p1" });
+      throw new Error(`Unexpected endpoint ${url}`);
+    });
+    const { sockets } = mount(fetcher);
+    await waitFor(() => expect(sockets.has("/ws/v1/rooms/r1")).toBe(true));
+    const socket = sockets.get("/ws/v1/rooms/r1")!;
+    act(() => socket.message(event("room.snapshot", 8, { room, game: null }, "r1")));
+    act(() => socket.message({ ...event("room.ready_changed", 9, {}, "r1"), schema_version: 99 }));
+    expect(screen.getByRole("button", { name: "상태 다시 확인" })).toBeVisible();
+
+    act(() => socket.disconnect(1006));
+    expect(screen.queryByRole("button", { name: "상태 다시 확인" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 연결" })).toBeVisible();
+  });
+
   it("allows an explicit leave from a disconnected snapshot and retries only a definite stale rejection", async () => {
     let left = false;
     let leaveCalls = 0;
