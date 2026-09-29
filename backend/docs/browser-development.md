@@ -53,7 +53,7 @@ Python 3.13 지원은 [websockets 17.1 배포 정보](https://pypi.org/project/w
 - `tests/http/test_development_runtime.py`: 환경/Provider 설정 거부, Clock·동률 선택, Task 시작/종료·예외·장기 정지, 자동 Pass/공동 패배와 Disconnect 유예 만료, 서버 중단 시 방장 보존.
 - `tests/http/test_development_network.py`: 임시 loopback TCP Uvicorn을 실제로 기동해 Cookie·CSRF 복구, WebSocket Snapshot·프로토콜 Ping/Pong, HTTP/WS 외부 Origin 거부, 서버 종료를 검사한다. 자동으로 임시 Port를 할당한다.
 - 같은 `check_connection`을 Vite `localhost:5173` 경유로 별도 실행했다. Proxy HTTP/WS·CSRF·Origin·Ping/Pong PASS. 시험용 서버 두 개는 확인 후 종료했다.
-- 위 시험은 실제 브라우저 렌더링·브라우저 Cookie 정책·사용성·WSS/Gateway/HAProxy 시험이 아니다. Component·Browser E2E와 사용자 직접 확인은 화면 연결 후 수행한다.
+- 위 시험은 실제 브라우저 렌더링·브라우저 Cookie 정책·사용성·WSS/Gateway/HAProxy 시험이 아니다. Component·Browser E2E와 수동 수용 검토는 화면 연결 후 수행한다.
 
 2026-09-07 화면 연결 후 내장 브라우저와 별도 Cookie의 HTTP/WS 시험 사용자를 연결해 다음을 확인했다. 상대 사용자는 공개 API만 사용했으며 서버 Clock이나 내부 상태를 강제로 바꾸지 않았다.
 
