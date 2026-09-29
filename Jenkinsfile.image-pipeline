@@ -630,15 +630,14 @@ PYEOF
                                 def targetImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/${repo}:${env.CANDIDATE_TAG}"
                                 def checkerImage = "${env.HARBOR_HOST}/${env.HARBOR_PROJECT}/ci-python@sha256:19349910928096e034c1e45b51f3b446e95e152b2525695afe8fc791914b49a5"
 
-                                // [반영, apps/backend·frontend/deployment.yaml 대조]
-                                // 실제 운영 Deployment의 securityContext와 최대한 동일하게 맞춤.
+                                // [현행화, apps/backend·frontend/deployment.yaml 대조]
+                                // Image Smoke의 securityContext는 현재 운영 Deployment의 핵심 제약을 따른다.
                                 // Backend: runAsNonRoot/runAsGroup/allowPrivilegeEscalation:false/
                                 //   capabilities drop ALL까지 정확히 일치.
-                                // Frontend: 공유해주신 deployment.yaml에는 readOnlyRootFilesystem이
-                                //   명시돼 있지 않았음(replicas:0인 미완성 상태라 아직 안 채워진
-                                //   것일 수 있음) — Dockerfile 주석상 read-only 대응이 되어 있다고
-                                //   했으므로 이쪽은 그대로 true 유지, 실제 Deployment 쪽에 나중에
-                                //   추가되면 그때 다시 대조 필요.
+                                // Frontend: 현재 GitOps Deployment는 replicas:2 및
+                                //   readOnlyRootFilesystem:true를 명시한다. Smoke도 read-only를 유지하되,
+                                //   이 주석은 Deployment의 모든 보안 필드를 완전히 복제한다는 뜻이 아니다.
+                                //   GitOps securityContext가 바뀌면 다시 대조한다.
                                 def extraSecCtx = component == 'backend' ? '''
                                               runAsNonRoot: true
                                               runAsGroup: ''' + cfg.uid + '''
