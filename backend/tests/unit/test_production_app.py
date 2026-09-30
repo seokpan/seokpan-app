@@ -1,8 +1,11 @@
 import asyncio
+import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from threading import Event
+from time import monotonic, sleep
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +18,15 @@ from seokpan.health import router as health_router
 from seokpan.persistence.redis.common import RedisProviderError
 from seokpan.production_app import create_production_app
 from seokpan.settings import Settings
+
+
+def test_fatal_runner_shutdown_uses_process_sigterm() -> None:
+    with (
+        patch.object(production_app_module.os, "getpid", return_value=12345),
+        patch.object(production_app_module.os, "kill") as kill,
+    ):
+        production_app_module._request_process_shutdown()
+    kill.assert_called_once_with(12345, signal.SIGTERM)
 
 
 def _patch_production_shell(
@@ -126,6 +138,80 @@ def test_transient_snapshot_race_does_not_drop_production_readiness(
         assert turns.reconcile_game_invalidations.await_count >= 1
         assert turns.run_once.await_count >= 1
         assert registry.end_runtime.call_count == 0
+
+
+def test_late_fatal_runner_error_requests_process_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    failure_seen = Event()
+    shutdown_requested = Mock()
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            failure_seen.set()
+            raise RedisProviderError("REDIS_RESPONSE_INVALID")
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    _patch_production_shell(monkeypatch, services, events)
+    monkeypatch.setattr(production_app_module, "_request_process_shutdown", shutdown_requested)
+
+    with TestClient(create_production_app(Settings(environment="production"))) as client:
+        assert failure_seen.wait(2)
+        deadline = monotonic() + 2
+        while shutdown_requested.call_count == 0 and monotonic() < deadline:
+            sleep(0.01)
+        shutdown_requested.assert_called_once_with()
+        assert client.get("/health/ready").status_code == 503
+        assert client.get("/health/live").status_code == 200
+        registry.end_runtime.assert_called_once()
+
+
+def test_persistent_provider_outage_does_not_request_process_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    four_retries_seen = Event()
+    shutdown_requested = Mock()
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls >= 4:
+            four_retries_seen.set()
+        raise RedisProviderError("REDIS_PROVIDER_UNAVAILABLE")
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    _patch_production_shell(monkeypatch, services, events)
+    monkeypatch.setattr(production_app_module, "_request_process_shutdown", shutdown_requested)
+
+    with TestClient(create_production_app(Settings(environment="production"))) as client:
+        assert four_retries_seen.wait(2)
+        assert client.get("/health/ready").status_code == 503
+        assert client.get("/health/live").status_code == 200
+        assert services.turn_resolution.run_once.await_count == 0
+        registry.end_runtime.assert_not_called()
+        shutdown_requested.assert_not_called()
 
 
 def test_non_transient_provider_failure_still_fails_production_runner(
