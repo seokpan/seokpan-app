@@ -71,32 +71,40 @@ class RedisVoteRuntimeAdapter:
 
     async def get(self, room_id: str) -> VoteRuntimeSnapshot | None:
         game_key = RedisKeyspace.room_game(room_id)
-        try:
-            raw_game = await self._client.get(game_key)
-        except RedisError as error:
-            raise RedisProviderError() from error
-        if raw_game is None:
-            return None
-        game = VersionedJsonCodec.decode(raw_game)
-        if _integer(game, "schema_version") != VOTE_RUNTIME_SCHEMA_VERSION:
-            raise RedisProviderError("VOTE_SCHEMA_VERSION_MISMATCH")
-        turn_no = _integer(game, "turn_no")
-        result = await self._scripts.execute(
-            VOTE_READ,
-            keys=self._read_keys(room_id, turn_no),
-            args=(
-                VersionedJsonCodec.encode(
-                    {
-                        "room_id": room_id,
-                        "game_id": _string(game, "game_id"),
-                        "turn_no": turn_no,
-                    }
+        for attempt in range(3):
+            try:
+                raw_game = await self._client.get(game_key)
+            except RedisError as error:
+                raise RedisProviderError() from error
+            if raw_game is None:
+                return None
+            game = VersionedJsonCodec.decode(raw_game)
+            if _integer(game, "schema_version") != VOTE_RUNTIME_SCHEMA_VERSION:
+                raise RedisProviderError("VOTE_SCHEMA_VERSION_MISMATCH")
+            turn_no = _integer(game, "turn_no")
+            result = await self._scripts.execute(
+                VOTE_READ,
+                keys=self._read_keys(room_id, turn_no),
+                args=(
+                    VersionedJsonCodec.encode(
+                        {
+                            "room_id": room_id,
+                            "game_id": _string(game, "game_id"),
+                            "turn_no": turn_no,
+                        }
+                    ),
                 ),
-            ),
-        )
-        decoded = self._result(result)
-        self._raise_rejection(decoded)
-        return self._optional_snapshot(decoded.get("snapshot"))
+            )
+            decoded = self._result(result)
+            if (
+                decoded.get("ok") is False
+                and decoded.get("error") == "REDIS_SNAPSHOT_CHANGED"
+                and attempt < 2
+            ):
+                continue
+            self._raise_rejection(decoded)
+            return self._optional_snapshot(decoded.get("snapshot"))
+        raise RedisProviderError("REDIS_SNAPSHOT_CHANGED")
 
     async def discard_game(self, room_id: str, game_id: str) -> None:
         game_key = RedisKeyspace.room_game(room_id)

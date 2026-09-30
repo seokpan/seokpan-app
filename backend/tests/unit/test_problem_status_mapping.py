@@ -1,6 +1,45 @@
-import pytest
+from unittest.mock import patch
 
-from seokpan.api.problems import _game_status, _room_status
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from seokpan.api.problems import _game_status, _room_status, install_problem_handlers
+from seokpan.persistence.redis.common import RedisProviderError
+
+
+@pytest.mark.parametrize(
+    ("provider_code", "public_code"),
+    [
+        ("REDIS_SNAPSHOT_CHANGED", "SNAPSHOT_CHANGED"),
+        ("REDIS_PROVIDER_UNAVAILABLE", "REDIS_PROVIDER_UNAVAILABLE"),
+        ("REDIS_RESPONSE_INVALID", "REDIS_PROVIDER_UNAVAILABLE"),
+        ("VOTE_SCHEMA_VERSION_MISMATCH", "REDIS_PROVIDER_UNAVAILABLE"),
+    ],
+)
+def test_redis_provider_failure_is_retryable_problem(provider_code: str, public_code: str) -> None:
+    app = FastAPI()
+    install_problem_handlers(app)
+
+    @app.get("/failure")
+    def fail() -> None:
+        raise RedisProviderError(provider_code)
+
+    with patch("seokpan.api.problems._LOGGER.warning") as warning:
+        response = TestClient(app).get("/failure", headers={"X-Request-ID": "m02-review-133"})
+
+    assert response.status_code == 503
+    assert response.json()["code"] == public_code
+    assert response.json()["request_id"] == "m02-review-133"
+    assert provider_code not in response.text or provider_code == public_code
+    warning.assert_called_once_with(
+        "Redis provider request failed",
+        extra={
+            "event": "api.redis_provider_error",
+            "error_code": provider_code,
+            "request_id": response.json()["request_id"],
+        },
+    )
 
 
 @pytest.mark.parametrize(

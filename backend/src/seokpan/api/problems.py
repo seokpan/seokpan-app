@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -16,10 +17,12 @@ from seokpan.game.application import PersistenceRuleViolation
 from seokpan.game.domain import GameRuleViolation
 from seokpan.identity.application import IdentityRuleViolation, SessionRuleViolation
 from seokpan.identity.application.auth_session import SessionTransitionUnavailable
+from seokpan.persistence.redis.common import RedisProviderError
 from seokpan.room.domain import RoomRuleViolation
 from seokpan.vote.domain import VoteRuleViolation
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,33 @@ def request_id(request: Request) -> str:
 
 
 def install_problem_handlers(application: FastAPI) -> None:
+    @application.exception_handler(RedisProviderError)
+    async def redis_problem_handler(request: Request, error: RedisProviderError) -> JSONResponse:
+        trace_id = request_id(request)
+        _LOGGER.warning(
+            "Redis provider request failed",
+            extra={
+                "event": "api.redis_provider_error",
+                "error_code": error.code,
+                "request_id": trace_id,
+            },
+        )
+        if error.code == "REDIS_SNAPSHOT_CHANGED":
+            return _response(
+                request,
+                503,
+                "SNAPSHOT_CHANGED",
+                "State changed while reading; retry the snapshot",
+                request_id_value=trace_id,
+            )
+        return _response(
+            request,
+            503,
+            "REDIS_PROVIDER_UNAVAILABLE",
+            "State unavailable",
+            request_id_value=trace_id,
+        )
+
     @application.exception_handler(ApiProblem)
     async def api_problem_handler(request: Request, error: ApiProblem) -> JSONResponse:
         return _response(
@@ -279,13 +309,14 @@ def _response(
     errors: list[dict[str, str]] | None = None,
     current_version: int | None = None,
     snapshot_url: str | None = None,
+    request_id_value: str | None = None,
 ) -> JSONResponse:
     body: dict[str, object] = {
         "type": f"urn:seokpan:problem:{code.lower().replace('_', '-')}",
         "title": title,
         "status": status,
         "code": code,
-        "request_id": request_id(request),
+        "request_id": request_id_value if request_id_value is not None else request_id(request),
     }
     if errors is not None:
         body["errors"] = errors
