@@ -85,11 +85,17 @@ COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
 # 실패를 방지함.
 # Issue #70: fixed trixie security packages, verified together in an isolated
 # build. Keep base/application locks unchanged; unavailable versions fail build.
+# Image Pipeline main #32: Debian trixie-security OpenSSL 3.5.7-1~deb13u3
+# fixes CVE-2026-75804/CVE-2026-84782 in the runtime image. Pin all three
+# installed binary packages and fail the build if the security update is absent.
 RUN apt-get update -o APT::Update::Error-Mode=any && \
     apt-get install -y --only-upgrade --no-install-recommends --no-remove \
         gzip=1.13-1+deb13u1 \
         libpcre2-8-0=10.46-1~deb13u2 \
-        libsqlite3-0=3.46.1-7+deb13u2 && \
+        libsqlite3-0=3.46.1-7+deb13u2 \
+        libssl3t64=3.5.7-1~deb13u3 \
+        openssl=3.5.7-1~deb13u3 \
+        openssl-provider-legacy=3.5.7-1~deb13u3 && \
     apt-get purge -y --allow-remove-essential --auto-remove perl-base && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     echo "=== pip/setuptools/wheel 제거 (런타임 불필요, msgpack은 pip 내부 vendored) ===" && \
@@ -106,6 +112,9 @@ RUN apt-get update -o APT::Update::Error-Mode=any && \
     test "$(dpkg-query -W -f='${Version}' gzip)" = '1.13-1+deb13u1' && \
     test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = '10.46-1~deb13u2' && \
     test "$(dpkg-query -W -f='${Version}' libsqlite3-0)" = '3.46.1-7+deb13u2' && \
+    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = '3.5.7-1~deb13u3' && \
+    test "$(dpkg-query -W -f='${Version}' openssl)" = '3.5.7-1~deb13u3' && \
+    test "$(dpkg-query -W -f='${Version}' openssl-provider-legacy)" = '3.5.7-1~deb13u3' && \
     /app/.venv/bin/python -c "import sys, sqlite3, ssl, fastapi, sqlalchemy, asyncmy; assert sys.version_info[:3] == (3, 13, 15); print(sqlite3.sqlite_version); print(ssl.OPENSSL_VERSION)"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
