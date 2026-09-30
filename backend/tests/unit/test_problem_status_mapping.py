@@ -11,10 +11,13 @@ from seokpan.persistence.redis.common import RedisProviderError
     [
         ("REDIS_SNAPSHOT_CHANGED", "SNAPSHOT_CHANGED"),
         ("REDIS_PROVIDER_UNAVAILABLE", "REDIS_PROVIDER_UNAVAILABLE"),
+        ("REDIS_RESPONSE_INVALID", "REDIS_PROVIDER_UNAVAILABLE"),
         ("VOTE_SCHEMA_VERSION_MISMATCH", "REDIS_PROVIDER_UNAVAILABLE"),
     ],
 )
-def test_redis_provider_failure_is_retryable_problem(provider_code: str, public_code: str) -> None:
+def test_redis_provider_failure_is_retryable_problem(
+    provider_code: str, public_code: str, caplog: pytest.LogCaptureFixture
+) -> None:
     app = FastAPI()
     install_problem_handlers(app)
 
@@ -22,11 +25,21 @@ def test_redis_provider_failure_is_retryable_problem(provider_code: str, public_
     def fail() -> None:
         raise RedisProviderError(provider_code)
 
-    response = TestClient(app).get("/failure")
+    response = TestClient(app).get("/failure", headers={"X-Request-ID": "m02-review-133"})
 
     assert response.status_code == 503
     assert response.json()["code"] == public_code
+    assert response.json()["request_id"] == "m02-review-133"
     assert provider_code not in response.text or provider_code == public_code
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "api.redis_provider_error"
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].error_code == provider_code
+    assert records[0].request_id == response.json()["request_id"]
 
 
 @pytest.mark.parametrize(
