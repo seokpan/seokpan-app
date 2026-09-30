@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -34,6 +36,11 @@ _TRANSIENT_TURN_ERROR_CODES = {"REDIS_SNAPSHOT_CHANGED"}
 
 def _is_transient_turn_error(error: Exception) -> bool:
     return getattr(error, "code", None) in _TRANSIENT_TURN_ERROR_CODES
+
+
+def _request_process_shutdown() -> None:
+    """Ask the production ASGI server to stop after a mandatory runner dies."""
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 async def _run_background_services(
@@ -160,6 +167,18 @@ def create_production_app(settings: Settings) -> FastAPI:
                 if runner.done():
                     await runner
                 shell.state.runtime_application = runtime
+
+                def stop_after_runner_exit(task: asyncio.Task[None]) -> None:
+                    if task.cancelled():
+                        return
+                    readiness.mark_not_ready()
+                    _LOGGER.critical(
+                        "Production background runner ended; requesting process shutdown",
+                        extra={"event": "production.runner.process_shutdown_requested"},
+                    )
+                    _request_process_shutdown()
+
+                runner.add_done_callback(stop_after_runner_exit)
                 try:
                     yield
                 finally:
