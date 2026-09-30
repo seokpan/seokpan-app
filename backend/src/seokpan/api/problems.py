@@ -16,6 +16,7 @@ from seokpan.game.application import PersistenceRuleViolation
 from seokpan.game.domain import GameRuleViolation
 from seokpan.identity.application import IdentityRuleViolation, SessionRuleViolation
 from seokpan.identity.application.auth_session import SessionTransitionUnavailable
+from seokpan.persistence.redis.common import RedisProviderError
 from seokpan.room.domain import RoomRuleViolation
 from seokpan.vote.domain import VoteRuleViolation
 
@@ -93,6 +94,14 @@ def request_id(request: Request) -> str:
 
 
 def install_problem_handlers(application: FastAPI) -> None:
+    @application.exception_handler(RedisProviderError)
+    async def redis_problem_handler(request: Request, error: RedisProviderError) -> JSONResponse:
+        if error.code == "REDIS_SNAPSHOT_CHANGED":
+            return _response(
+                request, 503, "SNAPSHOT_CHANGED", "State changed while reading; retry the snapshot"
+            )
+        return _response(request, 503, "REDIS_PROVIDER_UNAVAILABLE", "State unavailable")
+
     @application.exception_handler(ApiProblem)
     async def api_problem_handler(request: Request, error: ApiProblem) -> JSONResponse:
         return _response(

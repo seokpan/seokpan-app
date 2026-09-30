@@ -1,6 +1,32 @@
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-from seokpan.api.problems import _game_status, _room_status
+from seokpan.api.problems import _game_status, _room_status, install_problem_handlers
+from seokpan.persistence.redis.common import RedisProviderError
+
+
+@pytest.mark.parametrize(
+    ("provider_code", "public_code"),
+    [
+        ("REDIS_SNAPSHOT_CHANGED", "SNAPSHOT_CHANGED"),
+        ("REDIS_PROVIDER_UNAVAILABLE", "REDIS_PROVIDER_UNAVAILABLE"),
+        ("VOTE_SCHEMA_VERSION_MISMATCH", "REDIS_PROVIDER_UNAVAILABLE"),
+    ],
+)
+def test_redis_provider_failure_is_retryable_problem(provider_code: str, public_code: str) -> None:
+    app = FastAPI()
+    install_problem_handlers(app)
+
+    @app.get("/failure")
+    def fail() -> None:
+        raise RedisProviderError(provider_code)
+
+    response = TestClient(app).get("/failure")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == public_code
+    assert provider_code not in response.text or provider_code == public_code
 
 
 @pytest.mark.parametrize(

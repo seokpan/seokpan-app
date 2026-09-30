@@ -152,8 +152,11 @@ async def test_replacement_declares_only_previous_turn_cleanup_keys() -> None:
 
 
 class ChangedSnapshotClient(EmulatedVoteRedisClient):
+    read_attempts = 0
+
     async def evalsha(self, sha: str, numkeys: int, *keys_and_args: object) -> bytes:
         if sha == VOTE_READ.sha:
+            self.read_attempts += 1
             payload = VersionedJsonCodec.decode(str(keys_and_args[numkeys]))
             assert payload == {
                 "room_id": "00000000-0000-4000-8000-000000000101",
@@ -166,7 +169,8 @@ class ChangedSnapshotClient(EmulatedVoteRedisClient):
 
 @pytest.mark.asyncio
 async def test_read_does_not_mix_new_game_with_previous_turn_keys() -> None:
-    adapter = RedisVoteRuntimeAdapter(ChangedSnapshotClient(ManualClock()))
+    client = ChangedSnapshotClient(ManualClock())
+    adapter = RedisVoteRuntimeAdapter(client)
     await adapter.initialize(
         InitializeVoteRuntime(
             "00000000-0000-4000-8000-000000000101",
@@ -180,6 +184,57 @@ async def test_read_does_not_mix_new_game_with_previous_turn_keys() -> None:
     with pytest.raises(RedisProviderError, match="REDIS_SNAPSHOT_CHANGED"):
         await adapter.get("00000000-0000-4000-8000-000000000101")
     assert "game.game_id ~= payload.game_id or game.turn_no ~= payload.turn_no" in VOTE_READ.source
+    assert client.read_attempts == 3
+
+
+class StaleFirstGameReadClient(EmulatedVoteRedisClient):
+    def __init__(self, clock: ManualClock) -> None:
+        super().__init__(clock)
+        self.game_reads = 0
+
+    async def get(self, key: str) -> bytes | None:
+        value = await super().get(key)
+        if value is not None and self.game_reads == 0:
+            self.game_reads += 1
+            game = VersionedJsonCodec.decode(value)
+            game["turn_no"] = 0
+            return self._encode(game)
+        self.game_reads += 1
+        return value
+
+    async def evalsha(self, sha: str, numkeys: int, *keys_and_args: object) -> bytes:
+        if sha == VOTE_READ.sha:
+            payload = VersionedJsonCodec.decode(str(keys_and_args[numkeys]))
+            if payload["turn_no"] == 0:
+                self.evalsha_calls.append((sha, numkeys, keys_and_args))
+                return self._encode({"ok": False, "error": "REDIS_SNAPSHOT_CHANGED"})
+        return await super().evalsha(sha, numkeys, *keys_and_args)
+
+
+@pytest.mark.asyncio
+async def test_read_retries_entire_snapshot_after_turn_change() -> None:
+    client = StaleFirstGameReadClient(ManualClock())
+    adapter = RedisVoteRuntimeAdapter(client)
+    room_id = "00000000-0000-4000-8000-000000000101"
+    await adapter.initialize(
+        InitializeVoteRuntime(
+            room_id,
+            "init",
+            "00000000-0000-4000-8000-000000000102",
+            (Voter("black-1", Stone.BLACK), Voter("white-1", Stone.WHITE)),
+            1000,
+            1,
+        )
+    )
+
+    snapshot = await adapter.get(room_id)
+
+    assert snapshot is not None and snapshot.turn_no == 1
+    assert client.game_reads == 2
+    reads = [call for call in client.evalsha_calls if call[0] == VOTE_READ.sha]
+    assert len(reads) == 2
+    assert reads[0][2][4] == RedisKeyspace.room_votes(room_id, 0)
+    assert reads[1][2][4] == RedisKeyspace.room_votes(room_id, 1)
 
 
 def test_missing_rejection_code_is_provider_failure() -> None:
