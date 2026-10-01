@@ -91,7 +91,7 @@ COPY --from=builder --chown=seokpan:seokpan /app/migrations /app/migrations
 RUN apt-get update -o APT::Update::Error-Mode=any && \
     apt-get install -y --only-upgrade --no-install-recommends --no-remove \
         gzip=1.13-1+deb13u1 \
-        libpcre2-8-0=10.46-1~deb13u2 \
+        libpcre2-8-0=10.46-1~deb13u3 \
         libsqlite3-0=3.46.1-7+deb13u2 \
         libssl3t64=3.5.7-1~deb13u3 \
         openssl=3.5.7-1~deb13u3 \
@@ -110,7 +110,7 @@ RUN apt-get update -o APT::Update::Error-Mode=any && \
     echo "=== venv 밖에서 python3가 여전히 정상 동작하는지 확인 ===" && \
     python3 --version && \
     test "$(dpkg-query -W -f='${Version}' gzip)" = '1.13-1+deb13u1' && \
-    test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = '10.46-1~deb13u2' && \
+    test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = '10.46-1~deb13u3' && \
     test "$(dpkg-query -W -f='${Version}' libsqlite3-0)" = '3.46.1-7+deb13u2' && \
     test "$(dpkg-query -W -f='${Version}' libssl3t64)" = '3.5.7-1~deb13u3' && \
     test "$(dpkg-query -W -f='${Version}' openssl)" = '3.5.7-1~deb13u3' && \
