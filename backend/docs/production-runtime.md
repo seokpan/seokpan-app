@@ -22,7 +22,9 @@ Production의 필수 설정 이름은 다음과 같습니다.
 
 시작 순서는 역할별 MariaDB Engine → Redis Client → 두 DB의 `SELECT 1` → Redis `PING` → 전체 Service/Runner 조립입니다. 필수 Runner가 첫 반복을 정상 완료한 뒤에만 `/health/ready`를 200으로 엽니다. 설정 오류, Provider 연결 실패 또는 Runner 조기 종료는 준비 완료로 오인하지 않습니다.
 
-Runner 실행 중 Redis 연결 오류(`REDIS_PROVIDER_UNAVAILABLE`)가 발생하면 즉시 Ready를 내리고, Registry와 Runner Task를 유지한 채 0.1초부터 최대 2초까지 증가하는 간격으로 재시도합니다. 정상 반복 뒤 두 DB `SELECT 1` 및 Redis `PING`을 다시 통과해야 Ready를 복구합니다. 이 동안 `/health/live`는 Process 응답성만 확인하며 외부 Provider 장애를 Pod 재시작으로 확대하지 않습니다. Provider가 계속 불가하면 Ready는 503으로 유지되므로 운영자는 Endpoint/Argo 상태와 정제된 `production.runner.provider_unavailable`·`production.runner.provider_recovered` Event를 확인해야 합니다. 비정상 응답·Schema 불일치 같은 `REDIS_RESPONSE_INVALID`는 재시도 대상으로 뭉개지 않고 기존의 Runner 종료·NotReady 경계를 유지합니다. 이 경우 Pod 수동 교체만으로 원인이 해결됐다고 판정하지 않습니다.
+Runner 실행 중 Redis 연결 오류(`REDIS_PROVIDER_UNAVAILABLE`)가 발생하면 즉시 Ready를 내리고, Registry와 Runner Task를 유지한 채 0.1초부터 최대 2초까지 증가하는 간격으로 재시도합니다. 정상 반복 뒤 두 DB `SELECT 1` 및 Redis `PING`을 다시 통과해야 Ready를 복구합니다. 이 동안 `/health/live`는 Process 응답성만 확인하며 외부 Provider 장애를 Pod 재시작으로 확대하지 않습니다. Provider가 계속 불가하면 Ready는 503으로 유지되므로 운영자는 Endpoint/Argo 상태와 정제된 `production.runner.provider_unavailable`·`production.runner.provider_recovered` Event를 확인해야 합니다. 비정상 응답·Schema 불일치 같은 `REDIS_RESPONSE_INVALID`는 재시도 대상으로 뭉개지 않고 Runner 종료·NotReady 경계로 처리합니다. 이 경우 Pod 수동 교체만으로 원인이 해결됐다고 판정하지 않습니다.
+
+필수 Runner Task가 시작 이후 예상 밖에 끝나면 Ready를 내리고 CRITICAL `production.runner.process_shutdown_requested` Event를 남긴 뒤, 자기 Uvicorn 프로세스 PID에 SIGTERM을 보내 종료를 요청합니다. 이후 Container 재시작 여부는 Kubernetes Pod의 `restartPolicy`를 따릅니다. 정상 Lifespan Shutdown의 Runner 취소는 이 종료 요청에서 제외하며, 재시도 중인 transient Provider 장애는 이 조건에 해당하지 않습니다.
 
 ### 지속 Provider 장애의 수동 대응
 
