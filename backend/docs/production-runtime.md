@@ -24,6 +24,14 @@ Production의 필수 설정 이름은 다음과 같습니다.
 
 Runner 실행 중 Redis 연결 오류(`REDIS_PROVIDER_UNAVAILABLE`)가 발생하면 즉시 Ready를 내리고, Registry와 Runner Task를 유지한 채 0.1초부터 최대 2초까지 증가하는 간격으로 재시도합니다. 정상 반복 뒤 두 DB `SELECT 1` 및 Redis `PING`을 다시 통과해야 Ready를 복구합니다. 이 동안 `/health/live`는 Process 응답성만 확인하며 외부 Provider 장애를 Pod 재시작으로 확대하지 않습니다. Provider가 계속 불가하면 Ready는 503으로 유지되므로 운영자는 Endpoint/Argo 상태와 정제된 `production.runner.provider_unavailable`·`production.runner.provider_recovered` Event를 확인해야 합니다. 비정상 응답·Schema 불일치 같은 `REDIS_RESPONSE_INVALID`는 재시도 대상으로 뭉개지 않고 기존의 Runner 종료·NotReady 경계를 유지합니다. 이 경우 Pod 수동 교체만으로 원인이 해결됐다고 판정하지 않습니다.
 
+### 지속 Provider 장애의 수동 대응
+
+`provider_unavailable` 최초 전환 로그의 `error_code`와 `provider_cause`는 각각 내부 오류 코드와 `redis_timeout`·`redis_connection`·`redis_other`·`unknown` 중 하나입니다. 원래 예외 문자열, Redis URL, Key 또는 Credential은 출력하지 않습니다. 이 분류는 앞으로 발생할 오류의 유형을 좁히는 단서일 뿐, 과거 사고의 원인이나 네트워크·Redis 자체의 장애 위치를 확정하지 않습니다. `provider_recovered`와 Ready 복귀는 실제 회복 Probe 결과로만 판정합니다.
+
+운영자는 `provider_unavailable`을 확인하면 해당 Pod의 `/health/ready`, Kubernetes Ready/Restart/Endpoint와 동료 Backend Pod, Redis Pod·Endpoint·Persistence 상태, Argo Sync/Health를 같은 시간대에 읽기 전용으로 대조하고 App 담당에게 알립니다. 두 Backend가 함께 NotReady이거나 Redis 자체가 불가하면 공유 Provider 장애로 분류해 Data/Platform 담당과 공동 대응합니다. 단일 Backend만 NotReady인 경우에도 원인 확인 전에 전체 Backend나 Redis를 재시작하지 않습니다. 해당 Pod의 로그·UID·Event를 보존하고, 동료 Pod와 Redis가 정상인지 비교한 뒤 App 담당이 해당 Pod만 복구할지 결정합니다. Redis AOF/PVC 수정, 강제 삭제, 공유 Redis 장애 주입은 이 절차의 자동 조치가 아닙니다.
+
+Ready 503 또는 Endpoint 감소가 지속되거나 사용자 요청·Session 영향이 의심되면 운영자가 수동으로 장애를 선언하고 사용자 영향 확인과 Data/Platform 에스컬레이션을 시작합니다. 감시 주체가 없거나 복구 Probe의 실패 원인이 불명확하면 조치를 반복하지 않고 미해결 장애로 인계합니다. 특정 초 단위의 자동 재시작·경보 임계값은 여기서 새로 정하지 않습니다. 현재 프로젝트 전용 PrometheusRule 발송/수신은 이 절차의 검증 완료 항목이 아니며, 일반 Alertmanager E-mail 경로의 검증과 구분합니다. 종료 시에는 Ready·Endpoint·Argo 복귀뿐 아니라 실패 시간대의 실제 HTTP/Session 및 Game 권위 데이터 영향도 별도 판정합니다.
+
 종료 시 readiness를 먼저 내리고 WebSocket Runtime을 종료한 뒤 Runner를 취소·회수합니다. 이후 Redis Client와 두 DB Engine을 닫습니다.
 
 ## 실제 환경 적용 순서
@@ -77,7 +85,7 @@ Backend Application 로그는 stdout/stderr에 JSON Line 형식으로 출력한�
 - `function`: 로그 호출 함수
 - `instance_id`: Backend Pod별 Instance ID
 - `message`: 사람이 읽는 요약
-- `request_id`, `room_id`, `game_id`, `turn_no`, `error_code`, `status`: 해당 Context가 있을 때만 포함
+- `request_id`, `room_id`, `game_id`, `turn_no`, `error_code`, `provider_cause`, `status`: 해당 Context가 있을 때만 포함
 - `exception.type`: Exception class
 - `exception.frames`: Exception stack의 file / line / function
 

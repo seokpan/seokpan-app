@@ -34,6 +34,7 @@ def test_configured_application_log_is_structured(
             "game_id": "game-1",
             "turn_no": 7,
             "error_code": "TEST_FAILURE",
+            "provider_cause": "redis_connection",
         },
     )
 
@@ -51,6 +52,7 @@ def test_configured_application_log_is_structured(
     assert payload["game_id"] == "game-1"
     assert payload["turn_no"] == 7
     assert payload["error_code"] == "TEST_FAILURE"
+    assert payload["provider_cause"] == "redis_connection"
 
 
 def test_exception_records_type_and_frames_without_exception_message(
