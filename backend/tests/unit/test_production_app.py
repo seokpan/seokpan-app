@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 import seokpan.app as app_module
 import seokpan.production_app as production_app_module
@@ -27,6 +30,23 @@ def test_fatal_runner_shutdown_uses_process_sigterm() -> None:
     ):
         production_app_module._request_process_shutdown()
     kill.assert_called_once_with(12345, signal.SIGTERM)
+
+
+@pytest.mark.parametrize(
+    ("cause", "expected"),
+    [
+        (RedisTimeoutError("private endpoint"), "redis_timeout"),
+        (RedisConnectionError("private endpoint"), "redis_connection"),
+        (RedisError("private endpoint"), "redis_other"),
+        (ValueError("private endpoint"), "unknown"),
+    ],
+)
+def test_provider_cause_kind_uses_only_fixed_categories(cause: Exception, expected: str) -> None:
+    try:
+        raise RedisProviderError() from cause
+    except RedisProviderError as error:
+        assert production_app_module._provider_cause_kind(error) == expected
+    assert production_app_module._provider_cause_kind(RedisProviderError()) == "unknown"
 
 
 def _patch_production_shell(
@@ -236,6 +256,52 @@ def test_non_transient_provider_failure_still_fails_production_runner(
         raise AssertionError("non-transient provider failure must fail startup")
     services.turn_resolution.reconcile_game_invalidations.assert_awaited_once()
     services.turn_resolution.run_once.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_outage_logs_one_sanitized_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warning = Mock()
+    monkeypatch.setattr(production_app_module._LOGGER, "warning", warning)
+    recovered = asyncio.Event()
+    calls = 0
+
+    async def run_disconnects() -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise RedisProviderError() from RedisConnectionError("private endpoint")
+        recovered.set()
+
+    registry = SimpleNamespace(end_runtime=Mock())
+    services = SimpleNamespace(
+        disconnect_expiry=SimpleNamespace(run_once=run_disconnects),
+        turn_resolution=SimpleNamespace(
+            reconcile_game_invalidations=AsyncMock(return_value=0),
+            run_once=AsyncMock(),
+        ),
+        realtime_api=SimpleNamespace(registry=registry),
+    )
+    readiness = RuntimeReadiness(ready=True)
+    task = asyncio.create_task(production_app_module._run_background_services(services, readiness))
+    try:
+        await asyncio.wait_for(recovered.wait(), timeout=2)
+        await asyncio.sleep(0)
+        warning.assert_called_once()
+        args, kwargs = warning.call_args
+        assert args == ("Production background runner provider unavailable; retrying",)
+        assert kwargs["extra"] == {
+            "event": "production.runner.provider_unavailable",
+            "error_code": "REDIS_PROVIDER_UNAVAILABLE",
+            "provider_cause": "redis_connection",
+        }
+        assert "private endpoint" not in repr(warning.call_args)
+        assert readiness.ready is True
+        registry.end_runtime.assert_not_called()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

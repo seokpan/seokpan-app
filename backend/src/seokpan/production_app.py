@@ -11,7 +11,9 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -36,6 +38,18 @@ _TRANSIENT_TURN_ERROR_CODES = {"REDIS_SNAPSHOT_CHANGED"}
 
 def _is_transient_turn_error(error: Exception) -> bool:
     return getattr(error, "code", None) in _TRANSIENT_TURN_ERROR_CODES
+
+
+def _provider_cause_kind(error: RedisProviderError) -> str:
+    """Classify a chained Redis failure without recording its message or endpoint."""
+    cause = error.__cause__
+    if isinstance(cause, RedisTimeoutError):
+        return "redis_timeout"
+    if isinstance(cause, RedisConnectionError):
+        return "redis_connection"
+    if isinstance(cause, RedisError):
+        return "redis_other"
+    return "unknown"
 
 
 def _request_process_shutdown() -> None:
@@ -91,7 +105,11 @@ async def _run_background_services(
                 if not provider_unavailable:
                     _LOGGER.warning(
                         "Production background runner provider unavailable; retrying",
-                        extra={"event": "production.runner.provider_unavailable"},
+                        extra={
+                            "event": "production.runner.provider_unavailable",
+                            "error_code": error.code,
+                            "provider_cause": _provider_cause_kind(error),
+                        },
                     )
                     provider_unavailable = True
                 await asyncio.sleep(retry_delay)

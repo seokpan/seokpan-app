@@ -19,6 +19,7 @@ _CONTEXT_FIELDS = (
     "turn_no",
     "participant_id",
     "error_code",
+    "provider_cause",
     "status",
 )
 
