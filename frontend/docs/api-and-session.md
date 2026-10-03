@@ -190,7 +190,7 @@ npm run api:check -- --schema <공유 작업 디렉터리>/openapi.json
 - `game/model.ts`는 현재 Room/Game/Participant 식별자, 상태·좌표·중복 돌·공식 Move 수·개인 투표 가능 조건과 결과 공개 필드를 검사한다. 서버의 렌주/승패를 Browser에서 다시 계산하지 않는다. 손상·다른 판 응답은 정상 게임으로 표시하지 않는다.
 - `Board`는 15×15 A–O/1–15 좌표, 공식 흑/백 돌, 서버 금수 ×, 내 투표 ◎, 결과 승리선을 구분한다. 방향키/Home/End·Enter/Space를 지원하고 사용 좌표·금수·관전자 입력을 막는다. 투표 성공을 공식 돌로 표시하지 않는다.
 - 시작은 현재 방장·WAITING·최소 Ready·양 팀 Ready를 확인한다. HTTP에는 Room Version을 전달하고 투표 등록/교체/삭제는 현재 Game/Turn과 Game Version을 사용한다. 서버의 최종 권한 검사와 명령 자동 재실행 금지는 그대로다.
-- Game·Vote 알림은 개인 표·금수·서버 현재 시각이 모두 담긴 Snapshot이 아니다. 현재 구현은 이를 받으면 기존 Room 상태 API를 읽어 전체 Game과 개인 상태를 함께 갱신한다. 진행 중 읽기를 공유하고 누락은 기존 Buffer/Version 규칙으로 처리한다. 이는 실제 부하 검증을 통과했다는 뜻이 아니며, A-10에서 조회 빈도/지연과 여러 참가자 조건을 측정한다.
+- Game·Vote 알림은 개인 표·금수·서버 현재 시각이 모두 담긴 Snapshot이 아니다. 현재 구현은 이를 받으면 기존 Room 상태 API를 읽어 전체 Game과 개인 상태를 함께 갱신한다. 진행 중 읽기를 공유하고 누락은 기존 Buffer/Version 규칙으로 처리한다. 이는 전체 부하 검증을 통과했다는 뜻이 아니다. 2026-10-02~03 F10/F13은 지정 범위의 부분 측정이며, 통제된 Room/연결 규모·지속 부하와 공식 `KAI-PERF-01`은 비Final이다([공용 CURRENT_STATE](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)).
 - 서버 `deadline_ms - server_now_ms`와 Browser의 단조 시계 경과로 **약 N초**를 표시한다. 수신 지연이 있어 정밀한 마감 시각 보장은 아니며, 0초는 입력 중단·턴당 한 번 상태 조회만 유발한다. 턴 진행/Pass/승패 확정 요청을 만들지 않는다. 마감 이벤트 유실/일시 지연에는 수동 재조회도 제공한다.
 - 투표 비율의 분모는 제출된 유효표 합계다. `valid_voter_count`는 투표 가능한 인원으로 별도 표시한다. 0표는 비율을 만들지 않는다. Turn 수와 공식 Move 수를 분리하여 Pass 때 돌/Move가 증가하지 않는 서버 상태를 표시한다.
 - Room이 WAITING으로 복귀하면 `last_game_id`의 저장 결과를 별도 조회한다. 현재 사용자에게 허용된 Rating만 사용하고 Guest 결과의 개인 Rating은 거부한다. 결과 닫기는 로컬 표시만 바꾸며 서버 요청·Room Socket 종료·Ready 변경을 만들지 않는다. 닫기 상태는 같은 참가 수명에 보관하여 세션 재확인 뒤 결과가 다시 튀어나오지 않게 한다.
