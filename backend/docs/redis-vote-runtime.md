@@ -43,7 +43,7 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 - 저장이 확인된 `ApplyRuntimeResolution`에서 Board/Move 번호와 함께 갱신한다. 투표 등록·교체·취소·단절·Pass에는 바꾸지 않는다. 중복 요청은 기존 결과를 재사용한다.
 - 읽기/변경 응답 모두 같은 값을 제공한다. Adapter는 마지막 Move 번호와 Board의 좌표·돌 색을 대조하며 불일치를 `REDIS_RESPONSE_INVALID`로 거부한다. 좌표순 Board 배열에서 마지막 돌을 추정하지 않는다.
 - v2 자료·이전 버전 요청 캐시는 v3 성공 응답으로 사용하지 않는다. 조회/변경/초기화 경계에서 `VOTE_SCHEMA_VERSION_MISMATCH`로 차단하며 자동 변환·삭제하지 않는다. Room 코드의 참가자 연결/Version 갱신은 기존 Game JSON의 다른 필드를 보존한다.
-- 현재 로컬 구현/시험 단계다. A-10 적용 전 진행 중 Game·구버전 프로세스·요청 캐시 존재 여부와 보존/전환 절차를 확인해야 한다. 구·신 Vote 코드 혼용은 허용하지 않는다. 본 변경은 실제 Redis 전환 승인이나 수행 기록이 아니다.
+- 이 문단은 Vote Schema 도입 당시의 전환 주의사항이다. A-10 Provider/GitOps 통합은 완료됐지만, 당시 진행 중 Game·구버전 프로세스·요청 캐시의 상태나 전환 수행 여부를 이 문서 단독으로 증명하지 않는다. 구·신 Vote 코드를 혼용하지 않는다. 실제 적용 근거와 남은 검증 경계는 [공용 CURRENT_STATE](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)의 13절과 원본 실행 기록을 따른다.
 - Memory와 Redis 호출 에뮬레이터의 규격 시험, Lua 정적 검사까지 구분해 기록한다. 실제 Redis Lua·동시성·장애 복구 검증은 별도다.
 
 ### Resolver 처리
@@ -72,7 +72,7 @@ Room Meta·Participant·Connection·Request Key는 [Redis Room Runtime Adapter �
 
 In-memory Fake와 Scripted Redis Client가 같은 Contract Test를 통과하도록 구성한다. Scripted Client는 Port·Key·Codec·Lua 호출 경계와 Adapter 입출력을 검증하지만 Lua Source 자체를 실행하지 않는다. 따라서 이 결과는 실제 Redis 상태 전이의 실행 증거가 아니다.
 
-다음 항목은 별도 Provider Integration Gate에서 확인한다.
+다음은 초기 Provider Integration 검증 체크리스트다. 현재 항목별 PASS를 뜻하지 않으며, 완료·부분·미검증 범위는 [공용 CURRENT_STATE](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)의 13절을 따른다.
 
 - Redis 8.10.1의 Lua·TIME·EVALSHA·SCRIPT LOAD
 - 두 Backend Replica의 동시 Vote·마감 경쟁과 Resolver Lease 인계
@@ -80,6 +80,6 @@ In-memory Fake와 Scripted Redis Client가 같은 Contract Test를 통과하도�
 - AOF/PVC와 Pod 재기동 뒤 Runtime State 수렴
 - MariaDB·MaxScale를 통한 공식 Move·Result 저장과 Redis 재동기화
 - 같은 시작 `request_id`를 Room/Vote에 전달한 경우, 다음 판 교체 중 지연된 이전 요청, 이전 Turn Key 정리와 조회 경쟁을 실제 Lua에서 검증
-- Room Schema 3 및 Vote 요청 Field 접두사 전환: 운영 중인 이전 Schema/캐시를 그대로 혼용하지 않으며, 승인된 데이터 전환 또는 초기화 절차는 A-10에서 확인
+- Room Schema 3 및 Vote 요청 Field 접두사 전환: 이전 Schema/캐시를 그대로 혼용하지 않는 것이 안전 계약이다. 당시 데이터 전환·초기화 절차는 별도 승인·실행 기록으로 확인한다.
 
 Redis Sentinel/Cluster는 MVP 범위가 아니다. `{room_id}` Hash Tag는 후속 확장을 막지 않기 위한 Key 경계이며 Cluster 검증 완료를 의미하지 않는다.
