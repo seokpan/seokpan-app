@@ -70,7 +70,9 @@ A-01 MVP Baseline → A-02 Scaffold → A-03 Pure Domain → A-04 MariaDB
 → A-08 Frontend First Success → A-09 Container/Jenkins → A-10 Provider/GitOps Integration
 ```
 
-현재 `main`은 **A-10(Provider/GitOps Integration)까지 반영**된 상태이며, `Headless First Success`(A-07)는 최종 상태가 아니라 초기 내부 흐름 검증 단계입니다. 1차 프로젝트의 구현·통합 상태와 남은 강화 검증은 [종료 시점 기록](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)과 [검증 후속 Issue #112](https://github.com/seokpan/seokpan-app/issues/112)에서 구분해 관리합니다. 단계별 상세 근거는 [headless-first-success.md](backend/docs/headless-first-success.md), [mvp-implementation-baseline.md](docs/mvp-implementation-baseline.md) 참고.
+현재 `main`은 **A-10(Provider/GitOps Integration)까지 반영**된 상태이며, `Headless First Success`(A-07)는 최종 상태가 아니라 초기 내부 흐름 검증 단계입니다. 1차 구현·통합과 종료 판정, 남은 공식 검증 경계는 [공용 CURRENT_STATE](https://github.com/seokpan/seokpan-docs/blob/main/CURRENT_STATE.md)의 13절을 기준으로 확인합니다. App #112는 V-02 `NOT TESTED` 등 실제 근거와 한계를 분류·인계해 `closed/completed`로 종료됐으며, 모든 공식 Gate의 Final PASS를 뜻하지 않습니다. 1차 범위의 추가 실행은 계획하지 않고 새 요구·운영 사건이 있을 때 별도 재평가합니다. 단계별 상세 근거는 [headless-first-success.md](backend/docs/headless-first-success.md), [mvp-implementation-baseline.md](docs/mvp-implementation-baseline.md) 참고.
+
+하위 기술 문서의 `A-10에서 검증` 같은 미래형 문구는 작성 당시의 실행 계획으로 읽고, 현재 완료·부분·미검증 판정은 공용 `CURRENT_STATE.md` 13절과 해당 실행 근거를 우선합니다.
 
 ## CI/CD 경계
 
